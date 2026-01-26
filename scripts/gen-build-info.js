@@ -11,13 +11,10 @@ function safeExec(command) {
 }
 
 function getBuildInfo() {
-  const gitTag = safeExec("git describe --tags --abbrev=0");
-
-  let commitsSinceTag = null;
-  if (gitTag) {
-    const count = safeExec(`git rev-list ${gitTag}..HEAD --count`);
-    commitsSinceTag = count != null ? parseInt(count, 10) : null;
-  }
+  // Read version from package.json
+  const packageJsonPath = path.resolve(__dirname, "..", "package.json");
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  const version = packageJson.version;
 
   const dirtyOutput = safeExec("git status --porcelain");
   const dirty = dirtyOutput == null ? null : dirtyOutput.length > 0;
@@ -27,8 +24,7 @@ function getBuildInfo() {
   const buildDate = new Date().toISOString();
 
   return {
-    gitTag,
-    commitsSinceTag,
+    version,
     dirty,
     buildDate,
     lastCommitDate,

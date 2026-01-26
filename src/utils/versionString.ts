@@ -3,53 +3,18 @@ import { buildInfo } from "../buildInfo";
 /*
 
 build-time should generate a file with actual info.
-another project does this via a webpack plugin that looks like:
+another project does this via a script that:
 
-const childProcess = require('child_process');
+1. Reads version from package.json
+2. Checks git status for dirty state
+3. Gets commit hash and dates
 
-function safeExec(command) {
-  try {
-    return childProcess.execSync(command, { encoding: 'utf8' }).trim();
-  } catch (err) {
-    return null;
-  }
-}
-
-function getBuildInfo() {
-  const gitTag = safeExec('git describe --tags --abbrev=0');
-
-  let commitsSinceTag = null;
-  if (gitTag) {
-    const count = safeExec(`git rev-list ${gitTag}..HEAD --count`);
-    commitsSinceTag = count != null ? parseInt(count, 10) : null;
-  }
-
-  const dirtyOutput = safeExec('git status --porcelain');
-  const dirty = dirtyOutput == null ? null : dirtyOutput.length > 0;
-
-  const commitHash = safeExec('git rev-parse --short HEAD');
-  const lastCommitDate = safeExec('git log -1 --format=%cI');
-  const buildDate = new Date().toISOString();
-
-  return {
-    gitTag,
-    commitsSinceTag,
-    dirty,
-    buildDate,
-    lastCommitDate,
-    commitHash,
-  };
-}
-
-const BUILD_INFO = getBuildInfo();
-
-... and the plugin saves that to a file that can be imported here.
+See scripts/gen-build-info.js for the implementation.
 
 */
 
 export type BuildInfoLike = {
-  gitTag: string | null; //
-  commitsSinceTag: number | null;
+  version: string;
   dirty: boolean | null;
   buildDate?: string;
   lastCommitDate?: string | null;
@@ -57,17 +22,13 @@ export type BuildInfoLike = {
 };
 
 // Version tag is like:
-// - v1
-// - v1+290
-// - v1+290(!)
+// - v1.0.2
+// - v1.0.2(!)
 // - unknown
 export function getBuildVersionTag(info: BuildInfoLike): string {
-  if (!info.gitTag) return "unknown";
+  if (!info.version) return "unknown";
 
-  let str = String(info.gitTag);
-  if (info.commitsSinceTag && info.commitsSinceTag > 0) {
-    str += `+${info.commitsSinceTag}`;
-  }
+  let str = `v${info.version}`;
   if (info.dirty) {
     str += "(!)";
   }

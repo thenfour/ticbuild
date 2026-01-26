@@ -1,6 +1,6 @@
 {
   "name": "ticbuild",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A build & watch system for TIC-80",
   "main": "dist/index.js",
   "bin": {
@@ -28,6 +28,14 @@
     "url": "https://github.com/thenfour/ticbuild"
   },
   "license": "ISC",
+  "files": [
+    ".attachments/",
+    "dist/",
+    "templates/",
+    "README.md",
+    "LICENSE",
+    "ticbuild.schema.json"
+  ],
   "devDependencies": {
     "@types/jest": "^29.0.0",
     "@types/node": "^20.0.0",

@@ -19,8 +19,8 @@ jest.config.js
 .env.local
 .npmrc
 
-# Documentation & examples (keep example/)
-example/
+# dev-facing examples
+/example/
 
 # Build artifacts that shouldn't be in npm
 *.tsbuildinfo
