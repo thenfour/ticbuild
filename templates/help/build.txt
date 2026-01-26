@@ -18,6 +18,6 @@ Options:
 Examples:
 
   ticbuild build
-  ticbuild build game.ticbuild.jsonc
+  ticbuild build mydemo.ticbuild.jsonc
   ticbuild build --mode release
   ticbuild build --var DEBUG=false --var VERSION=1.0

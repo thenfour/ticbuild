@@ -29,7 +29,7 @@ Examples:
   ticbuild watch my.ticbuild.jsonc
     Build and watch a specific manifest file
 
-  ticbuild init ./myproject --name "My Game"
+  ticbuild init ./myproject --name "My demo"
     Initialize a new project in the specified directory
 
   ticbuild build --mode release

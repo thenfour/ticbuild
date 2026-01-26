@@ -2,14 +2,14 @@
   "$schema": "./ticbuild.schema.json",
   // Example manifest for a TIC-80 project
   "project": {
-    "name": "example-game",
+    "name": "example",
     "includeDirs": [
       "./src",
       "./include"
     ],
     "binDir": "./dist/bin",
     "objDir": "./dist/obj",
-    "outputCartName": "example-game.tic",
+    "outputCartName": "example.tic",
   },
   "variables": {
     "version": "1.0.0",

@@ -19,5 +19,5 @@ Options:
 Examples:
 
   ticbuild init
-  ticbuild init ./myproject --name "My Game"
+  ticbuild init ./myproject --name "My demo"
   ticbuild init . --template minimal --force

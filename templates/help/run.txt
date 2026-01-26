@@ -18,5 +18,5 @@ Options:
 Examples:
 
   ticbuild run
-  ticbuild run game.ticbuild.jsonc
+  ticbuild run mydemo.ticbuild.jsonc
   ticbuild run --mode debug

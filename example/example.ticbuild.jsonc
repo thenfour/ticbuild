@@ -2,14 +2,14 @@
   "$schema": "../ticbuild.schema.json",
   // Example manifest for a TIC-80 project
   "project": {
-    "name": "example-game",
+    "name": "example",
     "includeDirs": [
       "./src",
       "./include"
     ],
     "binDir": "./$(buildConfiguration)/bin",
     "objDir": "./$(buildConfiguration)/obj",
-    "outputCartName": "example-game.tic"
+    "outputCartName": "example.tic"
   },
   "variables": {
     "version": "1.0.0",
@@ -47,10 +47,9 @@
         //"stripComments": false,
       },
       "globals": {
-        "GAME_VERSION": "$(version)",
-        "GAME_AUTHOR": "$(author)",
+        "AUTHOR": "$(author)",
         "SHOW_HUD": true,
-        "MAX_LIVES": 3
+        "GROUND_POSITION": 99
       }
     },
     "blocks": [

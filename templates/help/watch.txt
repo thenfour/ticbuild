@@ -21,4 +21,4 @@ Options:
 Examples:
 
   ticbuild watch
-  ticbuild watch game.ticbuild.jsonc --mode debug
+  ticbuild watch mydemo.ticbuild.jsonc --mode debug
