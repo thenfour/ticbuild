@@ -13,12 +13,13 @@ A build & watch system for TIC-80 cart development.
 ## Links
 
 * [TIC-80 homepage](https://tic80.com/)
-* [Github](https://github.com/thenfour/ticbuild)
+* [ticbuild on Github (this project)](https://github.com/thenfour/ticbuild)
+* [ticbuild_vscode on Github](https://github.com/thenfour/ticbuild_vscode)
 * [Discord](https://discord.gg/kkf9gQfKAd)
 * [Somatic - web-based TIC-80 music tracker](https://somatic.tenfourmusic.net/)
 
 
-Somatic is free, a labor of love; if you find it useful, please support by spreading the word or,
+This project is free, a labor of love; if you find it useful, please support by spreading the word or,
 
 [![Support me on ko-fi](.attachments/support_me_on_kofi_beige.png)](https://ko-fi.com/E1E71QVJ5Z)
 
@@ -32,11 +33,11 @@ npm install -g ticbuild
 
 ## Lua preprocessor + syntax highlighting
 
-```bash
-code --install-extension ./ticbuild-preproc-highlight-0.0.1.vsix --force
-```
+See [ticbuild_vscode](https://github.com/thenfour/ticbuild_vscode) for adding
+syntax highlighting to make the Lua preprocessing more friendly in VS Code.
 
-This will add basic syntax highlighting to the extensions to Lua.
+![alt text](.attachments/image.png)
+
 
 ## Prerequisites
 
