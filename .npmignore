@@ -1,0 +1,46 @@
+# Source files (only ship compiled code)
+src/
+tsconfig.json
+*.ts
+!*.d.ts
+
+# Tests
+*.test.js
+*.test.ts
+jest.config.js
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.env
+.env.local
+
+# Documentation & examples (keep example/)
+example/
+
+# Build artifacts that shouldn't be in npm
+*.tsbuildinfo
+buildInfo.ts
+scripts/
+
+# Git files
+.git/
+.gitignore
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IMPORTANT: Include these directories in the package
+# (they are in .gitignore but needed for npm)
+!dist/
+!templates/

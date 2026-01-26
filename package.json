@@ -21,7 +21,11 @@
     "watch",
     "cli"
   ],
-  "author": "tenfour",
+  "author": "Carl Corcoran",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thenfour/ticbuild"
+  },
   "license": "ISC",
   "devDependencies": {
     "@types/jest": "^29.0.0",
