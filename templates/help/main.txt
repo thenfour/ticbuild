@@ -1,0 +1,41 @@
+
+ticbuild {{VERSION}}
+  commit: {{COMMIT_HASH}}
+  built: {{BUILD_DATE}}
+
+usage: ticbuild [-h | --help] [-v | --version] <command> [<args>]
+
+A build and watch system for TIC-80 development
+
+Common commands:
+
+  build, b [manifest]         Build a TIC-80 cart from manifest
+  run, r [manifest]           Build and launch TIC-80
+  watch, w [manifest]         Build, launch, and watch for changes
+  init [dir]                  Initialize a new project
+
+Other commands:
+
+  tic80, t                    Launch TIC-80 directly
+  help [command]              Show help for a specific command
+
+Use 'ticbuild help <command>' or 'ticbuild <command> --help' for detailed help.
+
+Examples:
+
+  ticbuild build
+    Build using first *.ticbuild.jsonc file in current directory
+
+  ticbuild watch my.ticbuild.jsonc
+    Build and watch a specific manifest file
+
+  ticbuild init ./myproject --name "My Game"
+    Initialize a new project in the specified directory
+
+  ticbuild build --mode release
+    Build using the 'release' build configuration
+
+Links:
+
+  GitHub:  https://github.com/thenfour/tic80effects
+  Somatic: https://somatic.tenfourmusic.net

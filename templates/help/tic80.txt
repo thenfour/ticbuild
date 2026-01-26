@@ -1,0 +1,8 @@
+
+ticbuild tic80
+
+usage: ticbuild tic80
+
+Launch TIC-80 directly without building a cart
+
+This is a convenience command to quickly open TIC-80.

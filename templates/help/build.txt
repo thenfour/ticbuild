@@ -1,0 +1,23 @@
+
+ticbuild build
+
+usage: ticbuild build [manifest] [<args>]
+
+Build a TIC-80 cart from a manifest file
+
+Arguments:
+
+  [manifest]           Path to manifest file (default: first *.ticbuild.jsonc)
+
+Options:
+
+  -m, --mode <name>    Build configuration name from manifest
+  -v, --var <key=value> Override manifest variable (can be used multiple times)
+  -h, --help           Show this help message
+
+Examples:
+
+  ticbuild build
+  ticbuild build game.ticbuild.jsonc
+  ticbuild build --mode release
+  ticbuild build --var DEBUG=false --var VERSION=1.0

@@ -1,0 +1,24 @@
+
+ticbuild watch
+
+usage: ticbuild watch [options] [manifest]
+
+Build a TIC-80 cart, launch it, and watch for changes
+
+When source files or the manifest change, the cart is automatically
+rebuilt and TIC-80 is relaunched with the updated cart.
+
+Arguments:
+
+  [manifest]           Path to manifest file (default: first *.ticbuild.jsonc)
+
+Options:
+
+  -m, --mode <name>    Build configuration name from manifest
+  -v, --var <key=value> Override manifest variable (can be used multiple times)
+  -h, --help           Show this help message
+
+Examples:
+
+  ticbuild watch
+  ticbuild watch game.ticbuild.jsonc --mode debug

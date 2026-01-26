@@ -1,0 +1,23 @@
+
+ticbuild init
+
+usage: ticbuild init [options] [dir]
+
+Initialize a new ticbuild project with a template
+
+Arguments:
+
+  [dir]                Directory to initialize (default: current directory)
+
+Options:
+
+  -n, --name <name>    Project name (used in manifest)
+  -t, --template <name> Template name: 'minimal' or 'example' (default: example)
+  -f, --force          Overwrite existing files
+  -h, --help           Show this help message
+
+Examples:
+
+  ticbuild init
+  ticbuild init ./myproject --name "My Game"
+  ticbuild init . --template minimal --force

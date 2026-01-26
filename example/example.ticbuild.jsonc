@@ -1,0 +1,98 @@
+{
+  "$schema": "../ticbuild.schema.json",
+  // Example manifest for a TIC-80 project
+  "project": {
+    "name": "example-game",
+    "includeDirs": [
+      "./src",
+      "./include"
+    ],
+    "binDir": "./$(buildConfiguration)/bin",
+    "objDir": "./$(buildConfiguration)/obj",
+    "outputCartName": "example-game.tic"
+  },
+  "variables": {
+    "version": "1.0.0",
+    "author": "Example Developer"
+  },
+  "imports": [
+    {
+      "name": "maincode",
+      "path": "src/main.lua"
+    },
+    {
+      "name": "graphics",
+      "path": "./assets/example.tic",
+      "chunks": [
+        "TILES",
+        "MAP"
+      ]
+    },
+    {
+      "name": "music",
+      "path": "./assets/example.tic",
+      "chunks": [
+        "WAVEFORMS",
+        "MUSIC_PATTERNS",
+        "SFX",
+        "MUSIC_TRACKS"
+      ]
+    }
+  ],
+  "assembly": {
+    "lua": {
+      "minify": true,
+      "minification": {
+        "lineBehavior": "pretty",
+        //"stripComments": false,
+      },
+      "globals": {
+        "GAME_VERSION": "$(version)",
+        "GAME_AUTHOR": "$(author)",
+        "SHOW_HUD": true,
+        "MAX_LIVES": 3
+      }
+    },
+    "blocks": [
+      {
+        "chunks": [
+          "CODE_COMPRESSED"
+        ],
+        "asset": "maincode"
+      },
+      {
+        "asset": {
+          "import": "graphics"
+        }
+      },
+      {
+        "asset": {
+          "import": "music",
+          "chunks": [
+            "MUSIC_WAVEFORMS",
+            "MUSIC_PATTERNS",
+            "MUSIC_SFX",
+            "MUSIC_SONG"
+          ]
+        }
+      }
+    ]
+  },
+  "buildConfigurations": {
+    "release": {},
+    "debug": {
+      "project": {
+        "binDir": "./debug/bin",
+        "objDir": "./debug/obj"
+      },
+      "assembly": {
+        "lua": {
+          "minify": true,
+          "minification": {
+            "stripComments": true,
+          }
+        }
+      }
+    }
+  }
+}
