@@ -1,10 +1,10 @@
 {
   "name": "ticbuild",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "A build & watch system for TIC-80",
   "main": "dist/index.js",
   "bin": {
-    "ticbuild": "./dist/index.js"
+    "ticbuild": "dist/index.js"
   },
   "scripts": {
     "prepare": "cross-env NODE_ENV=production npm run build",
@@ -25,7 +25,7 @@
   "author": "Carl Corcoran",
   "repository": {
     "type": "git",
-    "url": "https://github.com/thenfour/ticbuild"
+    "url": "git+https://github.com/thenfour/ticbuild.git"
   },
   "license": "ISC",
   "files": [
