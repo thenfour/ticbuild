@@ -37,5 +37,5 @@ Examples:
 
 Links:
 
-  GitHub:  https://github.com/thenfour/tic80effects
+  GitHub:  https://github.com/thenfour/ticbuild
   Somatic: https://somatic.tenfourmusic.net

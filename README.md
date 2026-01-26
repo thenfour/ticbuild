@@ -13,7 +13,7 @@ A build & watch system for TIC-80 cart development.
 ## Links
 
 * [TIC-80 homepage](https://tic80.com/)
-* [Github](...)
+* [Github](https://github.com/thenfour/ticbuild)
 * [Discord](https://discord.gg/kkf9gQfKAd)
 * [Somatic - web-based TIC-80 music tracker](https://somatic.tenfourmusic.net/)
 
