@@ -30,12 +30,6 @@ Install ticbuild globally using npm:
 npm install -g ticbuild
 ```
 
-Or use it directly with npx without installing:
-
-```bash
-npx ticbuild --help
-```
-
 ## Lua preprocessor + syntax highlighting
 
 ```bash
@@ -55,22 +49,22 @@ This will add basic syntax highlighting to the extensions to Lua.
 ```bash
 
 # see detailed help
-npx ticbuild help
+ticbuild help
 
 # see help for a specific command
-npx ticbuild help build
+ticbuild help build
 
 # build from manifest -> .tic cart
-npx ticbuild build
+ticbuild build
 
 # build and launch in a tic80
-npx ticbuild run
+ticbuild run
 
 # build and live-update with changes in a tic80
-npx ticbuild watch
+ticbuild watch
 
 # create a new empty project
-npx ticbuild init
+ticbuild init
 
 ```
 
