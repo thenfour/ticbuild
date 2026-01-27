@@ -16,6 +16,7 @@ Options:
 
   -m, --mode <name>    Build configuration name from manifest
   -v, --var <key=value> Override manifest variable (can be used multiple times)
+  --remoting-verbose   Verbose TIC-80 remoting output
   -h, --help           Show this help message
 
 Examples:

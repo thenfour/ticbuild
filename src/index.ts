@@ -120,6 +120,7 @@ async function main(): Promise<void> {
     .alias("w")
     .description("Build, launch TIC-80, and watch for changes")
     .option("-m, --mode <name>", "Build configuration name")
+    .option("--remoting-verbose", "Verbose TIC-80 remoting output")
     .option(
       "-v, --var <key=value>",
       "Override manifest variable",

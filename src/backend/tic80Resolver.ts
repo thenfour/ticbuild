@@ -10,7 +10,14 @@ import { VanillaTic80Controller } from "./tic80Controller/vanillaController";
 import { CustomTic80Controller } from "./tic80Controller/customController";
 import { ITic80Controller } from "./tic80Controller/tic80Controller";
 
-export function createTic80Controller(projectDir: string): ITic80Controller | undefined {
+export interface Tic80ControllerOptions {
+  remotingVerbose?: boolean;
+}
+
+export function createTic80Controller(
+  projectDir: string,
+  options?: Tic80ControllerOptions,
+): ITic80Controller | undefined {
   // Load .env first, then .env.local (which overrides)
   const envPath = path.join(projectDir, ".env");
   const envLocalPath = path.join(projectDir, ".env.local");
@@ -23,5 +30,5 @@ export function createTic80Controller(projectDir: string): ITic80Controller | un
   }
 
   // use the built-in custom build of TIC-80
-  return new CustomTic80Controller(projectDir);
+  return new CustomTic80Controller(projectDir, options);
 }

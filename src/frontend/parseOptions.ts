@@ -23,6 +23,7 @@ function parseVariableOverrides(vars: string[]): Record<string, string> {
 export interface CommandLineOptions {
   mode?: string;
   var?: string[];
+  remotingVerbose?: boolean;
 }
 
 export function parseBuildOptions(

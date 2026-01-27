@@ -87,7 +87,9 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
 
       // Resolve TIC-80 controller
       if (!tic80Controller) {
-        tic80Controller = createTic80Controller(project.resolvedCore.projectDir);
+        tic80Controller = createTic80Controller(project.resolvedCore.projectDir, {
+          remotingVerbose: !!options?.remotingVerbose,
+        });
       }
       if (!tic80Controller) {
         cons.error("Failed to resolve TIC-80 controller");
