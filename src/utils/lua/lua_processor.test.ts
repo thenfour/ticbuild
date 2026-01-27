@@ -93,3 +93,60 @@ describe("Lua printer numeric literal formatting", () => {
     }
   });
 });
+
+describe("Lua printer parenthesis handling", () => {
+  const options: OptimizationRuleOptions = {
+    stripComments: true,
+    maxIndentLevel: 1,
+    lineBehavior: "tight",
+    maxLineLength: 180,
+    renameLocalVariables: false,
+    aliasRepeatedExpressions: false,
+    aliasLiterals: false,
+    packLocalDeclarations: false,
+    simplifyExpressions: false,
+    removeUnusedLocals: false,
+    removeUnusedFunctions: false,
+    functionNamesToKeep: [],
+    renameTableFields: false,
+    tableEntryKeysToRename: [],
+  };
+
+  it("should preserve left-associative grouping when right operand has equal precedence", () => {
+    const input = "local z = ((yi > y) ~= (yj > y))";
+    const output = processLua(input, options);
+
+    expect(output).toContain("z=yi>y~=(yj>y)");
+  });
+
+  it("should parenthesize non-prefix expressions before accessors and calls", () => {
+    {
+      const input = "v=({0,8,2,10})[1]";
+      const output = processLua(input, options);
+
+      expect(output).toContain("({0,8,2,10})[1]");
+    }
+
+    {
+      const input = "local g=(function() trace(1) end)()";
+      const output = processLua(input, options);
+
+      expect(output).toContain("(function()");
+      expect(output).toContain("end)()");
+    }
+
+    {
+      const input = '("hello"):upper()';
+      const output = processLua(input, options);
+
+      expect(output).toContain('("hello"):upper()');
+    }
+
+    {
+      const input = "(a+b)[1]";
+      const output = processLua(input, options);
+
+      expect(output).toContain("(a+b)[1]");
+    }
+  });
+});

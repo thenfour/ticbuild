@@ -964,9 +964,11 @@ export class LuaPrinter {
 
   private binaryExpr(node: luaparse.BinaryExpression, parentPrec: number): string {
     const prec = getPrecedence(node);
+    const isRightAssociative = this.isRightAssociativeOperator(node.operator);
     const left = node.operator === ".." ? this.concatLeftExpr(node.left, prec) : this.expr(node.left, prec);
     const rightRaw = node.operator === ".." ? this.concatRightExpr(node.right, prec) : this.expr(node.right, prec);
-    const right = node.operator === ".." ? this.ensureConcatSafeRight(rightRaw) : rightRaw;
+    const rightSafe = node.operator === ".." ? this.ensureConcatSafeRight(rightRaw) : rightRaw;
+    const right = !isRightAssociative && getPrecedence(node.right) === prec ? `(${rightSafe})` : rightSafe;
     let s = `${left}${node.operator}${right}`;
     if (prec < parentPrec) s = `(${s})`;
     return s;
@@ -1015,7 +1017,8 @@ export class LuaPrinter {
   private logicalExpr(node: luaparse.LogicalExpression, parentPrec: number): string {
     const prec = getPrecedence(node);
     const left = this.expr(node.left, prec);
-    const right = this.expr(node.right, prec);
+    const rightRaw = this.expr(node.right, prec);
+    const right = getPrecedence(node.right) === prec ? `(${rightRaw})` : rightRaw;
     let s = `${left} ${node.operator} ${right}`;
     if (prec < parentPrec) s = `(${s})`;
     return s;
@@ -1023,35 +1026,58 @@ export class LuaPrinter {
 
   private memberExpr(node: luaparse.MemberExpression): string {
     // luaparse usually gives . or : in node.indexer
-    const base = this.expr(node.base, 100); // force parens if non-primary
+    const base = this.prefixBase(node.base);
     const id = this.expr(node.identifier);
     const indexer = node.indexer || ".";
     return `${base}${indexer}${id}`;
   }
 
   private indexExpr(node: luaparse.IndexExpression): string {
-    const base = this.expr(node.base, 100);
+    const base = this.prefixBase(node.base);
     return `${base}[${this.expr(node.index)}]`;
   }
 
   private callExpr(node: luaparse.CallExpression): string {
-    const base = this.expr(node.base, 100);
+    const base = this.prefixBase(node.base);
     const args = node.arguments.map((a) => this.expr(a)).join(",");
     return `${base}(${args})`;
   }
 
   private tableCallExpr(node: luaparse.TableCallExpression): string {
     // sugar: f{...}  → f({ ... })
-    const base = this.expr(node.base, 100);
+    const base = this.prefixBase(node.base);
     const arg = this.expr(node.arguments);
     return `${base}(${arg})`;
   }
 
   private stringCallExpr(node: luaparse.StringCallExpression): string {
     // sugar: f"str" → f("str")
-    const base = this.expr(node.base, 100);
+    const base = this.prefixBase(node.base);
     const arg = this.stringLiteral(node.argument as luaparse.StringLiteral);
     return `${base}(${arg})`;
+  }
+
+  private isRightAssociativeOperator(op: string): boolean {
+    return op === "^" || op === "..";
+  }
+
+  private isPrefixExpression(node: luaparse.Expression): boolean {
+    switch (node.type) {
+      case "Identifier":
+      case "MemberExpression":
+      case "IndexExpression":
+      case "CallExpression":
+      case "TableCallExpression":
+      case "StringCallExpression":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private prefixBase(node: luaparse.Expression): string {
+    const base = this.expr(node, 100);
+    return this.isPrefixExpression(node) ? base : `(${base})`;
   }
 
   private functionExpr(node: luaparse.FunctionDeclaration): string {
