@@ -965,7 +965,8 @@ export class LuaPrinter {
   private binaryExpr(node: luaparse.BinaryExpression, parentPrec: number): string {
     const prec = getPrecedence(node);
     const isRightAssociative = this.isRightAssociativeOperator(node.operator);
-    const left = node.operator === ".." ? this.concatLeftExpr(node.left, prec) : this.expr(node.left, prec);
+    const leftRaw = node.operator === ".." ? this.concatLeftExpr(node.left, prec) : this.expr(node.left, prec);
+    const left = isRightAssociative && getPrecedence(node.left) === prec ? `(${leftRaw})` : leftRaw;
     const rightRaw = node.operator === ".." ? this.concatRightExpr(node.right, prec) : this.expr(node.right, prec);
     const rightSafe = node.operator === ".." ? this.ensureConcatSafeRight(rightRaw) : rightRaw;
     const right = !isRightAssociative && getPrecedence(node.right) === prec ? `(${rightSafe})` : rightSafe;
@@ -1077,7 +1078,12 @@ export class LuaPrinter {
 
   private prefixBase(node: luaparse.Expression): string {
     const base = this.expr(node, 100);
-    return this.isPrefixExpression(node) ? base : `(${base})`;
+    if (this.isPrefixExpression(node)) return base;
+    return this.isParenthesized(base) ? base : `(${base})`;
+  }
+
+  private isParenthesized(text: string): boolean {
+    return text.length >= 2 && text.startsWith("(") && text.endsWith(")");
   }
 
   private functionExpr(node: luaparse.FunctionDeclaration): string {

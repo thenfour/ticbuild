@@ -143,10 +143,40 @@ describe("Lua printer parenthesis handling", () => {
     }
 
     {
-      const input = "(a+b)[1]";
+      const input = "local x = (a+b)[1]";
       const output = processLua(input, options);
 
       expect(output).toContain("(a+b)[1]");
+    }
+  });
+
+  it("should preserve right-associative grouping when left operand has equal precedence", () => {
+    {
+      const input = "local z = (a^b)^c";
+      const output = processLua(input, options);
+
+      expect(output).toContain("(a^b)^c");
+    }
+
+    {
+      const input = "local z = a^b^c";
+      const output = processLua(input, options);
+
+      expect(output).toContain("a^b^c");
+    }
+
+    {
+      const input = "local s = (a..b)..c";
+      const output = processLua(input, options);
+
+      expect(output).toContain("(a..b)..c");
+    }
+
+    {
+      const input = "local s = a..b..c";
+      const output = processLua(input, options);
+
+      expect(output).toContain("a..b..c");
     }
   });
 });
