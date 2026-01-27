@@ -1,5 +1,31 @@
 import { processLua, OptimizationRuleOptions } from "./lua_processor";
 
+describe("Lua base language support", () => {
+  it("should parse integer division operator without errors", () => {
+    const options: OptimizationRuleOptions = {
+      stripComments: true,
+      maxIndentLevel: 1,
+      lineBehavior: "tight",
+      maxLineLength: 180,
+      renameLocalVariables: false,
+      aliasRepeatedExpressions: false,
+      aliasLiterals: false,
+      packLocalDeclarations: false,
+      simplifyExpressions: false,
+      removeUnusedLocals: false,
+      removeUnusedFunctions: false,
+      functionNamesToKeep: [],
+      renameTableFields: false,
+      tableEntryKeysToRename: [],
+    };
+
+    const input = "local z = 5//2";
+    const output = processLua(input, options);
+
+    expect(output).toContain("5//2");
+  });
+});
+
 describe("Lua printer numeric literal formatting", () => {
   it("should keep leading zero after string concatenation", () => {
     const options: OptimizationRuleOptions = {

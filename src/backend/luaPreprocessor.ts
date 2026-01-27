@@ -13,6 +13,7 @@ import { encodeBinaryAsLuaLiteral, normalizeBinaryOutputEncoding } from "./luaBi
 import { loadBinaryImportData, loadTextImportData, parseImportReference } from "./importUtils";
 import { kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
+import { parseLua } from "../utils/lua/lua_processor";
 
 export type LuaPreprocessorValue = string | number | boolean;
 
@@ -415,7 +416,7 @@ function parseWithOverrides(
 
 function parseExpression(exprText: string, filePath: string, lineNumber: number): luaparse.Expression {
   try {
-    const chunk = luaparse.parse(`return ${exprText}`);
+    const chunk = parseLua(`return ${exprText}`)!;
     if (chunk.body.length === 0 || chunk.body[0].type !== "ReturnStatement") {
       throw new Error("Invalid expression");
     }
@@ -700,7 +701,7 @@ function applyMacroPass(
   macros: Map<string, MacroDefinition>,
   filePath: string,
 ): { code: string; changed: boolean } {
-  const chunk = luaparse.parse(code, { ranges: true, locations: true }) as luaparse.Chunk;
+  const chunk = parseLua(code)!;
   const replacements: Array<{ start: number; end: number; text: string }> = [];
 
   walkLuaAst(chunk, (node, parent) => {
@@ -808,7 +809,7 @@ async function expandPreprocessorCalls(
   filePath: string,
   state: PreprocessorState,
 ): Promise<string> {
-  const chunk = luaparse.parse(code, { ranges: true, locations: true }) as luaparse.Chunk;
+  const chunk = parseLua(code)!;
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   const tasks: Promise<void>[] = [];
 
@@ -985,7 +986,7 @@ async function expandPreprocessorCalls(
 
 function parseExpressionWithRanges(body: string, filePath: string, lineNumber: number): luaparse.Node {
   try {
-    const chunk = luaparse.parse(`return ${body}`, { ranges: true, locations: true }) as luaparse.Chunk;
+    const chunk = parseLua(`return ${body}`)!;
     if (chunk.body.length === 0 || chunk.body[0].type !== "ReturnStatement") {
       throw new Error("Invalid expression");
     }
