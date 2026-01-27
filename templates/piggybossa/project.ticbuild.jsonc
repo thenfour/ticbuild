@@ -1,0 +1,69 @@
+{
+    "$schema": "./.ticbuild/ticbuild.schema.json",
+    "project": {
+        "name": "templatebase",
+        "importDirs": [
+            "assets"
+        ],
+        "includeDirs": [
+            "src"
+        ],
+        "binDir": "./build/$(buildConfiguration)-bin",
+        "objDir": "./build/$(buildConfiguration)-obj",
+        "outputCartName": "$(project.name).tic"
+    },
+    "imports": [
+        {
+            "name": "maincode",
+            "path": "src/main.lua"
+        },
+        {
+            "name": "song",
+            "path": "assets/bossa.tic"
+        },
+        {
+            "name": "sprites",
+            "path": "assets/piggysprites.tic"
+        }
+    ],
+    "assembly": {
+        "lua": {
+            "minify": false
+        },
+        "blocks": [
+            {
+                "asset": "maincode"
+            },
+            {
+                "asset": "song",
+                "chunks": [
+                    "MUSIC_PATTERNS",
+                    "MUSIC_TRACKS",
+                    "WAVEFORMS",
+                    "SFX"
+                ]
+            },
+            {
+                "asset": "sprites",
+                "chunks": [
+                    "TILES",
+                    "PALETTE"
+                ]
+            }
+        ]
+    },
+    "buildConfigurations": {
+        // By default, optimal settings are used. Let's define a "debug" build configuration that
+        // disables minification.
+        "debug": {
+            "variables": {
+                "DEBUG": "1"
+            },
+            "assembly": {
+                "lua": {
+                    "minify": false
+                }
+            }
+        }
+    }
+}
