@@ -71,9 +71,20 @@ ticbuild init
 
 ## TIC-80 binary location
 
+By default, `ticbuild` will use a special build of TIC-80 which allows profiling and
+interop to support remote control.
+
+If you want to use your own or external TIC-80, set an environment variable
+(via `.env` and `.env.local`) `USE_EXTERNAL_TIC80=1`.
+
 The TIC-80 location is searched in the `%PATH%`, but otherwise it can be overridden
-via `.env` and `.env.local` in the project directory, with the key `TIC80_LOCATION`,
+via `.env` / `.env.local` in the project directory, with the key `TIC80_LOCATION`,
 as a full path to `tic80.exe`.
+
+```bash
+USE_EXTERNAL_TIC80=1                    # use own build of tic80.exe. defaults to falsy
+TIC80_LOCATION=c:\my\custom\tic80.exe # optional. ignored without USE_EXTERNAL_TIC80=1
+```
 
 # Project manifest
 

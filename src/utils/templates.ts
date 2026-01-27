@@ -13,8 +13,14 @@ export function applyTemplateVariables(template: string, variables: Record<strin
   return output;
 }
 
+// does not check for existence
+export function getPathRelativeToTemplates(more: string): string {
+  const fullpath = path.resolve(__dirname, "..", "..", "templates", more);
+  return fullpath;
+}
+
 export function resolveTemplateDir(name: string): string {
-  const templateDir = path.resolve(__dirname, "..", "..", "templates", name);
+  const templateDir = getPathRelativeToTemplates(name);
   if (!fs.existsSync(templateDir)) {
     throw new Error(`Template not found: ${templateDir}`);
   }

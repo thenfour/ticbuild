@@ -2,41 +2,26 @@
 // 1. TIC80_LOCATION environment variable from .env/.env.local
 // 2. tic80 or tic80.exe in PATH
 
-import {config} from 'dotenv';
-import * as path from 'path';
+import { config } from "dotenv";
+import * as path from "path";
 
-import {fileExists, findExecutableInPath} from '../utils/fileSystem';
+import { getPathRelativeToTemplates } from "../utils/templates";
+import { VanillaTic80Controller } from "./tic80Controller/vanillaController";
+import { CustomTic80Controller } from "./tic80Controller/customController";
+import { ITic80Controller } from "./tic80Controller/tic80Controller";
 
-export interface Tic80Location {
-  path: string;
-  source: 'env'|'path';
-}
+export function createTic80Controller(projectDir: string): ITic80Controller | undefined {
+  // Load .env first, then .env.local (which overrides)
+  const envPath = path.join(projectDir, ".env");
+  const envLocalPath = path.join(projectDir, ".env.local");
+  config({ path: envPath });
+  config({ path: envLocalPath });
 
-export function resolveTic80Location(projectDir: string): Tic80Location|
-    undefined {
-  // Load .env files if project directory is provided
-  if (projectDir) {
-    const envPath = path.join(projectDir, '.env');
-    const envLocalPath = path.join(projectDir, '.env.local');
-
-    // Load .env first, then .env.local (which overrides)
-    config({path: envPath});
-    config({path: envLocalPath});
+  const useExternalPath = process.env.USE_EXTERNAL_TIC80;
+  if (useExternalPath === "1" || useExternalPath === "true") {
+    return new VanillaTic80Controller(projectDir);
   }
 
-  // Check TIC80_LOCATION environment variable
-  const envLocation = process.env.TIC80_LOCATION;
-  if (envLocation) {
-    if (fileExists(envLocation)) {
-      return {path: envLocation, source: 'env'};
-    }
-  }
-
-  // Search in PATH
-  const pathLocation = findExecutableInPath('tic80');
-  if (pathLocation) {
-    return {path: pathLocation, source: 'path'};
-  }
-
-  return undefined;
+  // use the built-in custom build of TIC-80
+  return new CustomTic80Controller(projectDir);
 }

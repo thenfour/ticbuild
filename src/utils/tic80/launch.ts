@@ -1,9 +1,12 @@
 import { ChildProcess, spawn } from "node:child_process";
+import * as cons from "../console";
 
 // launches it and returns the process id / handle / something that can be used to
 // monitor and kill the running instance. Returns immediately; does not wait for the process to finish.
 export async function launchProcessReturnImmediately(exePath: string, args: string[] = []): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
+    cons.dim(`Launching: ${exePath} ${args.join(" ")}`);
+
     const child = spawn(exePath, args, {
       stdio: "ignore",
       detached: true,
@@ -15,10 +18,10 @@ export async function launchProcessReturnImmediately(exePath: string, args: stri
     resolve(child); // resolve immediately with the child process
   });
 }
-
 //
 export async function launchProcessAndWait(exePath: string, args: string[] = []): Promise<number> {
   return new Promise((resolve, reject) => {
+    cons.dim(`Launching: ${exePath} ${args.join(" ")}`);
     const child = spawn(exePath, args, {
       stdio: "inherit",
     });

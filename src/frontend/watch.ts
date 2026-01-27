@@ -1,42 +1,39 @@
-import { ChildProcess } from "node:child_process";
 import chokidar from "chokidar";
 import { TicbuildProject } from "../backend/project";
-import { resolveTic80Location } from "../backend/tic80Resolver";
+import { createTic80Controller } from "../backend/tic80Resolver";
 import * as cons from "../utils/console";
-import { launchProcessReturnImmediately } from "../utils/tic80/launch";
 import { getWindowPosition, setWindowPosition, waitForWindow, WindowPlacement } from "../utils/windowPosition";
 import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
-import { assert } from "../utils/errorHandling";
+import { ITic80Controller } from "../backend/tic80Controller/tic80Controller";
 
 export async function watchCommand(manifestPath?: string, options?: CommandLineOptions): Promise<void> {
   cons.info("ticbuild: watch command");
 
-  let tic80Process: ChildProcess | undefined;
+  // needs to be mutable because it depends on env for tic80 location, which relies on project dir, which can change.
+  let tic80Controller: ITic80Controller | undefined = undefined;
   let isBuilding = false;
   let pendingRebuild = false;
   let watcher: chokidar.FSWatcher | undefined;
   let currentWatchPaths: string[] = [];
-  let savedWindowPosition: WindowPlacement | null = null;
+  //let savedWindowPosition: WindowPlacement | null = null;
 
-  // Function to kill existing TIC-80 process
-  const killTic80 = async () => {
-    if (tic80Process && !tic80Process.killed) {
-      cons.dim(`  Killing existing TIC-80 process (PID ${tic80Process.pid})...`);
-      assert(tic80Process.pid !== undefined);
+  // const stopTic80 = async () => {
+  //   const pid = tic80Controller?.getPid();
+  //   if (pid) {
+  //     cons.dim(`  Stopping TIC-80 (PID ${pid})...`);
 
-      // Save window position before killing
-      savedWindowPosition = await getWindowPosition(tic80Process.pid);
-      if (savedWindowPosition) {
-        cons.dim(
-          `  Saved window position: (${savedWindowPosition.x}, ${savedWindowPosition.y}) ${savedWindowPosition.width}x${savedWindowPosition.height}`,
-        );
-      }
+  //     // Save window position before stopping
+  //     savedWindowPosition = await getWindowPosition(pid);
+  //     if (savedWindowPosition) {
+  //       cons.dim(
+  //         `  Saved window position: (${savedWindowPosition.x}, ${savedWindowPosition.y}) ${savedWindowPosition.width}x${savedWindowPosition.height}`,
+  //       );
+  //     }
+  //   }
 
-      tic80Process.kill();
-      tic80Process = undefined;
-    }
-  };
+  //   await tic80Controller?.stop();
+  // };
 
   // Function to update the watched file list
   const updateWatchList = async () => {
@@ -107,36 +104,46 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
       const project = TicbuildProject.loadFromManifest(projectLoadOptions);
       const outputFilePath = project.resolvedCore.getOutputFilePath();
 
-      // Resolve TIC-80 location
-      const tic80Location = resolveTic80Location(project.resolvedCore.projectDir);
-      if (!tic80Location) {
-        cons.error(
-          "TIC-80 executable not found. Please install TIC-80 and ensure it is in your PATH, or set TIC80_LOCATION in .env/.env.local.",
-        );
+      // Resolve TIC-80 controller
+      if (!tic80Controller) {
+        tic80Controller = createTic80Controller(project.resolvedCore.projectDir);
+      }
+      if (!tic80Controller) {
+        cons.error("Failed to resolve TIC-80 controller");
         process.exit(1);
       }
 
-      // Kill existing TIC-80 process before launching new one
-      await killTic80();
-
-      // Launch TIC-80 with the built cartridge
+      // Launch/reload TIC-80 with the built cartridge
       cons.h1("Launching TIC-80 with built cartridge...");
       cons.info(`  ${outputFilePath}`);
-      tic80Process = await launchProcessReturnImmediately(tic80Location.path, [outputFilePath, "--skip"]);
-      cons.success("TIC-80 launched successfully.");
+
+      // If there's a running instance, try to save its window position before reload.
+      // const existingPid = tic80Controller.getPid();
+      // if (existingPid) {
+      //   savedWindowPosition = await getWindowPosition(existingPid);
+      //   if (savedWindowPosition) {
+      //     cons.dim(
+      //       `  Saved window position: (${savedWindowPosition.x}, ${savedWindowPosition.y}) ${savedWindowPosition.width}x${savedWindowPosition.height}`,
+      //     );
+      //   }
+      // }
+
+      await tic80Controller.launchAndControlCart(outputFilePath);
+      //cons.success("TIC-80 launched successfully.");
 
       // Restore window position if we have one saved
-      if (savedWindowPosition && tic80Process.pid) {
-        cons.dim("  Waiting for window to appear...");
-        const windowFound = await waitForWindow(tic80Process.pid, 3000);
-        if (windowFound) {
-          cons.dim("  Restoring window position...");
-          const restored = await setWindowPosition(tic80Process.pid, savedWindowPosition);
-          if (restored) {
-            cons.dim("  Window position restored.");
-          }
-        }
-      }
+      // const newPid = tic80Controller.getPid();
+      // if (savedWindowPosition && newPid) {
+      //   cons.dim("  Waiting for window to appear...");
+      //   const windowFound = await waitForWindow(newPid, 3000);
+      //   if (windowFound) {
+      //     cons.dim("  Restoring window position...");
+      //     const restored = await setWindowPosition(newPid, savedWindowPosition);
+      //     if (restored) {
+      //       cons.dim("  Window position restored.");
+      //     }
+      //   }
+      // }
 
       // If the manifest changed, update the watch list
       if (changedPath === project.resolvedCore.manifestPath) {
@@ -190,7 +197,9 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
   // Handle process exit to clean up
   const cleanup = async () => {
     cons.info("\nShutting down...");
-    await killTic80();
+    if (tic80Controller) {
+      await tic80Controller.stop();
+    }
     if (watcher) {
       watcher.close();
     }
@@ -199,7 +208,7 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
 
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
-  process.on("SIGTERM", cleanup);
+  process.on("SIGQUIT", cleanup);
 
   // Keep the process alive
   await new Promise(() => {});

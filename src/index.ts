@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { resolveTic80Location } from "./backend/tic80Resolver";
+import { createTic80Controller } from "./backend/tic80Resolver";
 import { buildInfo } from "./buildInfo";
 import { buildCommand } from "./frontend/build";
 import { initCommand, InitOptions } from "./frontend/init";
@@ -17,18 +17,15 @@ import {
   printTic80Help,
   printWatchHelp,
 } from "./utils/help";
-import { launchProcessReturnImmediately } from "./utils/tic80/launch";
 import { getBuildVersionTag } from "./utils/versionString";
 
 async function launchTic80(): Promise<void> {
-  const tic80Location = resolveTic80Location(process.cwd());
+  const tic80Location = createTic80Controller(process.cwd());
   if (!tic80Location) {
-    console.error(
-      "TIC-80 executable not found. Please install TIC-80 and ensure it is in your PATH, or set TIC80_LOCATION in .env/.env.local.",
-    );
+    console.error("TIC-80 controller could not be created.");
     process.exit(1);
   }
-  await launchProcessReturnImmediately(tic80Location.path, ["--skip"]);
+  await tic80Location.launchFireAndForget();
 }
 
 async function main(): Promise<void> {
