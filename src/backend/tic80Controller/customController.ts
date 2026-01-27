@@ -16,6 +16,8 @@ export class CustomTic80Controller implements ITic80Controller {
   private readonly host = "127.0.0.1";
   private readonly port = 9977;
   private readonly remotingVerbose: boolean;
+  private exitHandlers: Set<() => void> = new Set();
+  private suppressExitSignal = false;
 
   constructor(projectDir: string, options?: { remotingVerbose?: boolean }) {
     this.tic80Path = getPathRelativeToTemplates("TIC-80-ticbuild/tic80.exe");
@@ -54,9 +56,11 @@ export class CustomTic80Controller implements ITic80Controller {
 
     if (this.tic80Process && !this.tic80Process.killed) {
       const process = this.tic80Process;
+      this.suppressExitSignal = true;
       this.tic80Process.kill();
       await this.waitForExit(process, 1000);
     }
+    this.suppressExitSignal = false;
     this.tic80Process = undefined;
   }
 
@@ -67,14 +71,32 @@ export class CustomTic80Controller implements ITic80Controller {
 
     const args = ["--skip", `--remoting-port=${this.port}`];
     this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, args);
+    const processRef = this.tic80Process;
+    if (processRef) {
+      processRef.once("exit", () => this.handleProcessExit(processRef));
+      processRef.once("close", () => this.handleProcessExit(processRef));
+    }
+  }
 
-    this.tic80Process.on("exit", () => {
-      this.tic80Process = undefined;
-      if (this.client) {
-        this.client.close();
-        this.client = undefined;
-      }
-    });
+  onExit(handler: () => void): void {
+    this.exitHandlers.add(handler);
+  }
+
+  private handleProcessExit(processRef: ChildProcess): void {
+    if (this.tic80Process !== processRef) {
+      return;
+    }
+    this.tic80Process = undefined;
+    if (this.client) {
+      this.client.close();
+      this.client = undefined;
+    }
+    if (this.suppressExitSignal) {
+      return;
+    }
+    for (const handler of this.exitHandlers) {
+      handler();
+    }
   }
 
   private async ensureConnected(): Promise<void> {

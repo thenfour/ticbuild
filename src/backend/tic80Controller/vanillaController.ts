@@ -30,6 +30,8 @@ export class VanillaTic80Controller implements ITic80Controller {
   tic80Path: string;
   connectToPort: number = 9977;
   private tic80Process: ChildProcess | undefined;
+  private exitHandlers: Set<() => void> = new Set();
+  private suppressExitSignal = false;
 
   private async waitForExit(process: ChildProcess, timeoutMs: number): Promise<void> {
     // Best-effort: detached/unref'd processes may not always emit in time.
@@ -67,9 +69,11 @@ export class VanillaTic80Controller implements ITic80Controller {
   async stop(): Promise<void> {
     if (this.tic80Process && !this.tic80Process.killed) {
       const prev = this.tic80Process;
+      this.suppressExitSignal = true;
       this.tic80Process.kill();
       await this.waitForExit(prev, 750);
     }
+    this.suppressExitSignal = false;
     this.tic80Process = undefined;
   }
 
@@ -113,6 +117,12 @@ export class VanillaTic80Controller implements ITic80Controller {
 
     this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, args);
 
+    const processRef = this.tic80Process;
+    if (processRef) {
+      processRef.once("exit", () => this.handleProcessExit(processRef));
+      processRef.once("close", () => this.handleProcessExit(processRef));
+    }
+
     const newPid = this.tic80Process?.pid;
     console.log(`[VanillaController] New TIC-80 PID: ${newPid}`);
     if (savedWindowPosition && newPid && process.platform === "win32") {
@@ -128,6 +138,23 @@ export class VanillaTic80Controller implements ITic80Controller {
       console.log(
         `[VanillaController] Skipping window restore (savedPosition=${!!savedWindowPosition}, newPid=${newPid}, platform=${process.platform})`,
       );
+    }
+  }
+
+  onExit(handler: () => void): void {
+    this.exitHandlers.add(handler);
+  }
+
+  private handleProcessExit(processRef: ChildProcess): void {
+    if (this.tic80Process !== processRef) {
+      return;
+    }
+    this.tic80Process = undefined;
+    if (this.suppressExitSignal) {
+      return;
+    }
+    for (const handler of this.exitHandlers) {
+      handler();
     }
   }
 }

@@ -20,4 +20,8 @@ export interface ITic80Controller {
   // for remote builds, sends IPC command to close.
   // does not wait for the process to exit, does not return exit code.
   stop(): Promise<void>;
+
+  // register a callback for when the TIC-80 process exits on its own.
+  // callbacks may be invoked multiple times if the process is restarted.
+  onExit(handler: () => void): void;
 }

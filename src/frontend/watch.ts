@@ -11,10 +11,12 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
 
   // needs to be mutable because it depends on env for tic80 location, which relies on project dir, which can change.
   let tic80Controller: ITic80Controller | undefined = undefined;
+  let tic80ControllerInitialized = false;
   let isBuilding = false;
   let pendingRebuild = false;
   let watcher: chokidar.FSWatcher | undefined;
   let currentWatchPaths: string[] = [];
+  let isShuttingDown = false;
 
   // Function to update the watched file list
   const updateWatchList = async () => {
@@ -95,6 +97,12 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
         cons.error("Failed to resolve TIC-80 controller");
         process.exit(1);
       }
+      if (!tic80ControllerInitialized) {
+        tic80ControllerInitialized = true;
+        tic80Controller.onExit(() => {
+          cleanup("TIC-80 process closed");
+        });
+      }
 
       // Launch/reload TIC-80 with the built cartridge
       cons.h1("Launching TIC-80 with built cartridge...");
@@ -153,8 +161,15 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
   });
 
   // Handle process exit to clean up
-  const cleanup = async () => {
+  const cleanup = async (reason?: string) => {
+    if (isShuttingDown) {
+      return;
+    }
+    isShuttingDown = true;
     cons.info("\nShutting down...");
+    if (reason) {
+      cons.info(`  ${reason}`);
+    }
     if (tic80Controller) {
       await tic80Controller.stop();
     }
