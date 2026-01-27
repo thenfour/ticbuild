@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cons from "../utils/console";
-import { copyFile, ensureDir, fileExists, isDirectoryEmpty } from "../utils/fileSystem";
+import { copyFile, ensureDir, fileExists, isDirectory, isDirectoryEmpty } from "../utils/fileSystem";
 import { applyTemplateVariables, resolveTemplateDir } from "../utils/templates";
 
 export type InitOptions = {
@@ -67,6 +67,40 @@ function isTemplateTextFile(filePath: string): boolean {
 }
 
 /////////////////////////////////////////////////////////////////////////////////
+function containsTicbuildManifest(dirPath: string): boolean {
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      if (containsTicbuildManifest(entryPath)) {
+        return true;
+      }
+      continue;
+    }
+    if (entry.name.toLowerCase().endsWith(".ticbuild.jsonc")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/////////////////////////////////////////////////////////////////////////////////
+function resolveAndValidateTemplateDir(templateOption: string): string {
+  const isAbsolute = path.isAbsolute(templateOption);
+  const templateDir = isAbsolute ? templateOption : resolveTemplateDir(templateOption);
+
+  if (!isDirectory(templateDir)) {
+    throw new Error(`Template path is not a directory: ${templateDir}`);
+  }
+
+  if (!containsTicbuildManifest(templateDir)) {
+    throw new Error(`Template is missing *.ticbuild.jsonc: ${templateDir}`);
+  }
+
+  return templateDir;
+}
+
+/////////////////////////////////////////////////////////////////////////////////
 export async function initCommand(targetDir?: string, options?: InitOptions): Promise<void> {
   const resolvedDir = path.resolve(process.cwd(), targetDir || ".");
   ensureDir(resolvedDir);
@@ -76,7 +110,7 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
   }
 
   const projectName = options?.name?.trim() || path.basename(resolvedDir);
-  const templateDir = resolveTemplateDir(options?.template || "minimal");
+  const templateDir = resolveAndValidateTemplateDir(options?.template || "minimal");
 
   copyTemplateDir(templateDir, resolvedDir, { PROJECT_NAME: projectName }, options?.force === true);
 
