@@ -5,6 +5,7 @@ A build & watch system for TIC-80 cart development.
 
 * Multi-file Lua dev system
 * Watch system: live-update a running tic80 when dependent files are updated.
+* Timing and profiling information
 * Import data from existing carts
 * Rich Lua preprocessing
 * Code size up to 512kb
@@ -22,6 +23,48 @@ A build & watch system for TIC-80 cart development.
 This project is free, a labor of love; if you find it useful, please support by spreading the word or,
 
 [![Support me on ko-fi](.attachments/support_me_on_kofi_beige.png)](https://ko-fi.com/E1E71QVJ5Z)
+
+# 2-minute quick start
+
+The best dev experience is through:
+
+* Windows
+* VS Code as your editor
+
+If you're cool with that, this is going to be easy. Open a command prompt and follow this:
+
+```bash
+# Install ticbuild so it's usable on the system as `ticbuild`
+> npm install -g ticbuild
+
+# go where you want to create the project
+> cd c:\my_projects
+
+# Initialize a minimal example project
+> ticbuild init MyDemo
+
+# Open VS Code
+> code MyDemo
+```
+
+In VS Code, hit <kbd>F5</kbd> to build and watch for changes. A TIC-80 opens
+with the example project.
+
+Open `src/main.lua`. Change the background color:
+
+```lua
+  cls(9) -- changed from cls(0)
+```
+
+When you save the file, violà, the TIC-80 shows the new background color.
+
+Also notice the TIC-80 shows timing and FPS information.
+
+![alt text](.attachments/image-1.png)
+
+For the full experience, now install [the VS Code syntax highlighting extension](https://marketplace.visualstudio.com/items?itemName=TridentLoop.ticbuild-vs-code)
+
+And you will get full syntax highlighting for the Lua language extensions.
 
 # Installation
 

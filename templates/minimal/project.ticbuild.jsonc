@@ -1,43 +1,22 @@
-// paths are always relative to the manifest file's dir (which defines the project root dir)
 {
-    "$schema": "./ticbuild.schema.json",
+    "$schema": "./.ticbuild/ticbuild.schema.json",
     "project": {
         "name": "{{PROJECT_NAME}}",
-        "includeDirs": [
-            "./src"
-        ],
-        "importDirs": [
-            "./assets"
-        ],
-        "binDir": "./dist/bin",
-        "objDir": "./dist/obj",
-        "outputCartName": "$(project.name).tic",
+        "binDir": "./build/$(buildConfiguration)-bin",
+        "objDir": "./build/$(buildConfiguration)-obj",
+        "outputCartName": "$(project.name).tic"
     },
-    "variables": {},
     "imports": [
         {
             "name": "maincode",
-            "path": "src/main.lua",
-            "kind": "LuaCode",
-        },
+            "path": "src/main.lua"
+        }
     ],
     "assembly": {
-        "lua": {
-            "minify": true,
-            "globals": {
-                "PROJECT_NAME": "$(project.name)",
-            },
-        },
         "blocks": [
             {
-                "chunks": [
-                    "CODE"
-                ],
-                "asset": "maincode",
-                "code": {
-                    "emitGlobals": true,
-                }
-            },
-        ],
-    },
+                "asset": "maincode"
+            }
+        ]
+    }
 }

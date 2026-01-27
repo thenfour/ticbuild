@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cons from "../utils/console";
 import { copyFile, ensureDir, fileExists, isDirectory, isDirectoryEmpty } from "../utils/fileSystem";
-import { applyTemplateVariables, resolveTemplateDir } from "../utils/templates";
+import { applyTemplateVariables, getPathRelativeToTemplates, resolveTemplateDir } from "../utils/templates";
 
 export type InitOptions = {
   name?: string;
@@ -115,8 +115,20 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
   copyTemplateDir(templateDir, resolvedDir, { PROJECT_NAME: projectName }, options?.force === true);
 
   const schemaSourcePath = path.resolve(__dirname, "..", "..", "ticbuild.schema.json");
-  const schemaTargetPath = path.join(resolvedDir, "ticbuild.schema.json");
+  const schemaTargetPath = path.join(resolvedDir, ".ticbuild/ticbuild.schema.json");
   copyFile(schemaSourcePath, schemaTargetPath, options?.force === true);
+
+  // and copy the gitignore.
+  const gitignoreSourcePath = getPathRelativeToTemplates("gitignore.template");
+  const gitignoreTargetPath = path.join(resolvedDir, ".gitignore");
+  copyFile(gitignoreSourcePath, gitignoreTargetPath, options?.force === true);
+
+  // and vs code launch config
+  const launchSourcePath = getPathRelativeToTemplates("vscode_launch.template.json");
+  const launchTargetDir = path.join(resolvedDir, ".vscode");
+  const launchTargetPath = path.join(launchTargetDir, "launch.json");
+  ensureDir(launchTargetDir);
+  copyFile(launchSourcePath, launchTargetPath, options?.force === true);
 
   cons.success(`Initialized ticbuild project in ${resolvedDir}`);
 }
