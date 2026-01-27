@@ -26,7 +26,7 @@ describe("Lua base language support", () => {
   });
 });
 
-describe("Lua printer numeric literal formatting", () => {
+describe("Lua printer numeric literal formatting with simplifyExpressions", () => {
   it("should keep leading zero after string concatenation", () => {
     const options: OptimizationRuleOptions = {
       stripComments: true,
@@ -72,6 +72,75 @@ describe("Lua printer numeric literal formatting", () => {
       // local t=.25 print(\"t=\"...25..\"\")
       expect(output).toContain('t="..0.25');
     }
+  });
+
+  describe("Lua printer numeric literal formatting with no rules enabled", () => {
+    it("should keep leading zero after string concatenation", () => {
+      const options: OptimizationRuleOptions = {
+        stripComments: true,
+        maxIndentLevel: 1,
+        lineBehavior: "tight",
+        maxLineLength: 180,
+        renameLocalVariables: false,
+        aliasRepeatedExpressions: false,
+        aliasLiterals: false,
+        packLocalDeclarations: false,
+        simplifyExpressions: false,
+        removeUnusedLocals: false,
+        removeUnusedFunctions: false,
+        functionNamesToKeep: [],
+        renameTableFields: false,
+        tableEntryKeysToRename: [],
+      };
+
+      {
+        const input = 'print("x"..(10))';
+        const output = processLua(input, options);
+
+        expect(output).toContain('print("x"..10)');
+      }
+
+      {
+        const input = 'print((10).."x")';
+        const output = processLua(input, options);
+
+        expect(output).toContain('print((10).."x")');
+      }
+      {
+        const input = 'print("x"..(0.15))';
+        const output = processLua(input, options);
+
+        expect(output).toContain('print("x"..0.15)');
+      }
+      {
+        const input = 'print("x"..y/0.15)';
+        const output = processLua(input, options);
+
+        expect(output).toContain('print("x"..y/.15)');
+      }
+      {
+        const input = 'print(y/0.15.."x")';
+        const output = processLua(input, options);
+
+        // this is a compromise. ideally we would print y/.15.."x"
+        // the decimal point is already parsed so the concat operator
+        // is not ambiguous here. too much complexity to try and minify that.
+        expect(output).toContain('print(y/(.15).."x")');
+      }
+      {
+        // this is a fun one. it could be solved in various ways:
+        // print((y/15).."x")
+        // print(y/(15).."x")
+        // print(y/15 .."x") -- see the space
+
+        // currently we produce print(y/15.."x"), which is just invalid because the 15 is next to the ..
+        // and Lua wants to treat that as a decimal point, causing a syntax error.
+        const input = 'print(y/15.."x")';
+        const output = processLua(input, options);
+
+        expect(output).toContain('print(y/(15).."x")');
+      }
+    });
   });
 
   it("should use parenthesis when a numeric literal precedes a string concatenation operator", () => {

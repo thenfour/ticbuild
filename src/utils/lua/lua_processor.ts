@@ -1039,6 +1039,18 @@ export class LuaPrinter {
         return `(-${arg})`;
       }
     }
+    if (node.type === "BinaryExpression") {
+      const bin = node as luaparse.BinaryExpression;
+      const prec = getPrecedence(bin);
+      const left = this.expr(bin.left, prec);
+      let right = this.expr(bin.right, prec);
+      if (this.isNumericLiteralLike(bin.right)) {
+        right = `(${right})`;
+      }
+      let s = `${left}${bin.operator}${right}`;
+      if (prec < parentPrec) s = `(${s})`;
+      return s;
+    }
     return this.expr(node, parentPrec);
   }
 
@@ -1133,6 +1145,15 @@ export class LuaPrinter {
     const base = this.expr(node, 100);
     if (this.isPrefixExpression(node)) return base;
     return this.isParenthesized(base) ? base : `(${base})`;
+  }
+
+  private isNumericLiteralLike(node: luaparse.Expression): boolean {
+    if (node.type === "NumericLiteral") return true;
+    if (node.type === "UnaryExpression") {
+      const unary = node as luaparse.UnaryExpression;
+      return unary.operator === "-" && unary.argument.type === "NumericLiteral";
+    }
+    return false;
   }
 
   private isParenthesized(text: string): boolean {
@@ -1293,6 +1314,7 @@ export function processLua(code: string, ruleOptions: OptimizationRuleOptions): 
 
   // Strip debug blocks and lines before parsing (line-based string matching)
   let processedCode = code;
+  processedCode = disambiguateNumericConcat(processedCode);
   // if (ruleOptions.stripDebugBlocks) {
   //    // Strip debug blocks
   //    processedCode = replaceLuaBlock(processedCode, "-- BEGIN_DEBUG_ONLY", "-- END_DEBUG_ONLY", "");
@@ -1366,6 +1388,12 @@ export function processLua(code: string, ruleOptions: OptimizationRuleOptions): 
 
   const minified = unparseLua(ast, ruleOptions);
   return reinsertDisableMinificationBlocks(minified, disableMinify.blocks);
+}
+
+function disambiguateNumericConcat(code: string): string {
+  // Insert a space before concatenation when a numeric literal is immediately followed by `..`.
+  // Examples: `15.."x"` -> `15 .."x"`, `.15.."x"` -> `.15 .."x"`
+  return code.replace(/(\d(?:\.\d+)?|\.\d+)\.\./g, "$1 ..");
 }
 
 type DisabledMinificationBlock = {
