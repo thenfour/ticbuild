@@ -1,5 +1,6 @@
 import { AssembleOutputResult, TicbuildProject } from "../backend/project";
 import { LuaCodeResource } from "../backend/importers/LuaCodeImporter";
+import { Tic80Resource } from "../backend/importers/tic80CartImporter";
 import { AssetReference } from "../backend/manifestTypes";
 import * as cons from "../utils/console";
 import { ensureDir, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
@@ -89,6 +90,19 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
       importsLines.push(`    Wrote: ${minifiedPath}`);
       importsLines.push(`    Wrote: ${compressedPath}`);
     }
+    if (resource instanceof Tic80Resource) {
+      const cartStatsLines = buildCartStatsLines(
+        Array.from(resource.rootView.subAssets.entries()).map(([chunkType, data]) => ({
+          chunkType,
+          bank: 0,
+          size: data.length,
+        })),
+        "  ",
+      );
+      if (cartStatsLines.length > 0) {
+        importsLines.push(...cartStatsLines);
+      }
+    }
     importsLines.push("");
   }
   await writeTextFile(importsLogPath, importsLines.join("\n"), "utf-8");
@@ -119,14 +133,37 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
 }
 
 function logCartStats(assemblyOutput: AssembleOutputResult): void {
-  const sizeByType = new Map<string, number>();
-  for (const chunk of assemblyOutput.chunks) {
-    const key = formatChunkKey(chunk.chunkType, chunk.bank);
-    sizeByType.set(key, (sizeByType.get(key) || 0) + chunk.data.length);
+  const cartStatsLines = buildCartStatsLines(
+    assemblyOutput.chunks.map((chunk) => ({
+      chunkType: chunk.chunkType,
+      bank: chunk.bank,
+      size: chunk.data.length,
+    })),
+    "",
+    assemblyOutput.output.length,
+  );
+  if (cartStatsLines.length === 0) {
+    return;
+  }
+  cons.h1(cartStatsLines[0]);
+  for (const line of cartStatsLines.slice(1)) {
+    cons.info(line);
+  }
+}
+
+function buildCartStatsLines(
+  chunks: { chunkType: string; bank: number; size: number }[],
+  indent: string,
+  totalSizeOverride?: number,
+): string[] {
+  if (chunks.length === 0) {
+    return [];
   }
 
-  if (sizeByType.size === 0) {
-    return;
+  const sizeByType = new Map<string, number>();
+  for (const chunk of chunks) {
+    const key = formatChunkKey(chunk.chunkType, chunk.bank);
+    sizeByType.set(key, (sizeByType.get(key) || 0) + chunk.size);
   }
 
   const rows = Array.from(sizeByType.entries()).map(([chunkKey, size]) => {
@@ -140,10 +177,13 @@ function logCartStats(assemblyOutput: AssembleOutputResult): void {
     };
   });
 
+  const totalSize = totalSizeOverride ?? chunks.reduce((sum, chunk) => sum + chunk.size, 0);
   const labelWidth = Math.max(...rows.map((r) => r.chunkKey.length), 5);
   const sizeWidth = Math.max(...rows.map((r) => formatBytes(r.size).length), 5);
   const capWidth = Math.max(...rows.map((r) => (r.capacity > 0 ? formatBytes(r.capacity).length : 3)), 3);
-  cons.h1("Chunk usage:");
+
+  const lines: string[] = [];
+  lines.push(`${indent}Chunk usage:`);
   for (const row of rows) {
     const label = row.chunkKey.padEnd(labelWidth, " ");
     const sizeStr = formatBytes(row.size).padStart(sizeWidth, " ");
@@ -151,11 +191,10 @@ function logCartStats(assemblyOutput: AssembleOutputResult): void {
     const capStr = capStrRaw.padStart(capWidth, " ");
     const meter = row.capacity > 0 ? formatUsageMeter(row.size, row.capacity) : "";
     const usage = row.capacity > 0 ? `${meter} ${formatPercent(row.size, row.capacity)}` : "";
-    cons.info(`  ${label}  ${sizeStr} / ${capStr}${usage ? " " + usage : ""}`);
+    lines.push(`${indent}  ${label}  ${sizeStr} / ${capStr}${usage ? " " + usage : ""}`);
   }
-
-  // and show total cart stats
-  cons.info(`Total cart size: ${formatBytes(assemblyOutput.output.length)}`);
+  lines.push(`${indent}Total cart size: ${formatBytes(totalSize)}`);
+  return lines;
 }
 
 function warnDeprecatedChunks(assemblyOutput: AssembleOutputResult): void {
