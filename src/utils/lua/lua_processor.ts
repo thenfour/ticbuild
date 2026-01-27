@@ -912,20 +912,73 @@ export class LuaPrinter {
   private numericLiteral(node: luaparse.NumericLiteral, options?: { forceLeadingZero?: boolean }): string {
     const value = node.value;
     const decimalStr = Number.isFinite(value) ? value.toString(10) : String(value);
+    const candidates: string[] = [decimalStr];
+    const expStr = Number.isFinite(value) ? this.normalizeExponential(value.toExponential()) : null;
+    if (expStr) candidates.push(expStr);
 
-    if (/^-?0\.\d/.test(decimalStr)) {
-      const compact = decimalStr.replace(/^(-?)0\./, "$1.");
+    const altExpStr = Number.isFinite(value) ? this.exponentialFromDecimalString(decimalStr) : null;
+    if (altExpStr) candidates.push(altExpStr);
+
+    let best = candidates[0];
+    for (const cand of candidates) {
+      if (cand.length < best.length) best = cand;
+    }
+
+    if (/^-?0\.\d/.test(best)) {
+      const compact = best.replace(/^(-?)0\./, "$1.");
       if (options?.forceLeadingZero && /^-?\./.test(compact)) {
         return compact.replace(/^(-?)\./, "$10.");
       }
       return compact;
     }
 
-    if (options?.forceLeadingZero && /^-?\./.test(decimalStr)) {
-      return decimalStr.replace(/^(-?)\./, "$10.");
+    if (options?.forceLeadingZero && /^-?\./.test(best)) {
+      return best.replace(/^(-?)\./, "$10.");
     }
 
-    return decimalStr;
+    return best;
+  }
+
+  private normalizeExponential(text: string): string {
+    const parts = text.split("e");
+    if (parts.length !== 2) return text;
+
+    let mantissa = parts[0];
+    let exponent = parts[1];
+    if (exponent.startsWith("+")) exponent = exponent.slice(1);
+
+    if (mantissa.includes(".")) {
+      mantissa = mantissa.replace(/0+$/, "").replace(/\.$/, "");
+    }
+
+    return `${mantissa}e${exponent}`;
+  }
+
+  private exponentialFromDecimalString(text: string): string | null {
+    const match = text.match(/^(-?)(\d+)(?:\.(\d+))?$/);
+    if (!match) return null;
+
+    const sign = match[1];
+    const intPart = match[2];
+    const fracPart = match[3] || "";
+
+    if (fracPart.length === 0) {
+      const trimmed = intPart.replace(/0+$/, "");
+      const zeros = intPart.length - trimmed.length;
+      if (zeros <= 0 || trimmed.length === 0) return null;
+      return `${sign}${trimmed}e${zeros}`;
+    }
+
+    if (/^0+$/.test(intPart)) {
+      const leadingZeros = fracPart.match(/^0+/)?.[0].length ?? 0;
+      const digits = fracPart.slice(leadingZeros);
+      if (digits.length === 0) return null;
+      const exponent = -(leadingZeros + 1);
+      const mantissa = digits.length === 1 ? digits : `${digits[0]}.${digits.slice(1)}`;
+      return `${sign}${mantissa}e${exponent}`;
+    }
+
+    return null;
   }
 
   private tableConstructor(node: luaparse.TableConstructorExpression): string {

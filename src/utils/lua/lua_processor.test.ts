@@ -92,6 +92,60 @@ describe("Lua printer numeric literal formatting", () => {
       expect(output).toContain(`(4.2)..""`);
     }
   });
+
+  it("should prefer exponential notation when shorter", () => {
+    const options: OptimizationRuleOptions = {
+      stripComments: true,
+      maxIndentLevel: 1,
+      lineBehavior: "tight",
+      maxLineLength: 180,
+      renameLocalVariables: false,
+      aliasRepeatedExpressions: false,
+      aliasLiterals: false,
+      packLocalDeclarations: false,
+      simplifyExpressions: false,
+      removeUnusedLocals: false,
+      removeUnusedFunctions: false,
+      functionNamesToKeep: [],
+      renameTableFields: false,
+      tableEntryKeysToRename: [],
+    };
+
+    {
+      const input = "local x = 1e18";
+      const output = processLua(input, options);
+
+      expect(output).toContain("x=1e18");
+    }
+
+    {
+      const input = "local x = 12000000000";
+      const output = processLua(input, options);
+
+      expect(output).toContain("x=12e9");
+    }
+
+    {
+      const input = "local x = -12000000000";
+      const output = processLua(input, options);
+
+      expect(output).toContain("x=-12e9");
+    }
+
+    {
+      const input = "local x = -0.00012";
+      const output = processLua(input, options);
+
+      expect(output).toContain("x=-1.2e-4");
+    }
+
+    {
+      const input = "local x = 0.00012";
+      const output = processLua(input, options);
+
+      expect(output).toContain("x=1.2e-4");
+    }
+  });
 });
 
 describe("Lua printer parenthesis handling", () => {
