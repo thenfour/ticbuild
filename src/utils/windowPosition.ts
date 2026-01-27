@@ -1,7 +1,5 @@
 import { exec } from "node:child_process";
-import { writeFile, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as path from "node:path";
 import { promisify } from "node:util";
 import * as cons from "./console";
 
@@ -14,98 +12,46 @@ export interface WindowPlacement {
   height: number;
 }
 
+function resolveScriptPath(fileName: string): string {
+  // In dev: __dirname = <repo>/src/utils
+  // In published build: __dirname = <pkg>/dist/utils
+  // Either way, ../../scripts should land at <repo or pkg>/scripts
+  return path.resolve(__dirname, "../../scripts", fileName);
+}
+
 // Gets the window position for a process by PID using PowerShell
 export async function getWindowPosition(pid: number): Promise<WindowPlacement | null> {
   if (process.platform !== "win32") {
     throw new Error(`Platform ${process.platform} is not supported for getWindowPosition.`);
   }
 
-  const psScript = `
-Add-Type @"
-  using System;
-  using System.Runtime.InteropServices;
-  public class Win32 {
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-    
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT {
-      public int Left;
-      public int Top;
-      public int Right;
-      public int Bottom;
-    }
-    
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-    
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-  }
-"@
+  cons.dim(`[windowPosition] Getting window position for PID ${pid}`);
+  const scriptPath = resolveScriptPath("get-window-position.ps1");
+  cons.dim(`[windowPosition] Script path: ${scriptPath}`);
+  const { stdout, stderr } = await execAsync(
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -ProcessId ${pid}`,
+  );
 
-$targetPid = ${pid}
-$result = $null
-
-[Win32]::EnumWindows({
-  param($hwnd, $lParam)
-  $procId = 0
-  [Win32]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
-  if ($procId -eq $targetPid) {
-    $rect = New-Object Win32+RECT
-    if ([Win32]::GetWindowRect($hwnd, [ref]$rect)) {
-      $script:result = @{
-        x = $rect.Left
-        y = $rect.Top
-        width = $rect.Right - $rect.Left
-        height = $rect.Bottom - $rect.Top
-      }
-      return $false
-    }
-  }
-  return $true
-}, [IntPtr]::Zero) | Out-Null
-
-if ($script:result) {
-  $script:result | ConvertTo-Json -Compress
-}
-`;
-
-  const scriptPath = join(tmpdir(), `getwindowpos-${pid}-${Date.now()}.ps1`);
-  try {
-    await writeFile(scriptPath, psScript, "utf-8");
-    const { stdout, stderr } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-
-    if (stderr) {
-      cons.warning(`PowerShell stderr: ${stderr}`);
-    }
-
-    cons.dim(`PowerShell stdout: "${stdout.trim()}"`);
-
-    if (stdout.trim()) {
-      const parsed = JSON.parse(stdout.trim());
-      return {
-        x: parsed.x,
-        y: parsed.y,
-        width: parsed.width,
-        height: parsed.height,
-      };
-    }
-  } finally {
-    try {
-      await unlink(scriptPath);
-    } catch {
-      // Ignore cleanup errors
-    }
+  if (stderr) {
+    cons.warning(`[windowPosition] PowerShell stderr: ${stderr}`);
   }
 
+  cons.dim(`[windowPosition] PowerShell stdout: "${stdout.trim()}"`);
+
+  if (stdout.trim()) {
+    const parsed = JSON.parse(stdout.trim());
+    cons.dim(
+      `[windowPosition] Parsed position: x=${parsed.x}, y=${parsed.y}, width=${parsed.width}, height=${parsed.height}`,
+    );
+    return {
+      x: parsed.x,
+      y: parsed.y,
+      width: parsed.width,
+      height: parsed.height,
+    };
+  }
+
+  cons.dim(`[windowPosition] No position data returned`);
   return null;
 }
 
@@ -115,65 +61,20 @@ export async function setWindowPosition(pid: number, placement: WindowPlacement)
     throw new Error(`Platform ${process.platform} is not supported for setWindowPosition.`);
   }
 
-  const psScript = `
-Add-Type @"
-  using System;
-  using System.Runtime.InteropServices;
-  public class Win32 {
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-    
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-    
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-    
-    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    
-    public const uint SWP_NOZORDER = 0x0004;
-    public const uint SWP_SHOWWINDOW = 0x0040;
-  }
-"@
+  cons.dim(
+    `[windowPosition] Setting window position for PID ${pid} to (${placement.x}, ${placement.y}) ${placement.width}x${placement.height}`,
+  );
+  const scriptPath = resolveScriptPath("set-window-position.ps1");
+  cons.dim(`[windowPosition] Script path: ${scriptPath}`);
+  const { stderr } = await execAsync(
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -ProcessId ${pid} -X ${placement.x} -Y ${placement.y} -Width ${placement.width} -Height ${placement.height}`,
+  );
 
-$targetPid = ${pid}
-$x = ${placement.x}
-$y = ${placement.y}
-$width = ${placement.width}
-$height = ${placement.height}
-
-[Win32]::EnumWindows({
-  param($hwnd, $lParam)
-  $procId = 0
-  [Win32]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
-  if ($procId -eq $targetPid) {
-    [Win32]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, $width, $height, [Win32]::SWP_NOZORDER -bor [Win32]::SWP_SHOWWINDOW) | Out-Null
-    return $false
-  }
-  return $true
-}, [IntPtr]::Zero) | Out-Null
-
-Write-Output "success"
-`;
-
-  const scriptPath = join(tmpdir(), `setwindowpos-${pid}-${Date.now()}.ps1`);
-  try {
-    await writeFile(scriptPath, psScript, "utf-8");
-    const { stderr } = await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`);
-
-    if (stderr) {
-      cons.warning(`PowerShell stderr: ${stderr}`);
-    }
-  } finally {
-    try {
-      await unlink(scriptPath);
-    } catch {
-      // Ignore cleanup errors
-    }
+  if (stderr) {
+    cons.warning(`[windowPosition] PowerShell stderr: ${stderr}`);
   }
 
+  cons.dim(`[windowPosition] Window position set successfully`);
   return true;
 }
 
@@ -183,18 +84,25 @@ export async function waitForWindow(pid: number, timeoutMs: number = 5000): Prom
     throw new Error(`Platform ${process.platform} is not supported for waitForWindow.`);
   }
 
+  cons.dim(`[windowPosition] Waiting for window (PID ${pid}, timeout ${timeoutMs}ms)`);
   const startTime = Date.now();
+  let attempts = 0;
   while (Date.now() - startTime < timeoutMs) {
+    attempts++;
     try {
       const position = await getWindowPosition(pid);
       if (position) {
+        cons.dim(`[windowPosition] Window found after ${attempts} attempts`);
         return true;
       }
     } catch (error) {
       // Window might not exist yet, keep trying
-      cons.dim(`  Still waiting for window... (${error instanceof Error ? error.message : String(error)})`);
+      cons.dim(
+        `[windowPosition] Attempt ${attempts} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 30));
   }
+  cons.dim(`[windowPosition] Window not found after ${attempts} attempts (timeout)`);
   return false;
 }

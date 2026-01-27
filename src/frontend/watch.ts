@@ -2,7 +2,6 @@ import chokidar from "chokidar";
 import { TicbuildProject } from "../backend/project";
 import { createTic80Controller } from "../backend/tic80Resolver";
 import * as cons from "../utils/console";
-import { getWindowPosition, setWindowPosition, waitForWindow, WindowPlacement } from "../utils/windowPosition";
 import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { ITic80Controller } from "../backend/tic80Controller/tic80Controller";
@@ -16,24 +15,6 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
   let pendingRebuild = false;
   let watcher: chokidar.FSWatcher | undefined;
   let currentWatchPaths: string[] = [];
-  //let savedWindowPosition: WindowPlacement | null = null;
-
-  // const stopTic80 = async () => {
-  //   const pid = tic80Controller?.getPid();
-  //   if (pid) {
-  //     cons.dim(`  Stopping TIC-80 (PID ${pid})...`);
-
-  //     // Save window position before stopping
-  //     savedWindowPosition = await getWindowPosition(pid);
-  //     if (savedWindowPosition) {
-  //       cons.dim(
-  //         `  Saved window position: (${savedWindowPosition.x}, ${savedWindowPosition.y}) ${savedWindowPosition.width}x${savedWindowPosition.height}`,
-  //       );
-  //     }
-  //   }
-
-  //   await tic80Controller?.stop();
-  // };
 
   // Function to update the watched file list
   const updateWatchList = async () => {
@@ -117,33 +98,8 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
       cons.h1("Launching TIC-80 with built cartridge...");
       cons.info(`  ${outputFilePath}`);
 
-      // If there's a running instance, try to save its window position before reload.
-      // const existingPid = tic80Controller.getPid();
-      // if (existingPid) {
-      //   savedWindowPosition = await getWindowPosition(existingPid);
-      //   if (savedWindowPosition) {
-      //     cons.dim(
-      //       `  Saved window position: (${savedWindowPosition.x}, ${savedWindowPosition.y}) ${savedWindowPosition.width}x${savedWindowPosition.height}`,
-      //     );
-      //   }
-      // }
-
       await tic80Controller.launchAndControlCart(outputFilePath);
       //cons.success("TIC-80 launched successfully.");
-
-      // Restore window position if we have one saved
-      // const newPid = tic80Controller.getPid();
-      // if (savedWindowPosition && newPid) {
-      //   cons.dim("  Waiting for window to appear...");
-      //   const windowFound = await waitForWindow(newPid, 3000);
-      //   if (windowFound) {
-      //     cons.dim("  Restoring window position...");
-      //     const restored = await setWindowPosition(newPid, savedWindowPosition);
-      //     if (restored) {
-      //       cons.dim("  Window position restored.");
-      //     }
-      //   }
-      // }
 
       // If the manifest changed, update the watch list
       if (changedPath === project.resolvedCore.manifestPath) {

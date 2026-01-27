@@ -45,3 +45,6 @@ Thumbs.db
 # (they are in .gitignore but needed for npm)
 !dist/
 !templates/
+
+# exclusions..
+scripts/gen-build-info.js

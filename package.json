@@ -31,6 +31,7 @@
   "files": [
     ".attachments/",
     "dist/",
+    "scripts/",
     "templates/",
     "README.md",
     "LICENSE",
