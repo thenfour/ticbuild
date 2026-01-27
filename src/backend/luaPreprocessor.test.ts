@@ -1,6 +1,7 @@
 import { preprocessLuaCode } from "./luaPreprocessor";
 import { Manifest } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
+import * as cons from "../utils/console";
 
 function makeProject(manifest: Manifest): TicbuildProjectCore {
   return new TicbuildProjectCore({
@@ -71,5 +72,42 @@ describe("Lua preprocessor __ENCODE", () => {
 
       expect(result.code).toContain("local value = {25,44,93,255,127,128}");
     }
+  });
+});
+
+describe("Lua preprocessor error/warning directives", () => {
+  const manifest: Manifest = {
+    project: {
+      name: "test",
+      binDir: "./bin",
+      objDir: "./obj",
+      outputCartName: "test.tic",
+    },
+    variables: {},
+    imports: [],
+    assembly: {
+      blocks: [],
+    },
+  };
+
+  it("should emit warnings for --#warning", async () => {
+    const warnSpy = jest.spyOn(cons, "warning").mockImplementation(() => {});
+    const project = makeProject(manifest);
+    const source = "--#warning please check this\nlocal x = 1";
+
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("local x = 1");
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("should error on --#error", async () => {
+    const project = makeProject(manifest);
+    const source = "--#error build failed";
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "[LuaPreprocessor] C:/test/source.lua:1 build failed",
+    );
   });
 });

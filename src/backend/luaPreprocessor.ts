@@ -14,6 +14,7 @@ import { loadBinaryImportData, loadTextImportData, parseImportReference } from "
 import { kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { parseLua } from "../utils/lua/lua_processor";
+import * as cons from "../utils/console";
 
 export type LuaPreprocessorValue = string | number | boolean;
 
@@ -265,6 +266,28 @@ async function processSource(
         if (includedText) {
           outputLines.push(includedText);
         }
+        break;
+      }
+      case "error": {
+        if (!isActive()) {
+          break;
+        }
+        const message = rest.trim();
+        if (!message) {
+          throw new Error(formatError(filePath, lineNumber, `--#error encountered`));
+        }
+        throw new Error(formatError(filePath, lineNumber, message));
+      }
+      case "warning": {
+        if (!isActive()) {
+          break;
+        }
+        const message = rest.trim();
+        if (!message) {
+          cons.warning(formatError(filePath, lineNumber, `--#warning encountered`));
+          break;
+        }
+        cons.warning(formatError(filePath, lineNumber, message));
         break;
       }
       default:
