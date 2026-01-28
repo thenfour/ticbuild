@@ -86,7 +86,6 @@ syntax highlighting to make the Lua preprocessing more friendly in VS Code.
 
 - Windows (most is cross-platform however launching is strictly windows)
 - Node.js (v16 or higher)
-- TIC-80 installed and available in your PATH, or configured via `.env` file
 
 # How to use: overview
 

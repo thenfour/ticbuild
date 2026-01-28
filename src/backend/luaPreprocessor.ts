@@ -808,7 +808,8 @@ function expandMacroBody(
     replacements.push({
       start: range[0] - offset,
       end: range[1] - offset,
-      text: `(${argTexts[index]})`,
+      // #14 we don't need overly aggressive parens, but here's where you'd put it if you wanted to (also see other #14 instances)
+      text: `${argTexts[index]}`,
     });
   });
 
@@ -830,7 +831,8 @@ function wrapMacroBody(body: string): string {
   if (trimmed.length === 0) {
     return "";
   }
-  return `(${trimmed})`;
+  // #14 we don't need overly aggressive parens, but here's where you'd put it if you wanted to (also see other #14 instances)
+  return `${trimmed}`;
 }
 
 async function expandPreprocessorCalls(

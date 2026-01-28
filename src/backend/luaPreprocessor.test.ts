@@ -14,6 +14,14 @@ function makeProject(manifest: Manifest): TicbuildProjectCore {
   });
 }
 
+function dumpTempLuaFile(content: string): string {
+  // dump to a temp file and report path on console
+  const tempPath = path.join(os.tmpdir(), `ticbuild-lua-preproc-${Date.now()}.lua`);
+  fs.writeFileSync(tempPath, content, "utf-8");
+  console.log(`Dumped output to: ${tempPath}`);
+  return tempPath;
+}
+
 describe("Lua preprocessor __ENCODE", () => {
   it("should encode hex to hex literal", async () => {
     const manifest: Manifest = {
@@ -115,6 +123,105 @@ describe("Lua preprocessor error/warning directives", () => {
   });
 });
 
+describe("Lua preprocessor macros", () => {
+  const manifest: Manifest = {
+    project: {
+      name: "test",
+      binDir: "./bin",
+      objDir: "./obj",
+      outputCartName: "test.tic",
+    },
+    variables: {},
+    imports: [],
+    assembly: {
+      blocks: [],
+    },
+  };
+
+  it("should perform textual replacement", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro ID(x) => x
+local value = ID(42)`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+    expect(result.code).toContain("local value = 42");
+  });
+
+  it("should be nestable", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ID(x) => x
+--#macro WRAP(y) => ID(y)
+local value = WRAP(42)`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+    expect(result.code).toContain("local value = 42");
+  });
+
+  it("should be nestable 2 times", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ID(x) => x
+--#macro WRAP(y) => ID(y)
+--#macro DOUBLE_WRAP(z) => WRAP(z)
+local value = DOUBLE_WRAP(42)`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+    expect(result.code).toContain("local value = 42");
+  });
+
+  it("should respect ordering when nesting", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro WRAP(y) => ID(y)
+--#macro ID(x) => x
+local value = (WRAP(42))`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+    // Hm what should we expect honestly? at least it shouldn't blow up
+    expect(result.code).toContain("local value = (42)");
+  });
+
+  it("should be overridable", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro WRAP(y) => ID(y+1)
+--#macro ID(x) => x
+--#macro WRAP(y) => ID(y+2)
+local value = (WRAP(42))`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    dumpTempLuaFile(result.code);
+
+    expect(result.code).toContain("local value = (42+2)");
+  });
+
+  it("should be overridable and nestable", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ID(x) => x+1
+--#macro WRAP(y) => ID(y+2)
+--#macro ID(x) => x+3
+--#macro WRAP(y) => ID(y+4)
+local value = (WRAP(42))`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    dumpTempLuaFile(result.code);
+
+    expect(result.code).toContain("local value = (42+4+3)");
+  });
+
+  it("should not include comments", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ID(x) => x+1 -- comment
+local value = (ID(42))`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    dumpTempLuaFile(result.code);
+
+    // Currently getting:
+    // local value = (42+1 -- comment)"
+    expect(result.code).toContain("local value = (42+1)");
+  });
+});
+
 describe("Lua preprocessor include resolution", () => {
   it("should resolve --#include relative to including file", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-preproc-"));
@@ -124,7 +231,7 @@ describe("Lua preprocessor include resolution", () => {
     const mathPath = path.join(srcDir, "math.lua");
     const utilPath = path.join(srcDir, "utils.lua");
 
-    fs.writeFileSync(mathPath, "local M = {}\nM.VALUE = 123\nreturn M\n", "utf-8");
+    fs.writeFileSync(mathPath, "local M = 1\n", "utf-8");
 
     const manifest: Manifest = {
       project: {
@@ -151,7 +258,12 @@ describe("Lua preprocessor include resolution", () => {
 
     const result = await preprocessLuaCode(project, source, utilPath);
 
-    expect(result.code).toContain("M.VALUE = 123");
-    expect(result.code).toContain("local x = 1");
+    //const resultPath = path.join(srcDir, "result.lua");
+    //console.log(`resultPath: ${resultPath}`);
+    // write out the result for inspection if needed
+    //fs.writeFileSync(resultPath, result.code, "utf-8");
+
+    // note: 2 line endings -- don't skip them, don't collapse them.
+    expect(result.code).toContain(`local M = 1\n\nlocal x = 1`);
   });
 });
