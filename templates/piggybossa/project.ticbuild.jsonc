@@ -1,7 +1,7 @@
 {
     "$schema": "./.ticbuild/ticbuild.schema.json",
     "project": {
-        "name": "templatebase",
+        "name": "{{PROJECT_NAME}}",
         "importDirs": [
             "assets"
         ],
@@ -27,9 +27,6 @@
         }
     ],
     "assembly": {
-        "lua": {
-            "minify": false
-        },
         "blocks": [
             {
                 "asset": "maincode"
