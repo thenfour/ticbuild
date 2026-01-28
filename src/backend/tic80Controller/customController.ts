@@ -8,13 +8,17 @@ import { getPathRelativeToTemplates } from "../../utils/templates";
 import { launchProcessReturnImmediately } from "../../utils/tic80/launch";
 import { ITic80Controller } from "./tic80Controller";
 import { Tic80RemotingClient } from "./remotingClient";
+import { findRandomFreePortInRange } from "./netUtils";
+
+const TICBUILD_PORT_RANGE_START = 55000;
+const TICBUILD_PORT_RANGE_END = 56000;
 
 export class CustomTic80Controller implements ITic80Controller {
   private tic80Path: string;
   private tic80Process: ChildProcess | undefined;
   private client: Tic80RemotingClient | undefined;
   private readonly host = "127.0.0.1";
-  private readonly port = 9977;
+  private port: number | undefined;
   private readonly remotingVerbose: boolean;
   private exitHandlers: Set<() => void> = new Set();
   private suppressExitSignal = false;
@@ -28,7 +32,9 @@ export class CustomTic80Controller implements ITic80Controller {
   }
 
   async launchFireAndForget(cartPath?: string | undefined): Promise<void> {
-    const args = ["--skip", `--remoting-port=${this.port}`];
+    await this.ensurePortSelected();
+    const port = this.port!;
+    const args = ["--skip", `--remoting-port=${port}`];
     if (cartPath) {
       args.unshift(cartPath);
     }
@@ -69,7 +75,9 @@ export class CustomTic80Controller implements ITic80Controller {
       return;
     }
 
-    const args = ["--skip", `--remoting-port=${this.port}`];
+    await this.ensurePortSelected();
+    const port = this.port!;
+    const args = ["--skip", `--remoting-port=${port}`];
     this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, args);
     const processRef = this.tic80Process;
     if (processRef) {
@@ -104,7 +112,10 @@ export class CustomTic80Controller implements ITic80Controller {
       return;
     }
 
-    this.client = new Tic80RemotingClient(this.host, this.port, this.remotingVerbose);
+    await this.ensurePortSelected();
+
+    const port = this.port!;
+    this.client = new Tic80RemotingClient(this.host, port, this.remotingVerbose);
 
     await this.connectWithRetry(5000, 100);
     const hello = await this.client.hello();
@@ -139,5 +150,12 @@ export class CustomTic80Controller implements ITic80Controller {
       process.once("close", settle);
       setTimeout(settle, timeoutMs);
     });
+  }
+
+  private async ensurePortSelected(): Promise<void> {
+    if (this.port !== undefined) {
+      return;
+    }
+    this.port = await findRandomFreePortInRange(TICBUILD_PORT_RANGE_START, TICBUILD_PORT_RANGE_END, this.host);
   }
 }
