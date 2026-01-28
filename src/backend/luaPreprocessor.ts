@@ -795,7 +795,9 @@ type MacroHeader = {
 };
 
 function parseMacroHeader(rest: string, filePath: string, lineNumber: number): MacroHeader {
-  const headerMatch = rest.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)(\s*\(([^)]*)\))?\s*(?:=>\s*(.*))?$/);
+  const sanitized = stripLuaCommentsPreserveNewlines(rest).trim();
+  // name(params...) => inlineBody
+  const headerMatch = sanitized.match(/^([A-Za-z_][A-Za-z0-9_]*)(\s*\(([^)]*)\))?\s*(?:=>\s*(.*))?$/);
   if (!headerMatch) {
     throw new Error(formatError(filePath, lineNumber, `Invalid --#macro syntax: ${rest}`));
   }
@@ -826,6 +828,7 @@ function readMacroBody(
   const bodyLines: string[] = [];
   for (let i = startIndex; i < lines.length; i++) {
     const line = lines[i];
+    // check for --#endmacro
     const match = line.match(/^\s*--#\s*(\w+)\s*(.*)$/);
     if (match) {
       if (match[1] === "endmacro") {
