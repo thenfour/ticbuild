@@ -475,9 +475,6 @@ allowed (this is an error).
 And for the code chunk alone, if code is larger than 1 bank, it gets automatically
 split across multiple banks.
 
-# FAQ / troubleshooting
+# FAQ
 
-## during build i see `fatal: No names found, cannot describe anything.`
-
-Occurs when there are no git tags defined.
-
+i one day hope to be asked questions.
