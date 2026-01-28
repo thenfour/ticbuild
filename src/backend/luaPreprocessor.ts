@@ -147,10 +147,11 @@ async function processSource(
         const bodyResult = readMacroBody(lines, i + 1, filePath, lineNumber);
         i = bodyResult.endIndex;
         if (isActive()) {
+          const strippedBody = stripLuaCommentsPreserveNewlines(bodyResult.body);
           state.macros.set(macroHeader.name, {
             name: macroHeader.name,
             params: macroHeader.params,
-            body: bodyResult.body,
+            body: strippedBody,
             sourceFile: filePath,
             lineNumber,
           });
@@ -636,6 +637,142 @@ function ensureTrailingNewline(text: string): string {
   return text;
 }
 
+type LongBracketInfo = {
+  equalsCount: number;
+  length: number;
+  close: string;
+};
+
+function readLongBracketOpen(text: string, index: number): LongBracketInfo | null {
+  if (text[index] !== "[") {
+    return null;
+  }
+  let j = index + 1;
+  while (j < text.length && text[j] === "=") {
+    j++;
+  }
+  if (j < text.length && text[j] === "[") {
+    const equalsCount = j - index - 1;
+    const close = "]" + "=".repeat(equalsCount) + "]";
+    return { equalsCount, length: j - index + 1, close };
+  }
+  return null;
+}
+
+function stripLuaCommentsPreserveNewlines(source: string): string {
+  let out = "";
+  let i = 0;
+  let state: "normal" | "single" | "double" | "long-string" | "line-comment" | "block-comment" = "normal";
+  let longClose = "";
+
+  while (i < source.length) {
+    const ch = source[i];
+
+    if (state === "normal") {
+      if (ch === "-" && source[i + 1] === "-") {
+        const longOpen = readLongBracketOpen(source, i + 2);
+        if (longOpen) {
+          state = "block-comment";
+          longClose = longOpen.close;
+          i += 2 + longOpen.length;
+          continue;
+        }
+        state = "line-comment";
+        i += 2;
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        state = ch === '"' ? "double" : "single";
+        out += ch;
+        i++;
+        continue;
+      }
+
+      if (ch === "[") {
+        const longOpen = readLongBracketOpen(source, i);
+        if (longOpen) {
+          state = "long-string";
+          longClose = longOpen.close;
+          out += source.slice(i, i + longOpen.length);
+          i += longOpen.length;
+          continue;
+        }
+      }
+
+      out += ch;
+      i++;
+      continue;
+    }
+
+    if (state === "single" || state === "double") {
+      const quote = state === "single" ? "'" : '"';
+      if (ch === "\\" && i + 1 < source.length) {
+        out += source.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      out += ch;
+      i++;
+      if (ch === quote) {
+        state = "normal";
+      }
+      continue;
+    }
+
+    if (state === "long-string") {
+      if (longClose && source.startsWith(longClose, i)) {
+        out += longClose;
+        i += longClose.length;
+        state = "normal";
+        continue;
+      }
+      out += ch;
+      i++;
+      continue;
+    }
+
+    if (state === "line-comment") {
+      if (ch === "\r" && source[i + 1] === "\n") {
+        out += "\r\n";
+        i += 2;
+        state = "normal";
+        continue;
+      }
+      if (ch === "\n" || ch === "\r") {
+        out += ch;
+        i++;
+        state = "normal";
+        continue;
+      }
+      i++;
+      continue;
+    }
+
+    if (state === "block-comment") {
+      if (longClose && source.startsWith(longClose, i)) {
+        i += longClose.length;
+        state = "normal";
+        continue;
+      }
+      if (ch === "\r" && source[i + 1] === "\n") {
+        out += "\r\n";
+        i += 2;
+        continue;
+      }
+      if (ch === "\n" || ch === "\r") {
+        out += ch;
+        i++;
+        continue;
+      }
+      i++;
+      continue;
+    }
+  }
+
+  return out;
+}
+
 // unique key for an include based on file path and overrides
 // used for pragma once and cycle detection
 function makeIncludeKey(filePath: string, overrides: Record<string, LuaPreprocessorValue>): string {
@@ -671,10 +808,12 @@ function parseMacroHeader(rest: string, filePath: string, lineNumber: number): M
         .map((p) => p.trim())
         .filter((p) => p.length > 0)
     : [];
+  const sanitizedInlineBody =
+    inlineBody !== undefined ? stripLuaCommentsPreserveNewlines(inlineBody).trim() : undefined;
   return {
     name,
     params,
-    inlineBody: inlineBody !== undefined ? inlineBody.trim() : undefined,
+    inlineBody: sanitizedInlineBody,
   };
 }
 
@@ -760,7 +899,7 @@ function applyMacroPass(
       );
     }
 
-    const argTexts = args.map((arg) => sliceRange(code, getRange(arg, filePath)));
+    const argTexts = args.map((arg) => stripLuaCommentsPreserveNewlines(sliceRange(code, getRange(arg, filePath))));
     const expanded = expandMacroBody(project, macroDef, argTexts, filePath, lineNumber);
     replacements.push({ start: range[0], end: range[1], text: expanded });
   });

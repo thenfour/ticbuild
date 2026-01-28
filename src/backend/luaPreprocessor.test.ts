@@ -187,7 +187,7 @@ local value = (WRAP(42))`;
 local value = (WRAP(42))`;
     const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
-    dumpTempLuaFile(result.code);
+    // dumpTempLuaFile(result.code);
 
     expect(result.code).toContain("local value = (42+2)");
   });
@@ -202,9 +202,28 @@ local value = (WRAP(42))`;
 local value = (WRAP(42))`;
     const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
-    dumpTempLuaFile(result.code);
+    // dumpTempLuaFile(result.code);
 
     expect(result.code).toContain("local value = (42+4+3)");
+  });
+
+  it("should strip comments in a way that doesn't accidentally concatenate", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro STRING_CONCAT(a,b)
+a-- comment1
+..-- comment2
+b
+--#endmacro
+local value = (STRING_CONCAT(10,12))
+`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    // comments should not remove the newlines or cause accidental concatenation
+    // : local value = (10..12) is a syntax error
+    expect(result.code).toContain(`local value = (10
+..
+12)`);
   });
 
   it("should not include comments", async () => {
@@ -214,11 +233,50 @@ local value = (WRAP(42))`;
 local value = (ID(42))`;
     const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
-    dumpTempLuaFile(result.code);
-
     // Currently getting:
     // local value = (42+1 -- comment)"
+    // which is just a syntax error and not what any dev would expect.
     expect(result.code).toContain("local value = (42+1)");
+  });
+
+  it("should not treat double dashes in strings as comments (be lexically aware generally)", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ID(x) => "--" .. x .. "--" -- comment
+local value = (ID(42))`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain(`local value = ("--" .. 42 .. "--")`);
+  });
+
+  it("should strip comments from macro arguments at call sites", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ID(x) => x
+local value = (ID(
+42-- a comment
+..
+43
+))`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain(`local value = (42
+..
+43)`);
+  });
+
+  it("should not include comments (multi-line macro)", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ID(x) -- comment 1
+x+1 -- comment 2
+--#endmacro -- comment 3
+local value = (ID(42))`;
+
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    // not certain the expected result: something like this, but possibly with some whitespace / linebreak differences.
+    expect(result.code).toContain(`local value = (42+1)`);
   });
 });
 
