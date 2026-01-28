@@ -7,6 +7,7 @@ import { buildCommand } from "./frontend/build";
 import { initCommand, InitOptions } from "./frontend/init";
 import { CommandLineOptions } from "./frontend/parseOptions";
 import { runCommand } from "./frontend/run";
+import { templateListCommand } from "./frontend/templateList";
 import { watchCommand } from "./frontend/watch";
 import * as console from "./utils/console";
 import {
@@ -14,6 +15,7 @@ import {
   printInitHelp,
   printMainHelp,
   printRunHelp,
+  printTemplateListHelp,
   printTic80Help,
   printWatchHelp,
 } from "./utils/help";
@@ -56,6 +58,9 @@ async function main(): Promise<void> {
         return;
       case "init":
         printInitHelp();
+        return;
+      case "templatelist":
+        printTemplateListHelp();
         return;
       case "tic80":
       case "t":
@@ -144,6 +149,13 @@ async function main(): Promise<void> {
     });
 
   program
+    .command("templatelist")
+    .description("List available project templates")
+    .action(async () => {
+      await templateListCommand();
+    });
+
+  program
     .command("tic80")
     .alias("t")
     .description("Launch TIC-80 directly")
@@ -171,6 +183,9 @@ async function main(): Promise<void> {
             break;
           case "init":
             printInitHelp();
+            break;
+          case "templatelist":
+            printTemplateListHelp();
             break;
           case "tic80":
           case "t":

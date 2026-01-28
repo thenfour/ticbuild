@@ -1,0 +1,12 @@
+
+ticbuild {{VERSION}}
+  commit: {{COMMIT_HASH}}
+  built: {{BUILD_DATE}}
+
+usage: ticbuild templatelist
+
+List all available project templates found in the templates directory.
+
+Examples:
+
+  ticbuild templatelist

@@ -47,6 +47,11 @@ export function printInitHelp(): void {
   console.log(help);
 }
 
+export function printTemplateListHelp(): void {
+  const help = renderHelpTemplate("templatelist");
+  console.log(help);
+}
+
 export function printTic80Help(): void {
   const help = renderHelpTemplate("tic80");
   console.log(help);

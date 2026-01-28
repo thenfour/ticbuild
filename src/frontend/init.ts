@@ -6,7 +6,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cons from "../utils/console";
 import { copyFile, ensureDir, fileExists, isDirectory, isDirectoryEmpty } from "../utils/fileSystem";
-import { applyTemplateVariables, getPathRelativeToTemplates, resolveTemplateDir } from "../utils/templates";
+import {
+  applyTemplateVariables,
+  containsTicbuildManifest,
+  getPathRelativeToTemplates,
+  resolveTemplateDir,
+} from "../utils/templates";
 
 export type InitOptions = {
   name?: string;
@@ -64,24 +69,6 @@ function isTemplateTextFile(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   const templateExtensions = new Set([".jsonc", ".json", ".lua", ".md", ".txt"]);
   return templateExtensions.has(ext);
-}
-
-/////////////////////////////////////////////////////////////////////////////////
-function containsTicbuildManifest(dirPath: string): boolean {
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const entryPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      if (containsTicbuildManifest(entryPath)) {
-        return true;
-      }
-      continue;
-    }
-    if (entry.name.toLowerCase().endsWith(".ticbuild.jsonc")) {
-      return true;
-    }
-  }
-  return false;
 }
 
 /////////////////////////////////////////////////////////////////////////////////

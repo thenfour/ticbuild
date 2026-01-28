@@ -13,6 +13,7 @@ Common commands:
   run, r [manifest]           Build and launch TIC-80
   watch, w [manifest]         Build, launch, and watch for changes
   init [dir]                  Initialize a new project
+  templatelist                List available templates
 
 Other commands:
 
