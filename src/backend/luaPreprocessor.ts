@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
-import { readBinaryFileAsync, readTextFileAsync } from "../utils/fileSystem";
+import * as path from "node:path";
+import { readBinaryFileAsync, readTextFileAsync, resolveFileWithSearchPaths } from "../utils/fileSystem";
 import { toLuaStringLiteral } from "../utils/lua/lua_fundamentals";
 import { stringValue } from "../utils/lua/lua_utils";
 import { parseTic80Cart } from "../utils/tic80/cartLoader";
@@ -317,11 +318,17 @@ async function resolveInclude(
 
   const substituted = project.substituteVariables(includeTarget);
   let resolvedPath: string;
-  try {
-    resolvedPath = project.resolveIncludePath(substituted);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(formatError(fromFile, lineNumber, message));
+
+  const localFound = resolveFileWithSearchPaths(substituted, path.dirname(fromFile));
+  if (localFound) {
+    resolvedPath = localFound;
+  } else {
+    try {
+      resolvedPath = project.resolveIncludePath(substituted);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(formatError(fromFile, lineNumber, message));
+    }
   }
   const includeKey = makeIncludeKey(resolvedPath, overrides);
 
