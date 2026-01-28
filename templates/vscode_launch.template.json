@@ -3,21 +3,36 @@
     "configurations": [
         {
             "name": "ticbuild watch",
-            "type": "node-terminal",
+            "type": "node",
             "request": "launch",
-            "command": "ticbuild watch"
+            "runtimeExecutable": "ticbuild",
+            "args": [
+                "watch"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
         },
         {
             "name": "ticbuild run",
-            "type": "node-terminal",
+            "type": "node",
             "request": "launch",
-            "command": "ticbuild run"
+            "runtimeExecutable": "ticbuild",
+            "args": [
+                "run"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
         },
         {
             "name": "ticbuild build",
-            "type": "node-terminal",
+            "type": "node",
             "request": "launch",
-            "command": "ticbuild build"
+            "runtimeExecutable": "ticbuild",
+            "args": [
+                "build"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
         }
     ]
 }
