@@ -278,6 +278,25 @@ local value = (ID(42))`;
     // not certain the expected result: something like this, but possibly with some whitespace / linebreak differences.
     expect(result.code).toContain(`local value = (42+1)`);
   });
+
+  it("should be nestable with code after", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro TIC_WIDTH() => 240
+--#macro ID(x) => x
+
+local boundWidth = ID(TIC_WIDTH())
+local y = x
+
+    
+    `;
+
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    // todo: expected result.
+    expect(result.code).toContain(`local boundWidth = 240
+local y = x`);
+  });
 });
 
 describe("Lua preprocessor include resolution", () => {

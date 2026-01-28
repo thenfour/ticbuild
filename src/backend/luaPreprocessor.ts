@@ -911,7 +911,21 @@ function applyMacroPass(
     return { code, changed: false };
   }
 
-  const sorted = replacements.sort((a, b) => b.start - a.start);
+  const sortedByStart = [...replacements].sort((a, b) => a.start - b.start || b.end - a.end);
+
+  // filter out nested replacements; only keep outermost
+  // this prevents overlapping edits
+  const filtered: Array<{ start: number; end: number; text: string }> = [];
+  let currentOuter: { start: number; end: number; text: string } | null = null;
+  for (const rep of sortedByStart) {
+    if (currentOuter && rep.start >= currentOuter.start && rep.end <= currentOuter.end) {
+      continue;
+    }
+    filtered.push(rep);
+    currentOuter = rep;
+  }
+
+  const sorted = filtered.sort((a, b) => b.start - a.start);
   let out = code;
   for (const rep of sorted) {
     out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
