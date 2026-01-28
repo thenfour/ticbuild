@@ -1,0 +1,52 @@
+{
+    "$schema": "./.ticbuild/ticbuild.schema.json",
+    "project": {
+        "name": "{{PROJECT_NAME}}",
+        "importDirs": [
+            "assets"
+        ],
+        "includeDirs": [
+            "src"
+        ],
+        "binDir": "./build/$(buildConfiguration)-bin",
+        "objDir": "./build/$(buildConfiguration)-obj",
+        "outputCartName": "$(project.name).tic"
+    },
+    "imports": [
+        {
+            "name": "maincode",
+            "path": "src/main.lua"
+        }
+    ],
+    "assembly": {
+        "lua": {
+            "minify": false,
+            "globals": {
+                "PALETTE": "1a1c2c5d275db13e53ef7d57ffcd75a7f07038b76425717929366f3b5dc941a6f673eff7f4f4f494b0c2566c86333c57"
+            }
+        },
+        "blocks": [
+            {
+                "asset": "maincode",
+                "code": {
+                    // opts-in to emitting global variable declarations defined in assembly.lua.globals
+                    "emitGlobals": true
+                }
+            }
+        ]
+    },
+    "buildConfigurations": {
+        // By default, optimal settings are used. Let's define a "debug" build configuration that
+        // disables minification.
+        "debug": {
+            "variables": {
+                "DEBUG": "1"
+            },
+            "assembly": {
+                "lua": {
+                    "minify": false
+                }
+            }
+        }
+    }
+}
