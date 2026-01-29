@@ -1,4 +1,5 @@
 import { fileExists, findExecutableInPath } from "../../utils/fileSystem";
+import { mergeTic80Args } from "../../utils/tic80/args";
 import { launchProcessReturnImmediately } from "../../utils/tic80/launch";
 import { getWindowPosition, setWindowPosition, waitForWindow, WindowPlacement } from "../../utils/windowPosition";
 import { ITic80Controller } from "./tic80Controller";
@@ -57,11 +58,9 @@ export class VanillaTic80Controller implements ITic80Controller {
     this.tic80Path = location.path;
   }
 
-  async launchFireAndForget(cartPath?: string | undefined): Promise<void> {
-    const args = ["--skip"];
-    if (cartPath) {
-      args.unshift(cartPath);
-    }
+  async launchFireAndForget(cartPath?: string | undefined, userArgs: string[] = []): Promise<void> {
+    const mergedArgs = mergeTic80Args(["--skip"], userArgs);
+    const args = cartPath ? [cartPath, ...mergedArgs] : mergedArgs;
     // Fire-and-forget: do not keep a PID/handle (works even when parent exits).
     await launchProcessReturnImmediately(this.tic80Path, args);
   }
@@ -80,7 +79,7 @@ export class VanillaTic80Controller implements ITic80Controller {
   // for vanilla, this needs to launch the process, we should keep the handle
   // so we can stop it (kill it), and we can get the PID for window management
   // for saving & restoring window position.
-  async launchAndControlCart(cartPath: string): Promise<void> {
+  async launchAndControlCart(cartPath: string, userArgs: string[] = []): Promise<void> {
     // If already running, restart it (vanilla TIC-80 has no reload IPC).
     // Window position management is a controller-specific hack and lives here.
     let savedWindowPosition: WindowPlacement | null = null;
@@ -110,10 +109,8 @@ export class VanillaTic80Controller implements ITic80Controller {
 
     await this.stop();
 
-    const args = ["--skip"];
-    if (cartPath) {
-      args.unshift(cartPath);
-    }
+    const mergedArgs = mergeTic80Args(["--skip"], userArgs);
+    const args = cartPath ? [cartPath, ...mergedArgs] : mergedArgs;
 
     this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, args);
 

@@ -6,14 +6,14 @@ export interface ITic80Controller {
   // used by
   // * `tic80` command to just launch the tic80 instance
   // * `run` command to launch the cart after building
-  launchFireAndForget(cartPath?: string | undefined): Promise<void>;
+  launchFireAndForget(cartPath?: string | undefined, userArgs?: string[]): Promise<void>;
 
   // for the `watch` command, we want to launch in a way that is tracked/controlled.
   // for vanilla tic-80 builds, this means we launch and keep the PID/handle to be able to kill it later.
   // for our custom remote-capable build, we keep the same instance running and use IPC to reload the cart.
   // does not return exit codes. again: this controller interface should (mostly)
   // hide the fact that it's a separate process.
-  launchAndControlCart(cartPath: string): Promise<void>;
+  launchAndControlCart(cartPath: string, userArgs?: string[]): Promise<void>;
 
   // if a managed instance is running, stops it.
   // for vanilla builds, kills the process.

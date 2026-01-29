@@ -6,3 +6,10 @@ usage: ticbuild tic80
 Launch TIC-80 directly without building a cart
 
 This is a convenience command to quickly open TIC-80.
+
+Forwarding to TIC-80:
+
+	Use "--" to pass arguments through to TIC-80.
+
+	Example:
+		ticbuild tic80 -- --fs=c:\\temp --skip

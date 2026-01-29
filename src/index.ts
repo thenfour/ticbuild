@@ -21,18 +21,35 @@ import {
 } from "./utils/help";
 import { getBuildVersionTag } from "./utils/versionString";
 
-async function launchTic80(): Promise<void> {
+type ForwardedArgs = {
+  cliArgs: string[];
+  forwardedArgs: string[];
+};
+
+function splitForwardedArgs(args: string[]): ForwardedArgs {
+  const separatorIndex = args.indexOf("--");
+  if (separatorIndex === -1) {
+    return { cliArgs: args, forwardedArgs: [] };
+  }
+  return {
+    cliArgs: args.slice(0, separatorIndex),
+    forwardedArgs: args.slice(separatorIndex + 1),
+  };
+}
+
+async function launchTic80(forwardedArgs: string[] = []): Promise<void> {
   const tic80Location = createTic80Controller(process.cwd());
   if (!tic80Location) {
     console.error("TIC-80 controller could not be created.");
     process.exit(1);
   }
-  await tic80Location.launchFireAndForget();
+  await tic80Location.launchFireAndForget(undefined, forwardedArgs);
 }
 
 async function main(): Promise<void> {
   // Intercept help flags early before Commander processes them
-  const args = process.argv.slice(2);
+  const { cliArgs, forwardedArgs } = splitForwardedArgs(process.argv.slice(2));
+  const args = cliArgs;
 
   // Handle global help
   if (args.length === 0 || (args.length === 1 && (args[0] === "-h" || args[0] === "--help"))) {
@@ -117,7 +134,7 @@ async function main(): Promise<void> {
       [],
     )
     .action(async (manifest?: string, options?: CommandLineOptions) => {
-      await runCommand(manifest, options);
+      await runCommand(manifest, options, forwardedArgs);
     });
 
   program
@@ -135,7 +152,7 @@ async function main(): Promise<void> {
       [],
     )
     .action(async (manifest?: string, options?: CommandLineOptions) => {
-      await watchCommand(manifest, options);
+      await watchCommand(manifest, options, forwardedArgs);
     });
 
   program
@@ -160,7 +177,7 @@ async function main(): Promise<void> {
     .alias("t")
     .description("Launch TIC-80 directly")
     .action(async () => {
-      await launchTic80();
+      await launchTic80(forwardedArgs);
     });
 
   program
@@ -203,7 +220,7 @@ async function main(): Promise<void> {
     });
 
   // Parse arguments
-  await program.parseAsync(process.argv);
+  await program.parseAsync(cliArgs, { from: "user" });
 }
 
 main();

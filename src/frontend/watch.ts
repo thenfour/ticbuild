@@ -6,7 +6,11 @@ import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { ITic80Controller } from "../backend/tic80Controller/tic80Controller";
 
-export async function watchCommand(manifestPath?: string, options?: CommandLineOptions): Promise<void> {
+export async function watchCommand(
+  manifestPath?: string,
+  options?: CommandLineOptions,
+  tic80Args: string[] = [],
+): Promise<void> {
   cons.info("ticbuild: watch command");
 
   // needs to be mutable because it depends on env for tic80 location, which relies on project dir, which can change.
@@ -108,7 +112,7 @@ export async function watchCommand(manifestPath?: string, options?: CommandLineO
       cons.h1("Launching TIC-80 with built cartridge...");
       cons.info(`  ${outputFilePath}`);
 
-      await tic80Controller.launchAndControlCart(outputFilePath);
+      await tic80Controller.launchAndControlCart(outputFilePath, tic80Args);
       //cons.success("TIC-80 launched successfully.");
 
       // If the manifest changed, update the watch list

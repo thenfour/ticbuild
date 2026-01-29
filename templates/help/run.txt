@@ -15,6 +15,13 @@ Options:
   -v, --var <key=value> Override manifest variable (can be used multiple times)
   -h, --help           Show this help message
 
+Forwarding to TIC-80:
+
+  Use "--" to pass arguments through to TIC-80.
+
+  Example:
+    ticbuild run -- --fs=c:\\temp --skip
+
 Examples:
 
   ticbuild run

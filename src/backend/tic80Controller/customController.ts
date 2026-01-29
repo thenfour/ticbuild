@@ -5,6 +5,7 @@ import { ChildProcess } from "node:child_process";
 import { fileExists } from "../../utils/fileSystem";
 import * as cons from "../../utils/console";
 import { getPathRelativeToTemplates } from "../../utils/templates";
+import { findOptionValue, mergeTic80Args } from "../../utils/tic80/args";
 import { launchProcessReturnImmediately } from "../../utils/tic80/launch";
 import { ITic80Controller } from "./tic80Controller";
 import { Tic80RemotingClient } from "./remotingClient";
@@ -31,18 +32,17 @@ export class CustomTic80Controller implements ITic80Controller {
     this.remotingVerbose = !!options?.remotingVerbose;
   }
 
-  async launchFireAndForget(cartPath?: string | undefined): Promise<void> {
+  async launchFireAndForget(cartPath?: string | undefined, userArgs: string[] = []): Promise<void> {
+    this.applyRemotingPortOverride(userArgs);
     await this.ensurePortSelected();
     const port = this.port!;
-    const args = ["--skip", `--remoting-port=${port}`];
-    if (cartPath) {
-      args.unshift(cartPath);
-    }
+    const mergedArgs = mergeTic80Args(["--skip", `--remoting-port=${port}`], userArgs);
+    const args = cartPath ? [cartPath, ...mergedArgs] : mergedArgs;
     await launchProcessReturnImmediately(this.tic80Path, args);
   }
 
-  async launchAndControlCart(cartPath: string): Promise<void> {
-    await this.ensureProcessRunning();
+  async launchAndControlCart(cartPath: string, userArgs: string[] = []): Promise<void> {
+    await this.ensureProcessRunning(userArgs);
     await this.ensureConnected();
 
     await this.client!.loadCart(cartPath, true);
@@ -70,15 +70,16 @@ export class CustomTic80Controller implements ITic80Controller {
     this.tic80Process = undefined;
   }
 
-  private async ensureProcessRunning(): Promise<void> {
+  private async ensureProcessRunning(userArgs: string[] = []): Promise<void> {
     if (this.tic80Process && !this.tic80Process.killed) {
       return;
     }
 
+    this.applyRemotingPortOverride(userArgs);
     await this.ensurePortSelected();
     const port = this.port!;
-    const args = ["--skip", `--remoting-port=${port}`];
-    this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, args);
+    const mergedArgs = mergeTic80Args(["--skip", `--remoting-port=${port}`], userArgs);
+    this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, mergedArgs);
     const processRef = this.tic80Process;
     if (processRef) {
       processRef.once("exit", () => this.handleProcessExit(processRef));
@@ -157,5 +158,18 @@ export class CustomTic80Controller implements ITic80Controller {
       return;
     }
     this.port = await findRandomFreePortInRange(TICBUILD_PORT_RANGE_START, TICBUILD_PORT_RANGE_END, this.host);
+  }
+
+  private applyRemotingPortOverride(userArgs: string[]): void {
+    const portValue = findOptionValue(userArgs, "--remoting-port");
+    if (!portValue) {
+      return;
+    }
+    const port = Number(portValue);
+    if (!Number.isFinite(port) || port <= 0 || port >= 65536) {
+      cons.warning(`[remoting] Invalid --remoting-port value: ${portValue}`);
+      return;
+    }
+    this.port = port;
   }
 }

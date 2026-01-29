@@ -4,7 +4,11 @@ import * as cons from "../utils/console";
 import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 
-export async function runCommand(manifestPath?: string, options?: CommandLineOptions): Promise<void> {
+export async function runCommand(
+  manifestPath?: string,
+  options?: CommandLineOptions,
+  tic80Args: string[] = [],
+): Promise<void> {
   cons.info("ticbuild: run command");
 
   // First, build the project
@@ -24,5 +28,5 @@ export async function runCommand(manifestPath?: string, options?: CommandLineOpt
   cons.info("Launching TIC-80 with built cartridge...");
   cons.bold(`  ${outputFilePath}`);
 
-  await tic80Controller.launchFireAndForget(outputFilePath);
+  await tic80Controller.launchFireAndForget(outputFilePath, tic80Args);
 }
