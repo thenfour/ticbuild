@@ -12,8 +12,8 @@ Common commands:
   build, b [manifest]         Build a TIC-80 cart from manifest
   run, r [manifest]           Build and launch TIC-80
   watch, w [manifest]         Build, launch, and watch for changes
-  init [dir]                  Initialize a new project
-  templatelist                List available templates
+  init, i [dir]               Initialize a new project
+  templatelist, tl            List available templates
 
 Other commands:
 

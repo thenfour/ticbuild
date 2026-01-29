@@ -74,9 +74,11 @@ async function main(): Promise<void> {
         printWatchHelp();
         return;
       case "init":
+      case "i":
         printInitHelp();
         return;
       case "templatelist":
+      case "tl":
         printTemplateListHelp();
         return;
       case "tic80":
@@ -157,6 +159,7 @@ async function main(): Promise<void> {
 
   program
     .command("init [dir]")
+    .alias("i")
     .description("Initialize a new ticbuild project")
     .option("-n, --name <name>", "Project name")
     .option("-t, --template <name>", "Template name (subdir in templates)")
@@ -167,6 +170,7 @@ async function main(): Promise<void> {
 
   program
     .command("templatelist")
+    .alias("tl")
     .description("List available project templates")
     .action(async () => {
       await templateListCommand();
@@ -199,9 +203,11 @@ async function main(): Promise<void> {
             printWatchHelp();
             break;
           case "init":
+          case "i":
             printInitHelp();
             break;
           case "templatelist":
+          case "tl":
             printTemplateListHelp();
             break;
           case "tic80":
