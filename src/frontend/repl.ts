@@ -102,9 +102,11 @@ async function handleReplCommand(
     flushBuffer: () => Promise<void>,
 ): Promise<"quit" | "handled" | false> {
     switch (command.name) {
+        case "h":
         case "help":
             printReplHelp();
             return "handled";
+        case "q":
         case "quit":
         case "exit":
             return "quit";
@@ -117,6 +119,7 @@ async function handleReplCommand(
             await flushBuffer();
             return "handled";
         case "minify":
+        case "m":
             handleMinifyCommand(command.args, state);
             return "handled";
         default:
@@ -228,7 +231,7 @@ export async function replCommand(manifestPath?: string, options?: ReplCommandOp
 
     const replState: ReplState = {
         multiLine: !!options?.multiLine,
-        minifyEnabled: CoalesceBool(baseCore.manifest.assembly.lua?.minify, true),
+        minifyEnabled: CoalesceBool(baseCore.manifest.assembly.lua?.minify, false),
         ruleOverrides: {},
     };
 
