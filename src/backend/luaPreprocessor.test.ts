@@ -46,7 +46,7 @@ describe("Lua preprocessor __ENCODE", () => {
 
     {
       const project = makeProject(manifest);
-      const source = 'local value = __ENCODE("hex", "hex", "1f 00")';
+      const source = 'local value = __ENCODE("hex,hex", "1f 00")';
       const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
       expect(result.code).toContain('local value = "1f00"');
@@ -54,7 +54,7 @@ describe("Lua preprocessor __ENCODE", () => {
 
     {
       const project = makeProject(manifest);
-      const source = 'local value = __ENCODE("b85+1", "hex", "#)(](nIt.M!")';
+      const source = 'local value = __ENCODE("b85+1,hex", "#)(](nIt.M!")';
       const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
       expect(result.code).toContain('local value = "192c5dff7f80"');

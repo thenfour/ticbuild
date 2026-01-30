@@ -40,6 +40,47 @@ export function normalizeEmptySpec(raw: string): string | null {
     return trimmed.length === 0 ? null : trimmed;
 }
 
+export type PipelineSpecSplit = {
+    sourceSpecRaw: string | null;
+    destSpecRaw: string;
+};
+
+export function splitPipelineSpec(
+    raw: string,
+    allowImplicitSource: boolean,
+    filePath: string,
+    lineNumber: number,
+    formatError: EncodeErrorFormatter,
+): PipelineSpecSplit {
+    const tokens = splitSpecTokens(raw).map((token) => token.trim()).filter((token) => token.length > 0);
+    if (tokens.length === 0) {
+        throw new Error(formatError(filePath, lineNumber, `Spec is empty`));
+    }
+
+    let lastValueCodecIndex = -1;
+    for (let i = 0; i < tokens.length; i += 1) {
+        if (isValueCodecToken(tokens[i])) {
+            lastValueCodecIndex = i;
+        }
+    }
+
+    if (lastValueCodecIndex === -1) {
+        throw new Error(formatError(filePath, lineNumber, `Spec must include a value codec`));
+    }
+
+    const sourceTokens = tokens.slice(0, lastValueCodecIndex);
+    const destTokens = tokens.slice(lastValueCodecIndex);
+
+    if (sourceTokens.length === 0 && !allowImplicitSource) {
+        throw new Error(formatError(filePath, lineNumber, `Spec must start with a source codec`));
+    }
+
+    return {
+        sourceSpecRaw: sourceTokens.length > 0 ? sourceTokens.join(",") : null,
+        destSpecRaw: destTokens.join(","),
+    };
+}
+
 export function encodeLiteralToBytes(
     sourceSpecRaw: string,
     value: string,
@@ -284,6 +325,15 @@ function splitSpecTokens(raw: string): string[] {
         tokens.push(current);
     }
     return tokens;
+}
+
+function isValueCodecToken(token: string): boolean {
+    try {
+        normalizeBinaryOutputEncoding(token);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function parseTransformToken(

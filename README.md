@@ -464,11 +464,12 @@ local s = __EXPAND("the project name is: $(project.name)")
 
 -- __IMPORT and __ENCODE data transforms emitting as Lua literals.
 --
--- __IMPORT(sourceSpec, destSpec, importRef)
--- __IMPORT(destSpec, importRef)  -- 2-arg form uses manifest import's sourceEncoding
--- __ENCODE(sourceSpec, destSpec, literalValue)
+-- __IMPORT(pipelineSpec, importRef)
+-- __ENCODE(pipelineSpec, literalValue)
 --
--- specs are comma-chains: codec,transform...
+-- pipelineSpec is a single comma-chain of codecs/transforms.
+-- It contains exactly one value codec, and everything before that is
+-- interpreted as the source codec + byte transforms.
 -- Whitespace is ignored.
 --
 -- Outputs either values or string (not a table literal)
@@ -478,26 +479,27 @@ local s = __EXPAND("the project name is: $(project.name)")
 --    local a,b,c = __ENCODE(...)
 -- => local a,b,c = 1,2,3
 
--- Source spec codecs:
---   hex, ascii, utf8, base64, b85+1 (strings)
---   raw, lz (binary input only)
--- Source spec transforms (byte-level):
---   lz, rle, ttz, take(start,length)
+-- Source codecs (string input):
+--   hex, ascii, utf8, base64, b85+1, lz85+1
+-- Source codecs (binary input only):
+--   raw, lz
+-- Byte transforms:
+--   lz, unlz, rle, unrle, ttz, take(start,length)
 --
 -- start is 0-based.
 --
--- Dest spec codecs:
+-- Value codecs:
 --   u8, s8, u16le, s16le, u24le, s24le, u32le, s32le
 --   u16be, s16be, u24be, s24be, u32be, s32be
---   hex, b85+1, ascii, utf8, base64
--- Dest spec transforms (value-level):
---   norm(N), scale(k), toUppercase
+--   hex, b85+1, lz85+1, ascii, utf8, base64
+-- Value transforms:
+--   norm(N), scale(k), q(N), toUppercase
 --
 -- where `k` is scalar (required)
 -- where `N` is optional maximum # of decimals after point
 
 -- hex literal to normalized RGBA bytes
-local c = { __ENCODE("hex", "u8,norm", "#ff8000"), 0.5 }
+local c = { __ENCODE("hex,u8,norm", "#ff8000"), 0.5 }
 -- generates:
 local c = { 1,0.5,0,0.5 }
 
@@ -512,7 +514,7 @@ local paletteValues = { __IMPORT("s32", "import:twilight_bog_palette") }
 local paletteValues = {873731871,1515078457,-1567793811,-1196705143,-1669088817,1182102135,1882734392,1688625995,-1902856080,-507527224,-1918571802,-1772455754}
 
 -- base85+1 encoding with LZ compression in the source spec
-local paletteCompressed = __IMPORT("ascii,lz", "b85+1", "import:creditstxt")
+local paletteCompressed = __IMPORT("ascii,lz,b85+1", "import:creditstxt")
 -- generates:
 local paletteCompressed = "..."
 

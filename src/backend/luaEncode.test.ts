@@ -36,7 +36,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("hex", "hex", "#ff00")';
+        const source = 'local v = __ENCODE("hex,hex", "#ff00")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain('local v = "ff00"');
@@ -58,7 +58,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("hex", "u8", "ff00")';
+        const source = 'local v = __ENCODE("hex,u8", "ff00")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain("local v = 255,0");
@@ -80,7 +80,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = { __ENCODE("hex", "u8,q(1)", "02") }';
+        const source = 'local v = { __ENCODE("hex,u8,q(1)", "02") }';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain("local v = { 1 }");
@@ -102,7 +102,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("hex,lz,unlz", "hex", "ff00")';
+        const source = 'local v = __ENCODE("hex,lz,unlz,hex", "ff00")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain('local v = "ff00"');
@@ -124,7 +124,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("hex,rle,unrle", "hex", "ff00")';
+        const source = 'local v = __ENCODE("hex,rle,unrle,hex", "ff00")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain('local v = "ff00"');
@@ -146,7 +146,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("hex", "u8,norm(2)", "80")';
+        const source = 'local v = __ENCODE("hex,u8,norm(2)", "80")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain("local v = 0.5");
@@ -168,7 +168,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("hex,take(1,1)", "u8", "ff008011")';
+        const source = 'local v = __ENCODE("hex,take(1,1),u8", "ff008011")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain("local v = 0");
@@ -190,7 +190,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("ascii", "ascii,toUppercase", "abC")';
+        const source = 'local v = __ENCODE("ascii,ascii,toUppercase", "abC")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain('local v = "ABC"');
@@ -212,7 +212,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("hex", "base64", "666f6f")';
+        const source = 'local v = __ENCODE("hex,base64", "666f6f")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain('local v = "Zm9v"');
@@ -234,7 +234,7 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("ascii", "ascii,norm", "ab")';
+        const source = 'local v = __ENCODE("ascii,ascii,norm", "ab")';
 
         await expect(preprocessLuaCode(project, source, path.join(projectDir, "source.lua"))).rejects.toThrow(
             "Transform norm is not valid for string outputs",
@@ -326,7 +326,7 @@ describe("luaEncode __IMPORT", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-            const source = 'local v, w = __IMPORT("raw,take(1,2)", "u8", "import:binRaw")';
+        const source = 'local v, w = __IMPORT("raw,take(1,2),u8", "import:binRaw")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain("local v, w = 128,255");
@@ -357,7 +357,7 @@ describe("luaEncode __IMPORT", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local s = __IMPORT("utf8", "ascii", "import:textFile")';
+        const source = 'local s = __IMPORT("utf8,ascii", "import:textFile")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain('local s = "Hello"');

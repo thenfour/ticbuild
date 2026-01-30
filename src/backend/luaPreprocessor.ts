@@ -14,6 +14,7 @@ import {
   encodeBytesWithDestSpec,
   encodeLiteralToBytes,
   normalizeEmptySpec,
+  splitPipelineSpec,
   resolveImportBytes,
 } from "./luaEncode";
 
@@ -1084,23 +1085,12 @@ async function expandPreprocessorCalls(
       tasks.push(
         (async () => {
           const lineNumber = getLineNumber(callNode, 1);
-          if (callNode.arguments.length !== 2 && callNode.arguments.length !== 3) {
-            throw new Error(formatError(filePath, lineNumber, `__IMPORT expects two or three arguments`));
+          if (callNode.arguments.length !== 2) {
+            throw new Error(formatError(filePath, lineNumber, `__IMPORT expects exactly two arguments`));
           }
 
-          let sourceSpecRaw: string | null = null;
-          let destSpecRaw: string;
-          let importArgRaw: string;
-          if (callNode.arguments.length === 2) {
-            // __IMPORT(destSpec, importRef)
-            destSpecRaw = getStringLiteralArg(callNode, 0, "__IMPORT").value;
-            importArgRaw = getStringLiteralArg(callNode, 1, "__IMPORT").value;
-          } else {
-            // __IMPORT(sourceSpec, destSpec, importRef)
-            sourceSpecRaw = getStringOrNilArg(callNode, 0, "__IMPORT").value;
-            destSpecRaw = getStringLiteralArg(callNode, 1, "__IMPORT").value;
-            importArgRaw = getStringLiteralArg(callNode, 2, "__IMPORT").value;
-          }
+          const pipelineArg = getStringLiteralArg(callNode, 0, "__IMPORT");
+          const importArgRaw = getStringLiteralArg(callNode, 1, "__IMPORT").value;
 
           const importSpec = project.substituteVariables(importArgRaw);
           if (!importSpec.startsWith("import:")) {
@@ -1109,7 +1099,9 @@ async function expandPreprocessorCalls(
           const ref = parseImportReference(importSpec);
 
           const importDef = resolveImportDefinition(ref.importName, lineNumber);
-          const resolvedSourceSpec = normalizeEmptySpec(project.substituteVariables(sourceSpecRaw || ""));
+          const pipelineSpec = project.substituteVariables(pipelineArg.value);
+          const split = splitPipelineSpec(pipelineSpec, true, filePath, lineNumber, formatError);
+          const resolvedSourceSpec = normalizeEmptySpec(project.substituteVariables(split.sourceSpecRaw || ""));
 
           const bytes = await resolveImportBytes(
             project,
@@ -1122,7 +1114,7 @@ async function expandPreprocessorCalls(
             formatError,
           );
 
-          const destSpec = project.substituteVariables(destSpecRaw);
+          const destSpec = project.substituteVariables(split.destSpecRaw);
           const output = encodeBytesWithDestSpec(bytes, destSpec, filePath, lineNumber, formatError);
           addReplacement(callNode, output);
         })(),
@@ -1134,15 +1126,16 @@ async function expandPreprocessorCalls(
       tasks.push(
         (async () => {
           const lineNumber = getLineNumber(callNode, 1);
-          if (callNode.arguments.length !== 3) {
-            throw new Error(formatError(filePath, lineNumber, `__ENCODE expects exactly three arguments`));
+          if (callNode.arguments.length !== 2) {
+            throw new Error(formatError(filePath, lineNumber, `__ENCODE expects exactly two arguments`));
           }
-          const sourceSpecRaw = getStringLiteralArg(callNode, 0, "__ENCODE");
-          const destSpecRaw = getStringLiteralArg(callNode, 1, "__ENCODE");
-          const valueArg = getStringLiteralArg(callNode, 2, "__ENCODE");
+          const pipelineArg = getStringLiteralArg(callNode, 0, "__ENCODE");
+          const valueArg = getStringLiteralArg(callNode, 1, "__ENCODE");
 
-          const sourceSpec = project.substituteVariables(sourceSpecRaw.value);
-          const destSpec = project.substituteVariables(destSpecRaw.value);
+          const pipelineSpec = project.substituteVariables(pipelineArg.value);
+          const split = splitPipelineSpec(pipelineSpec, false, filePath, lineNumber, formatError);
+          const sourceSpec = project.substituteVariables(split.sourceSpecRaw || "");
+          const destSpec = project.substituteVariables(split.destSpecRaw);
           const sourceValue = project.substituteVariables(valueArg.value);
 
           // don't support this, because it conflicts with a literal string that starts with "import:"
