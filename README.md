@@ -217,6 +217,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
   "$schema": "./ticbuild.schema.json",
   "project": {
     "name": "my demo",
+    "launchArgs": ["--fs=./", "--skip"], // args that are passed to the tic80 when launched.
     "includeDirs": ["./src", "./include"], // includes these dirs in source file lookup
     "importDirs": ["./assets", "./images"], // include these dirs in resource import lookup
     "binDir": "./dist/bin",

@@ -28,6 +28,7 @@ export type ImportKindKey = typeof kImportKind.$key;
 
 export interface ProjectConfig {
   name: string;
+  launchArgs?: string[];
   includeDirs?: string[];
   importDirs?: string[];
   binDir: string;

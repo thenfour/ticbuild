@@ -5,6 +5,7 @@ import * as cons from "../utils/console";
 import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { ITic80Controller } from "../backend/tic80Controller/tic80Controller";
+import { mergeTic80Args } from "../utils/tic80/args";
 
 export async function watchCommand(
   manifestPath?: string,
@@ -90,6 +91,10 @@ export async function watchCommand(
       const projectLoadOptions = parseBuildOptions(manifestPath, options);
       const project = TicbuildProject.loadFromManifest(projectLoadOptions);
       const outputFilePath = project.resolvedCore.getOutputFilePath();
+      const manifestArgs = (project.resolvedCore.manifest.project.launchArgs || []).map((arg) =>
+        project.resolvedCore.substituteVariables(arg),
+      );
+      const mergedArgs = mergeTic80Args(manifestArgs, tic80Args);
 
       // Resolve TIC-80 controller
       if (!tic80Controller) {
@@ -112,7 +117,7 @@ export async function watchCommand(
       cons.h1("Launching TIC-80 with built cartridge...");
       cons.info(`  ${outputFilePath}`);
 
-      await tic80Controller.launchAndControlCart(outputFilePath, tic80Args);
+      await tic80Controller.launchAndControlCart(outputFilePath, mergedArgs);
       //cons.success("TIC-80 launched successfully.");
 
       // If the manifest changed, update the watch list
@@ -188,5 +193,5 @@ export async function watchCommand(
   process.on("SIGQUIT", cleanup);
 
   // Keep the process alive
-  await new Promise(() => {});
+  await new Promise(() => { });
 }
