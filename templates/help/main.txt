@@ -12,6 +12,7 @@ Common commands:
   build, b [manifest]         Build a TIC-80 cart from manifest
   run, r [manifest]           Build and launch TIC-80
   watch, w [manifest]         Build, launch, and watch for changes
+  repl [manifest]              Interactive Lua preprocessing/minification REPL
   init, i [dir]               Initialize a new project
   templatelist, tl            List available templates
 

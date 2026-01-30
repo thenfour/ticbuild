@@ -24,6 +24,7 @@ export interface CommandLineOptions {
   mode?: string;
   var?: string[];
   remotingVerbose?: boolean;
+  multiLine?: boolean;
 }
 
 export function parseBuildOptions(

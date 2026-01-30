@@ -106,9 +106,87 @@ ticbuild run
 # build and live-update with changes in a tic80
 ticbuild watch
 
+# interactive Lua preprocessing/minification REPL
+ticbuild repl
+
 # create a new empty project
 ticbuild init
 
+```
+
+## REPL mode (interactive preprocessing/minification)
+
+Interactive Lua processing on the command line, using the same context as
+the build process. Useful for testing / debugging, or just doing some ad-hock
+encoding.
+
+Note: It doesn't actually EXECUTE the Lua. Just outputs the preprocessed + minified
+Lua code.
+
+### Usage
+
+```bash
+ticbuild repl [manifest] [--multi-line] [--mode <name>] [--var <key=value>]
+```
+
+* **Manifest and build configuration**
+  * The REPL loads the project in the same way as `build`.
+  * `--mode` and `--var` are supported
+
+* **Single-line mode (default)**
+  * Each line you enter is processed immediately.
+  * The resulting Lua code is printed to stdout after each line.
+
+* **Multi-line mode**
+  * Enable with `--multi-line`.
+  * Input is collected until a terminator is entered on its own line:
+    * `:end`, `:eof`, or a lone `:`
+  * Once the terminator is received, the full block is processed and printed.
+
+### REPL commands
+
+Commands always start with `:`.
+
+```
+:help
+:minify on
+:minify off
+:minify <rule> on
+:minify <rule> off
+:end
+:eof
+:
+:quit
+```
+
+#### `:minify` details
+
+* `:minify on|off` toggles overall minification for the session.
+* `:minify <rule> on|off` overrides individual minification rules. rules:
+
+```
+stripComments
+renameLocalVariables
+aliasRepeatedExpressions
+aliasLiterals
+simplifyExpressions
+removeUnusedLocals
+removeUnusedFunctions
+renameTableFields
+packLocalDeclarations
+```
+
+These overrides are applied on top of the manifest’s
+`assembly.lua.minification` settings.
+
+### Examples
+
+```bash
+# default single-line mode
+ticbuild repl
+
+# multi-line input mode
+ticbuild repl --multi-line
 ```
 
 ## TIC-80 binary location

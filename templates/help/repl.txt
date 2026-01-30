@@ -1,0 +1,46 @@
+
+ticbuild repl
+
+usage: ticbuild repl [options] [manifest]
+
+Interactive Lua preprocessing/minification REPL.
+Input is processed as in the build pipeline, using the selected
+optional project manifest and build config.
+
+Arguments:
+
+  [manifest]           Path to manifest file / project dir
+
+Options:
+
+  -m, --mode <name>    Build configuration name from manifest
+  -v, --var <key=value> Override manifest variable (can be used multiple times)
+  --multi-line         Use multi-line input mode (end input with :end, :eof, or :)
+  -h, --help           Show this help message
+
+REPL commands:
+
+  :help                     Show REPL commands
+  :minify on|off            Enable/disable minification
+  :minify <rule> on|off     Toggle a minification rule
+  :end | :eof | :           End multi-line input (multi-line mode only)
+  :quit                     Exit the REPL
+
+Toggleable rules:
+
+  stripComments
+  renameLocalVariables
+  aliasRepeatedExpressions
+  aliasLiterals
+  simplifyExpressions
+  removeUnusedLocals
+  removeUnusedFunctions
+  renameTableFields
+  packLocalDeclarations
+
+Examples:
+
+  ticbuild repl
+  ticbuild repl --multi-line
+  ticbuild repl --mode release
+  ticbuild repl ./myproject --var KERNEL_SIZE=16

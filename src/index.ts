@@ -6,6 +6,7 @@ import { buildInfo } from "./buildInfo";
 import { buildCommand } from "./frontend/build";
 import { initCommand, InitOptions } from "./frontend/init";
 import { CommandLineOptions } from "./frontend/parseOptions";
+import { replCommand } from "./frontend/repl";
 import { runCommand } from "./frontend/run";
 import { templateListCommand } from "./frontend/templateList";
 import { watchCommand } from "./frontend/watch";
@@ -14,6 +15,7 @@ import {
   printBuildHelp,
   printInitHelp,
   printMainHelp,
+  printReplHelp,
   printRunHelp,
   printTemplateListHelp,
   printTic80Help,
@@ -76,6 +78,9 @@ async function main(): Promise<void> {
       case "init":
       case "i":
         printInitHelp();
+        return;
+      case "repl":
+        printReplHelp();
         return;
       case "templatelist":
       case "tl":
@@ -158,6 +163,23 @@ async function main(): Promise<void> {
     });
 
   program
+    .command("repl [manifest]")
+    .description("Launch a Lua preprocessing/minification REPL")
+    .option("-m, --mode <name>", "Build configuration name")
+    .option(
+      "-v, --var <key=value>",
+      "Override manifest variable",
+      (value, previous: string[] = []) => {
+        return [...previous, value];
+      },
+      [],
+    )
+    .option("--multi-line", "Use multi-line input mode")
+    .action(async (manifest?: string, options?: CommandLineOptions) => {
+      await replCommand(manifest, options);
+    });
+
+  program
     .command("init [dir]")
     .alias("i")
     .description("Initialize a new ticbuild project")
@@ -209,6 +231,9 @@ async function main(): Promise<void> {
           case "templatelist":
           case "tl":
             printTemplateListHelp();
+            break;
+          case "repl":
+            printReplHelp();
             break;
           case "tic80":
           case "t":
