@@ -5,17 +5,17 @@ import { toLuaStringLiteral } from "../utils/lua/lua_fundamentals";
 import { stringValue } from "../utils/lua/lua_utils";
 import { parseTic80Cart } from "../utils/tic80/cartLoader";
 import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
-import {
-  decodeSourceDataFromString,
-  isStringSourceEncoding,
-  resolveSourceEncoding,
-} from "../utils/encoding/codecRegistry";
-import { encodeBinaryAsLuaLiteral, normalizeBinaryOutputEncoding } from "./luaBinaryEncoding";
-import { loadBinaryImportData, loadTextImportData, parseImportReference } from "./importUtils";
+import { parseImportReference } from "./importUtils";
 import { kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { parseLua } from "../utils/lua/lua_processor";
 import * as cons from "../utils/console";
+import {
+  encodeBytesWithDestSpec,
+  encodeLiteralToBytes,
+  normalizeEmptySpec,
+  resolveImportBytes,
+} from "./luaEncode";
 
 export type LuaPreprocessorValue = string | number | boolean;
 
@@ -806,9 +806,9 @@ function parseMacroHeader(rest: string, filePath: string, lineNumber: number): M
   const inlineBody = headerMatch[4];
   const params = paramList
     ? paramList
-        .split(",")
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0)
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)
     : [];
   const sanitizedInlineBody =
     inlineBody !== undefined ? stripLuaCommentsPreserveNewlines(inlineBody).trim() : undefined;
@@ -1023,6 +1023,29 @@ async function expandPreprocessorCalls(
     return { value: rawValue, lineNumber };
   };
 
+  const getStringOrNilArg = (
+    callNode: luaparse.CallExpression,
+    index: number,
+    fnName: string,
+  ): { value: string | null; lineNumber: number } => {
+    const lineNumber = getLineNumber(callNode, 1);
+    const arg = callNode.arguments[index];
+    if (!arg) {
+      throw new Error(formatError(filePath, lineNumber, `${fnName} argument ${index + 1} is missing`));
+    }
+    if (arg.type === "NilLiteral") {
+      return { value: null, lineNumber };
+    }
+    if (arg.type !== "StringLiteral") {
+      throw new Error(formatError(filePath, lineNumber, `${fnName} argument ${index + 1} must be a string literal`));
+    }
+    const rawValue = stringValue(arg);
+    if (rawValue === null) {
+      throw new Error(formatError(filePath, lineNumber, `Invalid string literal in ${fnName}`));
+    }
+    return { value: rawValue, lineNumber };
+  };
+
   const resolveImportDefinition = (importName: string, lineNumber: number) => {
     const importDef = project.manifest.imports.find((imp) => imp.name === importName);
     if (!importDef) {
@@ -1057,66 +1080,51 @@ async function expandPreprocessorCalls(
       return;
     }
 
-    if (fnName === "__IMPORTTEXT") {
+    if (fnName === "__IMPORT") {
       tasks.push(
         (async () => {
           const lineNumber = getLineNumber(callNode, 1);
-          if (callNode.arguments.length !== 1) {
-            throw new Error(formatError(filePath, lineNumber, `__IMPORTTEXT expects exactly one argument`));
-          }
-          const arg = getStringLiteralArg(callNode, 0, "__IMPORTTEXT");
-          const substituted = project.substituteVariables(arg.value);
-          if (!substituted.startsWith("import:")) {
-            addReplacement(callNode, toLuaStringLiteral(substituted));
-            return;
+          if (callNode.arguments.length !== 2 && callNode.arguments.length !== 3) {
+            throw new Error(formatError(filePath, lineNumber, `__IMPORT expects two or three arguments`));
           }
 
-          const ref = parseImportReference(substituted);
-          if (ref.chunkSpec) {
-            throw new Error(formatError(filePath, lineNumber, `__IMPORTTEXT does not support chunk specifiers`));
+          let sourceSpecRaw: string | null = null;
+          let destSpecRaw: string;
+          let importArgRaw: string;
+          if (callNode.arguments.length === 2) {
+            // __IMPORT(destSpec, importRef)
+            destSpecRaw = getStringLiteralArg(callNode, 0, "__IMPORT").value;
+            importArgRaw = getStringLiteralArg(callNode, 1, "__IMPORT").value;
+          } else {
+            // __IMPORT(sourceSpec, destSpec, importRef)
+            sourceSpecRaw = getStringOrNilArg(callNode, 0, "__IMPORT").value;
+            destSpecRaw = getStringLiteralArg(callNode, 1, "__IMPORT").value;
+            importArgRaw = getStringLiteralArg(callNode, 2, "__IMPORT").value;
           }
-          const importDef = resolveImportDefinition(ref.importName, lineNumber);
-          if (importDef.kind !== kImportKind.key.text) {
-            throw new Error(formatError(filePath, lineNumber, `__IMPORTTEXT requires a text import`));
-          }
-          const result = await loadTextImportData(project, importDef);
-          for (const dep of result.dependencies) {
-            state.dependencies.add(dep);
-          }
-          addReplacement(callNode, toLuaStringLiteral(result.data));
-        })(),
-      );
-      return;
-    }
 
-    if (fnName === "__IMPORTBIN") {
-      tasks.push(
-        (async () => {
-          const lineNumber = getLineNumber(callNode, 1);
-          if (callNode.arguments.length !== 2) {
-            throw new Error(formatError(filePath, lineNumber, `__IMPORTBIN expects exactly two arguments`));
-          }
-          const encodingArg = getStringLiteralArg(callNode, 0, "__IMPORTBIN");
-          const importArg = getStringLiteralArg(callNode, 1, "__IMPORTBIN");
-          const encoding = normalizeBinaryOutputEncoding(project.substituteVariables(encodingArg.value));
-          const importSpec = project.substituteVariables(importArg.value);
+          const importSpec = project.substituteVariables(importArgRaw);
           if (!importSpec.startsWith("import:")) {
-            throw new Error(formatError(filePath, lineNumber, `__IMPORTBIN requires an import reference`));
+            throw new Error(formatError(filePath, lineNumber, `__IMPORT requires an import reference`));
           }
           const ref = parseImportReference(importSpec);
-          if (ref.chunkSpec) {
-            throw new Error(formatError(filePath, lineNumber, `__IMPORTBIN does not support chunk specifiers`));
-          }
+
           const importDef = resolveImportDefinition(ref.importName, lineNumber);
-          if (importDef.kind !== kImportKind.key.binary) {
-            throw new Error(formatError(filePath, lineNumber, `__IMPORTBIN requires a binary import`));
-          }
-          const result = await loadBinaryImportData(project, importDef);
-          for (const dep of result.dependencies) {
-            state.dependencies.add(dep);
-          }
-          const literal = encodeBinaryAsLuaLiteral(result.data, encoding);
-          addReplacement(callNode, literal);
+          const resolvedSourceSpec = normalizeEmptySpec(project.substituteVariables(sourceSpecRaw || ""));
+
+          const bytes = await resolveImportBytes(
+            project,
+            importDef,
+            resolvedSourceSpec,
+            ref.chunkSpec,
+            (dep) => state.dependencies.add(dep),
+            filePath,
+            lineNumber,
+            formatError,
+          );
+
+          const destSpec = project.substituteVariables(destSpecRaw);
+          const output = encodeBytesWithDestSpec(bytes, destSpec, filePath, lineNumber, formatError);
+          addReplacement(callNode, output);
         })(),
       );
       return;
@@ -1129,26 +1137,22 @@ async function expandPreprocessorCalls(
           if (callNode.arguments.length !== 3) {
             throw new Error(formatError(filePath, lineNumber, `__ENCODE expects exactly three arguments`));
           }
-          const sourceEncodingArg = getStringLiteralArg(callNode, 0, "__ENCODE");
-          const outputEncodingArg = getStringLiteralArg(callNode, 1, "__ENCODE");
+          const sourceSpecRaw = getStringLiteralArg(callNode, 0, "__ENCODE");
+          const destSpecRaw = getStringLiteralArg(callNode, 1, "__ENCODE");
           const valueArg = getStringLiteralArg(callNode, 2, "__ENCODE");
 
-          const sourceEncodingRaw = project.substituteVariables(sourceEncodingArg.value).trim().toLowerCase();
-          const sourceEncoding = resolveSourceEncoding(sourceEncodingRaw).key;
-          if (!isStringSourceEncoding(sourceEncoding)) {
-            throw new Error(formatError(filePath, lineNumber, `__ENCODE only supports string-based source encodings`));
-          }
-
-          const outputEncoding = normalizeBinaryOutputEncoding(project.substituteVariables(outputEncodingArg.value));
-
+          const sourceSpec = project.substituteVariables(sourceSpecRaw.value);
+          const destSpec = project.substituteVariables(destSpecRaw.value);
           const sourceValue = project.substituteVariables(valueArg.value);
+
+          // don't support this, because it conflicts with a literal string that starts with "import:"
           if (sourceValue.startsWith("import:")) {
-            console.warn(formatError(filePath, lineNumber, `__ENCODE used with import reference; use __IMPORTBIN`));
+            throw new Error(formatError(filePath, lineNumber, `__ENCODE does not accept import references; use __IMPORT`));
           }
 
-          const data = decodeSourceDataFromString(sourceEncoding, sourceValue);
-          const literal = encodeBinaryAsLuaLiteral(data, outputEncoding);
-          addReplacement(callNode, literal);
+          const bytes = encodeLiteralToBytes(sourceSpec, sourceValue, filePath, lineNumber, formatError);
+          const output = encodeBytesWithDestSpec(bytes, destSpec, filePath, lineNumber, formatError);
+          addReplacement(callNode, output);
         })(),
       );
     }

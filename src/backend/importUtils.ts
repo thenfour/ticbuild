@@ -9,10 +9,11 @@ import {
 } from "../utils/encoding/codecRegistry";
 import { ImportDefinition, kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
+import { kTic80CartChunkTypes, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 
 export type ImportReference = {
   importName: string;
-  chunkSpec?: string;
+  chunkSpec?: Tic80CartChunkTypeKey;
 };
 
 export type ImportDataResult<T> = {
@@ -34,7 +35,15 @@ export function parseImportReference(reference: string): ImportReference {
     throw new Error(`Import reference has too many ':' segments: ${reference}`);
   }
   const chunkSpec = parts.length > 1 ? parts[1].trim() : undefined;
-  return { importName, chunkSpec };
+
+  const coercedChunkSpec = (() => {
+    if (!chunkSpec) {
+      return undefined;
+    }
+    return kTic80CartChunkTypes.coerceByKey(chunkSpec)?.key;
+  })();
+
+  return { importName, chunkSpec: coercedChunkSpec };
 }
 
 function resolveSourceEncodingKey(importDef: ImportDefinition): SourceEncodingKey {

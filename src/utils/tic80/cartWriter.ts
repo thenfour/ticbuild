@@ -1,14 +1,6 @@
 import { assert } from "../errorHandling";
+import { trimTrailingZeros } from "../utils";
 import { kTic80CartChunkTypes, Tic80Cart, Tic80CartChunk, Tic80CartChunkTypeKey } from "./tic80";
-
-// remove trailing zeros from a Uint8Array; chunk data in TIC-80 need not include trailing zeros.
-export function trimTrailingZeros(data: Uint8Array): Uint8Array {
-  let end = data.length;
-  while (end > 0 && data[end - 1] === 0) {
-    end--;
-  }
-  return data.subarray(0, end);
-}
 
 // each chunk consists of a 4-byte header, then chunk data.
 // offset   bits      description

@@ -7,6 +7,8 @@ export const kSourceEncoding = defineEnum({
   raw: { value: "raw", input: "bytes" },
   lz: { value: "lz", input: "bytes" },
   hex: { value: "hex", input: "string" },
+  ascii: { value: "ascii", input: "string" },
+  utf8: { value: "utf8", input: "string" },
   "b85+1": { value: "b85+1", input: "string" },
   "lz85+1": { value: "lz85+1", input: "string" },
 } as const);
@@ -36,8 +38,24 @@ const sourceEncodings: Record<SourceEncodingKey, SourceEncodingCodec> = {
   hex: {
     key: "hex",
     input: "string",
-    decodeFromString: (text) => decodeHexString(text),
+    decodeFromString: (text) => {
+      const trimmed = text.trim();
+      const cleaned = trimmed.startsWith("#") ? trimmed.substring(1) : trimmed;
+      return decodeHexString(cleaned);
+    },
     encodeToString: (data) => encodeHexString(data),
+  },
+  ascii: {
+    key: "ascii",
+    input: "string",
+    decodeFromString: (text) => asciiToBytes(text),
+    encodeToString: (data) => bytesToAscii(data),
+  },
+  utf8: {
+    key: "utf8",
+    input: "string",
+    decodeFromString: (text) => new TextEncoder().encode(text),
+    encodeToString: (data) => new TextDecoder("utf-8").decode(data),
   },
   "b85+1": {
     key: "b85+1",
@@ -87,4 +105,28 @@ export function encodeBinaryToString(encoding: SourceEncodingKey, data: Uint8Arr
 
 export function isStringSourceEncoding(encoding: SourceEncodingKey): boolean {
   return sourceEncodings[encoding].input === "string";
+}
+
+function asciiToBytes(text: string): Uint8Array {
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code > 0x7f) {
+      throw new Error(`ASCII encode: invalid codepoint ${code} at index ${i}`);
+    }
+    bytes[i] = code;
+  }
+  return bytes;
+}
+
+function bytesToAscii(data: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < data.length; i += 1) {
+    const byte = data[i];
+    if (byte > 0x7f) {
+      throw new Error(`ASCII decode: invalid byte ${byte} at index ${i}`);
+    }
+    out += String.fromCharCode(byte);
+  }
+  return out;
 }

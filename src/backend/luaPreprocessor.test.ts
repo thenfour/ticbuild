@@ -78,10 +78,10 @@ describe("Lua preprocessor __ENCODE", () => {
 
     {
       const project = makeProject(manifest);
-      const source = 'local value = __ENCODE("lz85+1", "u8", "!!!X;l?2oD)")';
+      const source = 'local value = { __ENCODE("lz85+1", "u8", "!!!X;l?2oD)") }';
       const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
-      expect(result.code).toContain("local value = {25,44,93,255,127,128}");
+      expect(result.code).toContain("local value = { 25,44,93,255,127,128 }");
     }
   });
 });
@@ -102,7 +102,7 @@ describe("Lua preprocessor error/warning directives", () => {
   };
 
   it("should emit warnings for --#warning", async () => {
-    const warnSpy = jest.spyOn(cons, "warning").mockImplementation(() => {});
+    const warnSpy = jest.spyOn(cons, "warning").mockImplementation(() => { });
     const project = makeProject(manifest);
     const source = "--#warning please check this\nlocal x = 1";
 

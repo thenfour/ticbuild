@@ -106,3 +106,12 @@ export function CoalesceBool(value: boolean | null | undefined, defaultValue: bo
   }
   return value;
 }
+
+
+export function trimTrailingZeros(data: Uint8Array): Uint8Array {
+  let end = data.length;
+  while (end > 0 && data[end - 1] === 0) {
+    end -= 1;
+  }
+  return data.slice(0, end);
+}

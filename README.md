@@ -254,7 +254,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
       // like other resources, loading from file is fine:
       // "path": "path_to_file.txt"
       // but you can also just specify the value here. Again, string substitution is supported.
-      "value": "greetz to everyone at the party coding is omg so beer fartschnapps",
+      "value": "greetz to everyone at the party",
     },
     // it is not necessary to specify all source files here; main.lua can import
     // files directly by relative path.
@@ -462,26 +462,64 @@ print("debug")
 -- at the preprocessor level though, and emitted as a string literal.
 local s = __EXPAND("the project name is: $(project.name)")
 
--- Import binary data with various encodings, emits as lua literal.
--- this is for kind=binary imports.
--- first arg is the *output* encoding.
--- second arg is an import reference, same syntax as #include
-local paletteString = __IMPORTBIN("hex", "import:twilight_bog_palette")
+-- __IMPORT and __ENCODE data transforms emitting as Lua literals.
+--
+-- __IMPORT(sourceSpec, destSpec, importRef)
+-- __IMPORT(destSpec, importRef)  -- 2-arg form uses manifest import's sourceEncoding
+-- __ENCODE(sourceSpec, destSpec, literalValue)
+--
+-- specs are comma-chains: codec,transform...
+-- Whitespace is ignored.
+--
+-- Outputs either values or string (not a table literal)
+--    local t = { __ENCODE(...) }
+-- => local t = { 1,2,3 }
+--
+--    local a,b,c = __ENCODE(...)
+-- => local a,b,c = 1,2,3
+
+-- Source spec codecs:
+--   hex, ascii, utf8, b85+1 (strings)
+--   raw, lz (binary input only)
+-- Source spec transforms (byte-level):
+--   lz, rle, ttz, take(start,length)
+--
+-- start is 0-based.
+--
+-- Dest spec codecs:
+--   u8, s8, u16le, s16le, u24le, s24le, u32le, s32le
+--   u16be, s16be, u24be, s24be, u32be, s32be
+--   hex, b85+1, ascii, utf8
+-- Dest spec transforms (value-level):
+--   norm(N), scale(k), toUppercase
+--
+-- where `k` is scalar (required)
+-- where `N` is optional maximum # of decimals after point
+
+-- hex literal to normalized RGBA bytes
+local c = { __ENCODE("hex", "u8,norm", "#ff8000"), 0.5 }
+-- generates:
+local c = { 1,0.5,0,0.5 }
+
+-- import hex palette as a hex string
+local paletteString = __IMPORT("hex", "import:twilight_bog_palette")
 -- generates:
 local paletteString = "1f17143439434e5a6d5d8da289baabb8cfb9839c77727546383f38704b63a66470b8948ec8bfbfe1e6eaa48db6785a96"
 
--- U8, S8, U16, S16, U32, S32 output tables of numbers from the binary input
-local paletteString = __IMPORTBIN("s32", "import:twilight_bog_palette")
+-- import palette to signed 32-bit values (values output, not a table)
+local paletteValues = { __IMPORT("s32", "import:twilight_bog_palette") }
 -- generates:
-local paletteString = {873731871,1515078457,-1567793811,-1196705143,-1669088817,1182102135,1882734392,1688625995,-1902856080,-507527224,-1918571802,-1772455754}
+local paletteValues = {873731871,1515078457,-1567793811,-1196705143,-1669088817,1182102135,1882734392,1688625995,-1902856080,-507527224,-1918571802,-1772455754}
 
--- base85+1 is base85 encoding with a prefix char describing the length remainder.
-local paletteString = __IMPORTBIN("b85+1", "import:twilight_bog_palette")
+-- base85+1 encoding with LZ compression in the source spec
+local paletteCompressed = __IMPORT("ascii,lz", "b85+1", "import:creditstxt")
 -- generates:
-local paletteString = "!*u>VJ3C?PFD-`-qM7Tatcae[uGB.gq3'TBA94Oi0E4D-maM5LKk3Ab%[WkuA"
+local paletteCompressed = "..."
+
+-- NOTE: string substitution is performed on spec strings and import/literal values.
 
 -- LZ compression possible. The payload is compressed, then encoded with base85+1.
-local paletteString = __IMPORTBIN("lz85+1", "import:twilight_bog_palette") -- LZ compressed binary + base 85 encoding
+local paletteString = __IMPORT("raw,lz", "b85+1", "import:twilight_bog_palette") -- LZ compressed binary + base 85 encoding
 -- generates:
 local paletteString = "#!&,K2'Jqg;:0ML?NM;9@X16KdK:I.+F[e>T3,hN#VIXYUP`Ei\"^Z\">?UlDg->*]-g"
 
@@ -493,25 +531,22 @@ local paletteString = "#!&,K2'Jqg;:0ML?NM;9@X16KdK:I.+F[e>T3,hN#VIXYUP`Ei\"^Z\">
 -- 2. we don't want to create another weird syntax like "hex:123456"
 -- 3. we don't want to make overloads of this function just for literals.
 
--- ...So we make another function: __ENCODE where you must specify the input encoding,
--- output encoding, and the literal source value.
--- only string-based source encoding types are supported (so no LZ for example, but lz85+1 is ok)
-local paletteString = __ENCODE("hex", "b85+1", "1f17143439434e5a6d5d8da289baabb8cfb9839c77727546383f38704b63a66470b8948ec8bfbfe1e6eaa48db6785a96")
+-- ...So we have another function: __ENCODE where you must specify the input encoding,
+-- output spec, and the literal source value.
+-- only string-based source format types are supported (so no "raw" for example, but "b85+1,lz" is ok)
+local paletteString = __ENCODE("hex,lz", "b85+1", "1f17143439434e5a6d5d8da289baabb8cfb9839c77727546383f38704b63a66470b8948ec8bfbfe1e6eaa48db6785a96")
 -- generates:
 local paletteString = "!*u>VJ3C?PFD-`-qM7Tatcae[uGB.gq3'TBA94Oi0E4D-maM5LKk3Ab%[WkuA"
--- ...without requiring an import at all to perform the encoding.
--- note the extra param. This version of __IMPORTBIN is (sourceEncoding, destEncoding, value)
--- where the value is processed the same as if it was in the manifest "value" key.
-
--- NOTE: both parameters support $(variables). string substitution is performed.
+--                    "#!&,K2'Jqg;:0ML?NM;9@X16KdK:I.+F[e>T3,hN#VIXYUP`Ei\"^Z\">?UlDg->*]-g"
+-- test with round trip:
+local s = __ENCODE("b85+1,lz", "hex", "#!&,K2'Jqg;:0ML?NM;9@X16KdK:I.+F[e>T3,hN#VIXYUP`Ei\"^Z\">?UlDg->*]-g")
 
 -- allows emitting a string literal from an imported text resource.
-local scrollText = __IMPORTTEXT("import:scroll_text")
+local scrollText = __IMPORT("", "", "import:somecart:")
 
 -- once again, "import:" is required for consistency, and to allow literals (though it's not much
 -- value but there for completeness.)
--- string substitution is performed.
-local s = __IMPORTTEXT("the project name is: $(project.name)") -- effectively the same as __EXPAND
+local s = __ENCODE("ascii", "ascii", "the project name is: $(project.name)") -- effectively the same as __EXPAND
 
 -- macros are handy esp for writing optimized code (avoid symbol lookups, plus give
 -- the minifier the chance to simplify / reduce expressions.

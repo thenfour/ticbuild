@@ -18,11 +18,13 @@ export type BinaryOutputEncoding =
   | "s32le"
   | "u32be"
   | "s32be"
+  | "ascii"
+  | "utf8"
   | "hex"
-  | "b85+1"
-  | "lz85+1";
+  | "b85+1";
+//  | "lz85+1";
 
-const stringEncodings = new Set<BinaryOutputEncoding>(["hex", "b85+1", "lz85+1"]);
+const stringEncodings = new Set<BinaryOutputEncoding>(["hex", "b85+1", "ascii", "utf8"]);
 
 type TableEncodingConfig = {
   bytes: number;
@@ -87,14 +89,54 @@ export function encodeBinaryAsLuaLiteral(data: Uint8Array, encoding: BinaryOutpu
   return `{${values.join(",")}}`;
 }
 
-function encodeBinaryAsString(data: Uint8Array, encoding: BinaryOutputEncoding): string {
+export function encodeBinaryAsLuaValues(data: Uint8Array, encoding: BinaryOutputEncoding): string {
+  if (stringEncodings.has(encoding)) {
+    const encoded = encodeBinaryAsString(data, encoding);
+    return toLuaStringLiteral(encoded);
+  }
+
+  const values = decodeBinaryToValues(data, encoding);
+  return values.join(",");
+}
+
+export function decodeBinaryToValues(data: Uint8Array, encoding: BinaryOutputEncoding): number[] {
+  const config = tableEncodings[encoding];
+  if (!config) {
+    throw new Error(`Unsupported binary numeric encoding: ${encoding}`);
+  }
+
+  if (data.length % config.bytes !== 0) {
+    throw new Error(`Binary data length ${data.length} is not divisible by ${config.bytes} for encoding ${encoding}`);
+  }
+
+  const values: number[] = [];
+  for (let offset = 0; offset < data.length; offset += config.bytes) {
+    const unsigned = readUnsigned(data, offset, config.bytes, config.endian);
+    values.push(config.signed ? toSigned(unsigned, config.bytes * 8) : unsigned);
+  }
+  return values;
+}
+
+export function getNumericEncodingInfo(
+  encoding: BinaryOutputEncoding,
+): { bitWidth: number; signed: boolean } | null {
+  const config = tableEncodings[encoding];
+  if (!config) {
+    return null;
+  }
+  return { bitWidth: config.bytes * 8, signed: config.signed };
+}
+
+export function encodeBinaryAsString(data: Uint8Array, encoding: BinaryOutputEncoding): string {
   switch (encoding) {
     case "hex":
       return encodeHexString(data);
+    case "ascii":
+      return bytesToAscii(data);
+    case "utf8":
+      return new TextDecoder("utf-8").decode(data);
     case "b85+1":
       return base85Plus1Encode(data);
-    case "lz85+1":
-      return base85Plus1Encode(lzCompress(data, gSomaticLZDefaultConfig));
     default:
       throw new Error(`Unsupported string encoding: ${encoding}`);
   }
@@ -121,4 +163,16 @@ function toSigned(value: number, bitWidth: number): number {
     return value - mask;
   }
   return value;
+}
+
+function bytesToAscii(data: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < data.length; i += 1) {
+    const byte = data[i];
+    if (byte > 0x7f) {
+      throw new Error(`ASCII decode: invalid byte ${byte} at index ${i}`);
+    }
+    out += String.fromCharCode(byte);
+  }
+  return out;
 }
