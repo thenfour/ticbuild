@@ -14,8 +14,9 @@ import {
 } from "./luaBinaryEncoding";
 import { ImportDefinition, kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
-import { gSomaticLZDefaultConfig, lzCompress } from "../utils/encoding/lz";
+import { gSomaticLZDefaultConfig, lzCompress, lzDecompress } from "../utils/encoding/lz";
 import { rleCompress } from "../utils/encoding/rle";
+import { rleDecompress } from "../utils/encoding/rle";
 import { toLuaStringLiteral } from "../utils/lua/lua_fundamentals";
 import { loadBinaryImportData, loadTextImportData } from "./importUtils";
 import { trimTrailingZeros } from "../utils/utils";
@@ -172,7 +173,9 @@ export function encodeBytesWithDestSpec(
                 case "scale":
                 case "q":
                 case "lz":
+                case "unlz":
                 case "rle":
+                case "unrle":
                 case "ttz":
                 case "take":
                     throw new Error(
@@ -213,10 +216,16 @@ export function encodeBytesWithDestSpec(
                     }
                     return Math.max(0, Math.min(1, normalized));
                 });
+                if (transform.args.length > 0) {
+                    const digits = Math.max(0, Math.floor(transform.args[0]));
+                    values = values.map((value) => Number(value.toFixed(digits)));
+                }
                 break;
             }
             case "lz":
+            case "unlz":
             case "rle":
+            case "unrle":
             case "ttz":
             case "take":
             case "touppercase":
@@ -303,17 +312,27 @@ function parseTransformToken(
         return { name: "scale", args };
     }
 
-    if (lower.startsWith("q")) {
-        const match = lower.match(/^q(\d+)$/);
-        if (!match) {
-            throw new Error(formatError(filePath, lineNumber, `${context} transform ${trimmed} is invalid`));
+    if (lower.startsWith("q(")) {
+        const args = parseNumericArgs(lower, "q", filePath, lineNumber, context, formatError);
+        if (args.length !== 1) {
+            throw new Error(formatError(filePath, lineNumber, `${context} transform q expects 1 argument`));
         }
-        return { name: "q", args: [Number.parseInt(match[1], 10)] };
+        return { name: "q", args };
+    }
+
+    if (lower.startsWith("norm(")) {
+        const args = parseNumericArgs(lower, "norm", filePath, lineNumber, context, formatError);
+        if (args.length !== 1) {
+            throw new Error(formatError(filePath, lineNumber, `${context} transform norm expects 1 argument`));
+        }
+        return { name: "norm", args };
     }
 
     switch (lower) {
         case "lz":
+        case "unlz":
         case "rle":
+        case "unrle":
         case "ttz":
         case "norm":
         case "touppercase":
@@ -323,7 +342,7 @@ function parseTransformToken(
     }
 }
 
-// parses 
+// parses
 function parseNumericArgs(
     token: string,
     name: string,
@@ -394,8 +413,14 @@ function applyByteTransforms(
             case "lz":
                 output = lzCompress(output, gSomaticLZDefaultConfig);
                 break;
+            case "unlz":
+                output = lzDecompress(output);
+                break;
             case "rle":
                 output = rleCompress(output);
+                break;
+            case "unrle":
+                output = rleDecompress(output);
                 break;
             case "ttz":
                 output = trimTrailingZeros(output);

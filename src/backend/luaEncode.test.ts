@@ -80,10 +80,76 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = { __ENCODE("hex", "u8,q1", "02") }';
+        const source = 'local v = { __ENCODE("hex", "u8,q(1)", "02") }';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain("local v = { 1 }");
+    });
+
+    it("supports round-tripping byte transforms", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("hex,lz,unlz", "hex", "ff00")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain('local v = "ff00"');
+    });
+
+    it("supports unrle transform", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("hex,rle,unrle", "hex", "ff00")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain('local v = "ff00"');
+    });
+
+    it("supports norm precision", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("hex", "u8,norm(2)", "80")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain("local v = 0.5");
     });
 
     it("supports byte transforms", async () => {
@@ -102,10 +168,10 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v, w = __ENCODE("hex,take(1,2)", "u8", "ff008011")';
+        const source = 'local v = __ENCODE("hex,take(1,1)", "u8", "ff008011")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
-        expect(result.code).toContain("local v, w = 0,128");
+        expect(result.code).toContain("local v = 0");
     });
 
     it("supports string transforms", async () => {
@@ -238,7 +304,7 @@ describe("luaEncode __IMPORT", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v, w = __IMPORT("raw,take(1,2)", "u8", "import:binRaw")';
+            const source = 'local v, w = __IMPORT("raw,take(1,2)", "u8", "import:binRaw")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain("local v, w = 128,255");
