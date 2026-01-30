@@ -59,30 +59,6 @@ describe("Lua preprocessor __ENCODE", () => {
 
       expect(result.code).toContain('local value = "192c5dff7f80"');
     }
-
-    {
-      const project = makeProject(manifest);
-      const source = 'local value = __ENCODE("lz85+1", "hex", "!!!X;l?2oD)")';
-      const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
-
-      expect(result.code).toContain('local value = "192c5dff7f80"');
-    }
-
-    {
-      const project = makeProject(manifest);
-      const source = 'local value = __ENCODE("lz85+1", "b85+1", "!!!X;l?2oD)")';
-      const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
-
-      expect(result.code).toContain('local value = "#)(](nIt.M!"');
-    }
-
-    {
-      const project = makeProject(manifest);
-      const source = 'local value = { __ENCODE("lz85+1", "u8", "!!!X;l?2oD)") }';
-      const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
-
-      expect(result.code).toContain("local value = { 25,44,93,255,127,128 }");
-    }
   });
 });
 

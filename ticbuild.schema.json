@@ -103,7 +103,7 @@
               "ascii",
               "utf8",
               "b85+1",
-              "lz85+1"
+              "base64"
             ],
             "description": "Source encoding for binary imports"
           },

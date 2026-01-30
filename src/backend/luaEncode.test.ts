@@ -196,6 +196,28 @@ describe("luaEncode __ENCODE", () => {
         expect(result.code).toContain('local v = "ABC"');
     });
 
+    it("supports base64 encoding", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("hex", "base64", "666f6f")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain('local v = "Zm9v"');
+    });
+
     it("rejects invalid transforms for string outputs", async () => {
         const projectDir = createTempDir();
         const manifest: Manifest = {

@@ -479,7 +479,7 @@ local s = __EXPAND("the project name is: $(project.name)")
 -- => local a,b,c = 1,2,3
 
 -- Source spec codecs:
---   hex, ascii, utf8, b85+1 (strings)
+--   hex, ascii, utf8, base64, b85+1 (strings)
 --   raw, lz (binary input only)
 -- Source spec transforms (byte-level):
 --   lz, rle, ttz, take(start,length)
@@ -489,7 +489,7 @@ local s = __EXPAND("the project name is: $(project.name)")
 -- Dest spec codecs:
 --   u8, s8, u16le, s16le, u24le, s24le, u32le, s32le
 --   u16be, s16be, u24be, s24be, u32be, s32be
---   hex, b85+1, ascii, utf8
+--   hex, b85+1, ascii, utf8, base64
 -- Dest spec transforms (value-level):
 --   norm(N), scale(k), toUppercase
 --

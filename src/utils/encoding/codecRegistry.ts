@@ -9,8 +9,8 @@ export const kSourceEncoding = defineEnum({
   hex: { value: "hex", input: "string" },
   ascii: { value: "ascii", input: "string" },
   utf8: { value: "utf8", input: "string" },
+  base64: { value: "base64", input: "string" },
   "b85+1": { value: "b85+1", input: "string" },
-  "lz85+1": { value: "lz85+1", input: "string" },
 } as const);
 
 export type SourceEncodingKey = typeof kSourceEncoding.$key;
@@ -57,17 +57,17 @@ const sourceEncodings: Record<SourceEncodingKey, SourceEncodingCodec> = {
     decodeFromString: (text) => new TextEncoder().encode(text),
     encodeToString: (data) => new TextDecoder("utf-8").decode(data),
   },
+  base64: {
+    key: "base64",
+    input: "string",
+    decodeFromString: (text) => Uint8Array.from(Buffer.from(text, "base64")),
+    encodeToString: (data) => Buffer.from(data).toString("base64"),
+  },
   "b85+1": {
     key: "b85+1",
     input: "string",
     decodeFromString: (text) => base85Plus1Decode(text),
     encodeToString: (data) => base85Plus1Encode(data),
-  },
-  "lz85+1": {
-    key: "lz85+1",
-    input: "string",
-    decodeFromString: (text) => lzDecompress(base85Plus1Decode(text)),
-    encodeToString: (data) => base85Plus1Encode(lzCompress(data, gSomaticLZDefaultConfig)),
   },
 };
 

@@ -20,12 +20,17 @@ export type BinaryOutputEncoding =
   | "s32be"
   | "ascii"
   | "utf8"
+  | "base64"
   | "hex"
   | "b85+1";
-//  | "lz85+1";
 
-const stringEncodings = new Set<BinaryOutputEncoding>(["hex", "b85+1", "ascii", "utf8"]);
-
+const stringEncodings = new Set<BinaryOutputEncoding>([
+  "hex",
+  "b85+1",
+  "ascii",
+  "utf8",
+  "base64",
+]);
 type TableEncodingConfig = {
   bytes: number;
   signed: boolean;
@@ -135,6 +140,8 @@ export function encodeBinaryAsString(data: Uint8Array, encoding: BinaryOutputEnc
       return bytesToAscii(data);
     case "utf8":
       return new TextDecoder("utf-8").decode(data);
+    case "base64":
+      return Buffer.from(data).toString("base64");
     case "b85+1":
       return base85Plus1Encode(data);
     default:
