@@ -196,6 +196,16 @@ export async function resolveImportBytes(
     }
     const spec = sourceSpecRaw ?? "utf8";
     const sourceSpec = parseSpecChain(spec, filePath, lineNumber, "Source", formatError);
+    if (isValueCodecToken(sourceSpec.base)) {
+        const encoding = normalizeBinaryOutputEncoding(sourceSpec.base);
+        if (isNumericBinaryOutputEncoding(encoding)) {
+            const values = parseNumericList(project.substituteVariables(textResult.data), encoding, filePath, lineNumber, formatError);
+            let bytes = encodeValuesToBytes(values, encoding);
+            bytes = applyByteTransforms(bytes, sourceSpec.transforms, filePath, lineNumber, formatError);
+            return bytes;
+        }
+    }
+
     const baseCodec = resolveSourceEncoding(sourceSpec.base).key;
     if (!isStringSourceEncoding(baseCodec)) {
         throw new Error(formatError(filePath, lineNumber, `Source encoding ${sourceSpec.base} expects binary input`));

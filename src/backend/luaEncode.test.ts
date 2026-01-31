@@ -19,21 +19,34 @@ function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-encode-"));
 }
 
+function createManifest(overrides: Partial<Manifest> = {}): Manifest {
+    const base: Manifest = {
+        project: {
+            name: "test",
+            binDir: "./bin",
+            objDir: "./obj",
+            outputCartName: "test.tic",
+            importDirs: ["./"],
+        },
+        variables: {},
+        imports: [],
+        assembly: { blocks: [] },
+    };
+
+    return {
+        ...base,
+        ...overrides,
+        project: { ...base.project, ...(overrides.project ?? {}) },
+        variables: { ...base.variables, ...(overrides.variables ?? {}) },
+        imports: overrides.imports ?? base.imports,
+        assembly: { ...base.assembly, ...(overrides.assembly ?? {}) },
+    };
+}
+
 describe("luaEncode __ENCODE", () => {
     it("encodes hex literals to hex string", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("hex,hex", "#ff00")';
@@ -44,18 +57,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("encodes hex literals to numeric values", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("hex,u8", "ff00")';
@@ -66,18 +68,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports numeric transforms", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = { __ENCODE("hex,u8,q(1)", "02") }';
@@ -88,18 +79,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports round-tripping byte transforms", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("hex,lz,unlz,hex", "ff00")';
@@ -110,18 +90,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports unrle transform", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("hex,rle,unrle,hex", "ff00")';
@@ -132,18 +101,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports w precision", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("f32le,f32le,w(1)", "1.25")';
@@ -154,18 +112,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports byte transforms", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("hex,take(1,1),u8", "ff008011")';
@@ -176,18 +123,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports string transforms", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("ascii,ascii,toUppercase", "abC")';
@@ -198,18 +134,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports base64 encoding", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("hex,base64", "666f6f")';
@@ -220,18 +145,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports numeric list input (u16le, dec)", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("u16le,hex", "1, 65534")';
@@ -242,18 +156,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports numeric list input (hex, octal, binary, underscores)", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("u16le,hex", "0x1, 0xfffe, 01, 0177776, 1b, 1111_1111_1111_1110b")';
@@ -264,18 +167,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("rejects out-of-range signed list values", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("s8,s8", "-0xff")';
@@ -287,18 +179,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports signed numeric list input", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("s8,s8", "-0x80")';
@@ -309,18 +190,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("supports float list input (f32le)", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("f32le,hex", "1.0, 2.5")';
@@ -331,18 +201,7 @@ describe("luaEncode __ENCODE", () => {
 
     it("rejects invalid transforms for string outputs", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
-            imports: [],
-            assembly: { blocks: [] },
-        };
+        const manifest = createManifest();
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = __ENCODE("ascii,ascii,norm", "ab")';
@@ -356,15 +215,7 @@ describe("luaEncode __ENCODE", () => {
 describe("luaEncode __IMPORT", () => {
     it("imports text values", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
+        const manifest = createManifest({
             imports: [
                 {
                     name: "text1",
@@ -372,8 +223,7 @@ describe("luaEncode __IMPORT", () => {
                     value: "Hi",
                 },
             ],
-            assembly: { blocks: [] },
-        };
+        });
 
         const project = makeProject(manifest, projectDir);
         const source = 'local s = __IMPORT("ascii", "import:text1")';
@@ -384,15 +234,7 @@ describe("luaEncode __IMPORT", () => {
 
     it("imports binary values with manifest sourceEncoding", async () => {
         const projectDir = createTempDir();
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
+        const manifest = createManifest({
             imports: [
                 {
                     name: "binHex",
@@ -401,8 +243,7 @@ describe("luaEncode __IMPORT", () => {
                     value: "0102",
                 },
             ],
-            assembly: { blocks: [] },
-        };
+        });
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v = { __IMPORT("u8", "import:binHex") }';
@@ -416,15 +257,7 @@ describe("luaEncode __IMPORT", () => {
         const binPath = path.join(projectDir, "data.bin");
         fs.writeFileSync(binPath, Buffer.from([0x0a, 0x80, 0xff, 0x12]), "binary");
 
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
+        const manifest = createManifest({
             imports: [
                 {
                     name: "binRaw",
@@ -433,8 +266,7 @@ describe("luaEncode __IMPORT", () => {
                     path: "./data.bin",
                 },
             ],
-            assembly: { blocks: [] },
-        };
+        });
 
         const project = makeProject(manifest, projectDir);
         const source = 'local v, w = __IMPORT("raw,take(1,2),u8", "import:binRaw")';
@@ -448,15 +280,7 @@ describe("luaEncode __IMPORT", () => {
         const textPath = path.join(projectDir, "text.txt");
         fs.writeFileSync(textPath, "Hello", "utf-8");
 
-        const manifest: Manifest = {
-            project: {
-                name: "test",
-                binDir: "./bin",
-                objDir: "./obj",
-                outputCartName: "test.tic",
-                importDirs: ["./"],
-            },
-            variables: {},
+        const manifest = createManifest({
             imports: [
                 {
                     name: "textFile",
@@ -464,14 +288,35 @@ describe("luaEncode __IMPORT", () => {
                     path: "./text.txt",
                 },
             ],
-            assembly: { blocks: [] },
-        };
+        });
 
         const project = makeProject(manifest, projectDir);
         const source = 'local s = __IMPORT("utf8,ascii", "import:textFile")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain('local s = "Hello"');
+    });
+
+    it("imports integer list values from a text file", async () => {
+        const projectDir = createTempDir();
+        const numbersPath = path.join(projectDir, "numbers.txt");
+        fs.writeFileSync(numbersPath, "10\n0x10\n010\n10b\n", "utf-8");
+
+        const manifest = createManifest({
+            imports: [
+                {
+                    name: "numbers",
+                    kind: "text",
+                    path: "./numbers.txt",
+                },
+            ],
+        });
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local x = { __IMPORT("u8,u8", "import:numbers") }';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain("local x = { 10,16,8,2 }");
     });
 
     // we need to mock a cart or be able to generate simple carts for this test to be runnable.
