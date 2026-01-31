@@ -1,14 +1,25 @@
 import { BinaryOutputEncoding, getNumericEncodingInfo } from "./luaBinaryEncoding";
 import { EncodeErrorFormatter } from "./luaEncodeBase";
 
-export function formatLuaNumber(value: number): string {
+export function formatLuaNumber(value: number, maxFractionDigits?: number): string {
     if (Number.isNaN(value)) {
         return "0";
     }
     if (!Number.isFinite(value)) {
         return value < 0 ? "-1/0" : "1/0";
     }
+    if (maxFractionDigits !== undefined) {
+        return trimTrailingZerosString(value.toFixed(maxFractionDigits));
+    }
     return String(value);
+}
+
+function trimTrailingZerosString(value: string): string {
+    if (!value.includes(".")) {
+        return value;
+    }
+    const trimmed = value.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    return trimmed.length === 0 ? "0" : trimmed;
 }
 
 export function parseNumericList(

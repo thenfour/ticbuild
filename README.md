@@ -497,10 +497,11 @@ local s = __EXPAND("the project name is: $(project.name)")
 --   f16le, f16be, f32le, f32be, f64le, f64be
 --   hex, b85+1, ascii, utf8, base64
 -- Value transforms:
---   norm(N), scale(k), q(N), toUppercase
+--   norm, scale(k), q(B), w(W), toUppercase
 --
 -- where `k` is scalar (required)
--- where `N` is optional maximum # of decimals after point
+-- where `B` is fractional bits
+-- where `W` is maximum # of decimals after point
 
 -- hex literal to normalized RGBA bytes
 local c = { __ENCODE("hex,u8,norm", "#ff8000"), 0.5 }

@@ -222,6 +222,7 @@ export function encodeBytesWithDestSpec(
                 case "touppercase":
                     transformed = transformed.toUpperCase();
                     break;
+                case "w":
                 case "norm":
                 case "scale":
                 case "q":
@@ -246,6 +247,8 @@ export function encodeBytesWithDestSpec(
     if (!info) {
         throw new Error(formatError(filePath, lineNumber, `Unsupported numeric encoding: ${spec.base}`));
     }
+
+    let maxFractionDigits: number | null = null;
 
     for (const transform of spec.transforms) {
         switch (transform.name) {
@@ -272,10 +275,11 @@ export function encodeBytesWithDestSpec(
                     }
                     return Math.max(0, Math.min(1, normalized));
                 });
-                if (transform.args.length > 0) {
-                    const digits = Math.max(0, Math.floor(transform.args[0]));
-                    values = values.map((value) => Number(value.toFixed(digits)));
-                }
+                break;
+            }
+            case "w": {
+                const digits = Math.max(0, Math.floor(transform.args[0]));
+                maxFractionDigits = digits;
                 break;
             }
             case "lz":
@@ -293,6 +297,9 @@ export function encodeBytesWithDestSpec(
         }
     }
 
+    if (maxFractionDigits !== null) {
+        return values.map((value) => formatLuaNumber(value, maxFractionDigits)).join(",");
+    }
     return values.map((value) => formatLuaNumber(value)).join(",");
 }
 
@@ -386,11 +393,15 @@ function parseTransformToken(
     }
 
     if (lower.startsWith("norm(")) {
-        const args = parseNumericArgs(lower, "norm", filePath, lineNumber, context, formatError);
+        throw new Error(formatError(filePath, lineNumber, `${context} transform norm does not take arguments`));
+    }
+
+    if (lower.startsWith("w(")) {
+        const args = parseNumericArgs(lower, "w", filePath, lineNumber, context, formatError);
         if (args.length !== 1) {
-            throw new Error(formatError(filePath, lineNumber, `${context} transform norm expects 1 argument`));
+            throw new Error(formatError(filePath, lineNumber, `${context} transform w expects 1 argument`));
         }
-        return { name: "norm", args };
+        return { name: "w", args };
     }
 
     switch (lower) {
@@ -400,6 +411,7 @@ function parseTransformToken(
         case "unrle":
         case "ttz":
         case "norm":
+        case "w":
         case "touppercase":
             return { name: lower, args: [] };
         default:

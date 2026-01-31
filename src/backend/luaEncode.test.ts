@@ -130,7 +130,7 @@ describe("luaEncode __ENCODE", () => {
         expect(result.code).toContain('local v = "ff00"');
     });
 
-    it("supports norm precision", async () => {
+    it("supports w precision", async () => {
         const projectDir = createTempDir();
         const manifest: Manifest = {
             project: {
@@ -146,10 +146,10 @@ describe("luaEncode __ENCODE", () => {
         };
 
         const project = makeProject(manifest, projectDir);
-        const source = 'local v = __ENCODE("hex,u8,norm(2)", "80")';
+        const source = 'local v = __ENCODE("f32le,f32le,w(1)", "1.25")';
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
-        expect(result.code).toContain("local v = 0.5");
+        expect(result.code).toContain("local v = 1.3");
     });
 
     it("supports byte transforms", async () => {
