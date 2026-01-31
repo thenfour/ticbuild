@@ -480,7 +480,10 @@ local s = __EXPAND("the project name is: $(project.name)")
 -- => local a,b,c = 1,2,3
 
 -- Source codecs (string input):
---   hex, ascii, utf8, base64, b85+1, lz85+1
+--   u8, s8, u16le, s16le, u24le, s24le, u32le, s32le
+--   u16be, s16be, u24be, s24be, u32be, s32be
+--   f16le, f16be, f32le, f32be, f64le, f64be
+--   hex, b85+1, ascii, utf8, base64
 -- Source codecs (binary input only):
 --   raw, lz
 -- Byte transforms:
@@ -491,7 +494,8 @@ local s = __EXPAND("the project name is: $(project.name)")
 -- Value codecs:
 --   u8, s8, u16le, s16le, u24le, s24le, u32le, s32le
 --   u16be, s16be, u24be, s24be, u32be, s32be
---   hex, b85+1, lz85+1, ascii, utf8, base64
+--   f16le, f16be, f32le, f32be, f64le, f64be
+--   hex, b85+1, ascii, utf8, base64
 -- Value transforms:
 --   norm(N), scale(k), q(N), toUppercase
 --

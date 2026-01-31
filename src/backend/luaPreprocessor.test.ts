@@ -42,7 +42,6 @@ describe("Lua preprocessor __ENCODE", () => {
     // {25,44,93,255,127,128}
     // hex:    "192c5dff7f80"
     // b85+1:  "#)(](nIt.M!"
-    // lz85+1: "!!!X;l?2oD)"
 
     {
       const project = makeProject(manifest);
@@ -59,6 +58,62 @@ describe("Lua preprocessor __ENCODE", () => {
 
       expect(result.code).toContain('local value = "192c5dff7f80"');
     }
+  });
+});
+
+describe("Lua preprocessor stringification", () => {
+  it("should expand variables to a Lua string literal", async () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {
+        greet: "hi",
+      },
+      imports: [],
+      assembly: {
+        blocks: [],
+      },
+    };
+
+    const project = makeProject(manifest);
+    const source = 'local s = __EXPAND("$(greet) there")';
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain('local s = "hi there"');
+  });
+
+  it("should support string concatenation in preprocessor expressions", async () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      imports: [],
+      assembly: {
+        blocks: [],
+      },
+    };
+
+    const project = makeProject(manifest);
+    const source = `
+--#define A "hi"
+--#if A .. "!" == "hi!"
+local x = 1
+--#else
+local x = 2
+--#endif
+`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("local x = 1");
+    expect(result.code).not.toContain("local x = 2");
   });
 });
 

@@ -218,6 +218,117 @@ describe("luaEncode __ENCODE", () => {
         expect(result.code).toContain('local v = "Zm9v"');
     });
 
+    it("supports numeric list input (u16le, dec)", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("u16le,hex", "1, 65534")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain('local v = "0100feff"');
+    });
+
+    it("supports numeric list input (hex, octal, binary, underscores)", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("u16le,hex", "0x1, 0xfffe, 01, 0177776, 1b, 1111_1111_1111_1110b")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain('local v = "0100feff0100feff0100feff"');
+    });
+
+    it("rejects out-of-range signed list values", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("s8,s8", "-0xff")';
+
+        await expect(preprocessLuaCode(project, source, path.join(projectDir, "source.lua"))).rejects.toThrow(
+            "out of range",
+        );
+    });
+
+    it("supports signed numeric list input", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("s8,s8", "-0x80")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain("local v = -128");
+    });
+
+    it("supports float list input (f32le)", async () => {
+        const projectDir = createTempDir();
+        const manifest: Manifest = {
+            project: {
+                name: "test",
+                binDir: "./bin",
+                objDir: "./obj",
+                outputCartName: "test.tic",
+                importDirs: ["./"],
+            },
+            variables: {},
+            imports: [],
+            assembly: { blocks: [] },
+        };
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __ENCODE("f32le,hex", "1.0, 2.5")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain('local v = "0000803f00002040"');
+    });
+
     it("rejects invalid transforms for string outputs", async () => {
         const projectDir = createTempDir();
         const manifest: Manifest = {

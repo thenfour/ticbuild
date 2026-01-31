@@ -7,8 +7,10 @@ import {
 } from "../utils/encoding/codecRegistry";
 import {
     decodeBinaryToValues,
+    encodeValuesToBytes,
     encodeBinaryAsString,
     getNumericEncodingInfo,
+    isNumericBinaryOutputEncoding,
     isStringBinaryOutputEncoding,
     normalizeBinaryOutputEncoding,
 } from "./luaBinaryEncoding";
@@ -22,8 +24,8 @@ import { loadBinaryImportData, loadTextImportData } from "./importUtils";
 import { trimTrailingZeros } from "../utils/utils";
 import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { importTic80Cart } from "./importers/tic80CartImporter";
-
-export type EncodeErrorFormatter = (filePath: string, lineNumber: number, message: string) => string;
+import { EncodeErrorFormatter } from "./luaEncodeBase";
+import { formatLuaNumber, parseNumericList } from "./luaEncodeHelpers";
 
 type SpecTransform = {
     name: string;
@@ -89,6 +91,16 @@ export function encodeLiteralToBytes(
     formatError: EncodeErrorFormatter,
 ): Uint8Array {
     const spec = parseSpecChain(sourceSpecRaw, filePath, lineNumber, "Source", formatError);
+    if (isValueCodecToken(spec.base)) {
+        const encoding = normalizeBinaryOutputEncoding(spec.base);
+        if (isNumericBinaryOutputEncoding(encoding)) {
+            const values = parseNumericList(value, encoding, filePath, lineNumber, formatError);
+            let bytes = encodeValuesToBytes(values, encoding);
+            bytes = applyByteTransforms(bytes, spec.transforms, filePath, lineNumber, formatError);
+            return bytes;
+        }
+    }
+
     const baseCodec = resolveSourceEncoding(spec.base).key;
     if (!isStringSourceEncoding(baseCodec)) {
         throw new Error(formatError(filePath, lineNumber, `Source encoding ${spec.base} expects binary input`));
@@ -249,6 +261,9 @@ export function encodeBytesWithDestSpec(
                 break;
             }
             case "norm": {
+                if (info.kind !== "int") {
+                    throw new Error(formatError(filePath, lineNumber, `Transform norm requires an integer encoding`));
+                }
                 const max = info.signed ? 2 ** (info.bitWidth - 1) - 1 : 2 ** info.bitWidth - 1;
                 values = values.map((value) => {
                     const normalized = value / max;
@@ -491,14 +506,4 @@ function applyByteTransforms(
         }
     }
     return output;
-}
-
-function formatLuaNumber(value: number): string {
-    if (Number.isNaN(value)) {
-        return "0";
-    }
-    if (!Number.isFinite(value)) {
-        return value < 0 ? "-1/0" : "1/0";
-    }
-    return String(value);
 }
