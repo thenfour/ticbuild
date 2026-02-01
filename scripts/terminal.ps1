@@ -1,4 +1,5 @@
 # Terminal client script to connect to TIC-80 TCP server
+# powershell ./terminal.ps1 127.0.0.1 5000
 param(
   [string]$ConnectHost = "127.0.0.1",
   [int]$Port = 9977

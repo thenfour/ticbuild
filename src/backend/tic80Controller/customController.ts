@@ -24,19 +24,31 @@ export class CustomTic80Controller implements ITic80Controller {
   private exitHandlers: Set<() => void> = new Set();
   private suppressExitSignal = false;
 
+  private projectDir: string;
+
   constructor(projectDir: string, options?: { remotingVerbose?: boolean }) {
     this.tic80Path = getPathRelativeToTemplates("TIC-80-ticbuild/tic80.exe");
+    this.projectDir = projectDir;
+    //assert that project dir is absolute & exists
+    if (!fileExists(this.projectDir)) {
+      throw new Error(`Project directory not found: ${this.projectDir}`);
+    }
+
     if (!fileExists(this.tic80Path)) {
       throw new Error(`Custom TIC-80 executable not found: ${this.tic80Path}`);
     }
     this.remotingVerbose = !!options?.remotingVerbose;
   }
 
+  private GetArgsForRemotingSession(): string[] {
+    return [`--skip`, `--remoting-port=${this.port}`, `--remote-session-location=${this.projectDir}\\.ticbuild\\remoting\\sessions`];
+  }
+
   async launchFireAndForget(cartPath?: string | undefined, userArgs: string[] = []): Promise<void> {
     this.applyRemotingPortOverride(userArgs);
     await this.ensurePortSelected();
     const port = this.port!;
-    const mergedArgs = mergeTic80Args(["--skip", `--remoting-port=${port}`], userArgs);
+    const mergedArgs = mergeTic80Args(this.GetArgsForRemotingSession(), userArgs);
     const args = cartPath ? [cartPath, ...mergedArgs] : mergedArgs;
     await launchProcessReturnImmediately(this.tic80Path, args);
   }
@@ -78,7 +90,7 @@ export class CustomTic80Controller implements ITic80Controller {
     this.applyRemotingPortOverride(userArgs);
     await this.ensurePortSelected();
     const port = this.port!;
-    const mergedArgs = mergeTic80Args(["--skip", `--remoting-port=${port}`], userArgs);
+    const mergedArgs = mergeTic80Args(this.GetArgsForRemotingSession(), userArgs);
     this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, mergedArgs);
     const processRef = this.tic80Process;
     if (processRef) {
