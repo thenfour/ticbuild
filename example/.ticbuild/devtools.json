@@ -1,0 +1,8 @@
+{
+  "watches": [
+    {
+      "type": "global",
+      "symbol": "x"
+    }
+  ]
+}
