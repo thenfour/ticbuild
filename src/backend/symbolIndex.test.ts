@@ -15,6 +15,12 @@ type TestSymbol = {
     kind: string;
     visibility?: string;
     callable?: { params: string[] };
+    doc?: {
+        description?: string;
+        params?: Array<{ name: string; type?: string; description?: string }>;
+        returnType?: string;
+        returnDescription?: string;
+    };
     selectionRange: TestSpan;
     symbolId: string;
 };
@@ -155,6 +161,27 @@ end`;
         const macroSymbols = findSymbolsByName(fileIndex, "CLAMP");
         expect(macroSymbols).toHaveLength(1);
         expect(macroSymbols[0].kind).toBe("macro");
+    });
+
+    it("should attach doc comments to symbols", async () => {
+        const projectDir = makeTempDir();
+        const source = `--- Adds numbers\n-- @param a number first\n-- @param b number second\n-- @return number sum\nfunction add(a, b) end`;
+
+        const index = await buildIndexFromFile(projectDir, "main.lua", source);
+        const fileIndex = getFileIndex(index, "main.lua");
+        const addSymbols = findSymbolsByName(fileIndex, "add");
+        expect(addSymbols).toHaveLength(1);
+        const doc = addSymbols[0].doc;
+        expect(doc).toBeDefined();
+        if (!doc) {
+            throw new Error("Expected doc metadata");
+        }
+        expect(doc.description).toBe("Adds numbers");
+        expect(doc.params).toHaveLength(2);
+        expect(doc.params?.[0].name).toBe("a");
+        expect(doc.params?.[0].type).toBe("number");
+        expect(doc.returnType).toBe("number");
+        expect(doc.returnDescription).toBe("sum");
     });
 
     it("should keep the latest overload in the global index", async () => {

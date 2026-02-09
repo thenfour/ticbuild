@@ -37,10 +37,24 @@ type SymbolInfo = {
     selectionRange: Span;
     scopeId: string;
     visibility: SymbolVisibility;
+    doc?: DocInfo;
     callable?: {
         isColonMethod: boolean;
         params: string[];
     };
+};
+
+type DocParam = {
+    name: string;
+    type?: string;
+    description?: string;
+};
+
+type DocInfo = {
+    description?: string;
+    params?: DocParam[];
+    returnType?: string;
+    returnDescription?: string;
 };
 
 type SymbolSpan = {
@@ -279,6 +293,7 @@ function buildSymbolIndexForPreprocessed(
     }
 
     const sourceMap = preprocess.sourceMap;
+    const docBlocks = collectDocBlocks(preprocess.code, ast.comments || []);
 
     const scopeStack: ScopeContext[] = [];
 
@@ -336,6 +351,7 @@ function buildSymbolIndexForPreprocessed(
 
         const symbolId = makeSymbolId(filePath, mappedSelection.span.start, name);
         const scope = currentScopeForFile(filePath);
+        const doc = findDocForSymbol(preprocess.code, docBlocks, mappedRange.preprocessedStart);
 
         const symbol: SymbolInfo = {
             symbolId,
@@ -345,6 +361,7 @@ function buildSymbolIndexForPreprocessed(
             selectionRange: mappedSelection.span,
             scopeId: scope.scopeId,
             visibility,
+            doc,
             callable,
         };
 
@@ -791,6 +808,243 @@ function addPreprocessorSymbols(
         }
         builder.updateFileLength(filePath, { start: seg.originalOffset, length: seg.ppEnd - seg.ppBegin });
     }
+}
+
+type DocBlock = {
+    start: number;
+    end: number;
+    doc: DocInfo;
+};
+
+function collectDocBlocks(code: string, comments: luaparse.Comment[]): DocBlock[] {
+    const ranges = comments
+        .map((comment) => ({
+            range: nodeRange(comment as unknown as luaparse.Node),
+            comment,
+        }))
+        .filter((entry) => !!entry.range)
+        .map((entry) => ({ range: entry.range as [number, number], comment: entry.comment }))
+        .sort((a, b) => a.range[0] - b.range[0]);
+
+    const blocks: DocBlock[] = [];
+    let currentStart: number | null = null;
+    let currentEnd: number | null = null;
+    let currentLines: string[] = [];
+
+    const flush = () => {
+        if (currentStart === null || currentEnd === null) {
+            return;
+        }
+        const doc = parseDocLines(currentLines);
+        if (doc) {
+            blocks.push({ start: currentStart, end: currentEnd, doc });
+        }
+        currentStart = null;
+        currentEnd = null;
+        currentLines = [];
+    };
+
+    for (const entry of ranges) {
+        const [start, end] = entry.range;
+        const raw = code.slice(start, end);
+        if (!isDocComment(raw)) {
+            flush();
+            continue;
+        }
+        if (currentEnd !== null) {
+            const between = code.slice(currentEnd, start);
+            if (!isWhitespace(between)) {
+                flush();
+            }
+        }
+        if (currentStart === null) {
+            currentStart = start;
+        }
+        currentEnd = end;
+        currentLines.push(raw);
+    }
+
+    flush();
+    return blocks;
+}
+
+function findDocForSymbol(code: string, blocks: DocBlock[], symbolStart: number): DocInfo | undefined {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+        const block = blocks[i];
+        if (block.end > symbolStart) {
+            continue;
+        }
+        const between = code.slice(block.end, symbolStart);
+        if (!isImmediateDocGap(between)) {
+            continue;
+        }
+        return block.doc;
+    }
+    return findDocForSymbolFromSource(code, symbolStart);
+}
+
+function isDocComment(text: string): boolean {
+    const trimmed = text.trimStart();
+    return (
+        trimmed.startsWith("---") ||
+        trimmed.startsWith("--@") ||
+        trimmed.startsWith("-- @") ||
+        trimmed.startsWith("--[[") ||
+        trimmed.startsWith("--[=")
+    );
+}
+
+function isWhitespace(text: string): boolean {
+    return /^\s*$/.test(text);
+}
+
+function isImmediateDocGap(text: string): boolean {
+    if (!isWhitespace(text)) {
+        return false;
+    }
+    if (/\r\n\s*\r\n/.test(text)) {
+        return false;
+    }
+    if (/\n\s*\n/.test(text)) {
+        return false;
+    }
+    return true;
+}
+
+function findDocForSymbolFromSource(code: string, symbolStart: number): DocInfo | undefined {
+    let lineStart = code.lastIndexOf("\n", Math.max(0, symbolStart - 1));
+    if (lineStart < 0) {
+        lineStart = 0;
+    } else {
+        lineStart += 1;
+    }
+
+    const docLines: string[] = [];
+    let cursor = lineStart - 1;
+    while (cursor >= 0) {
+        const lineEnd = cursor;
+        let prevStart = code.lastIndexOf("\n", Math.max(0, lineEnd - 1));
+        if (prevStart < 0) {
+            prevStart = 0;
+        } else {
+            prevStart += 1;
+        }
+        const line = code.slice(prevStart, lineEnd + 1);
+        const trimmed = line.trim();
+        if (trimmed.length === 0) {
+            break;
+        }
+        if (!isDocComment(line)) {
+            break;
+        }
+        docLines.unshift(line);
+        if (prevStart === 0) {
+            cursor = -1;
+        } else {
+            cursor = prevStart - 2;
+        }
+    }
+
+    if (docLines.length === 0) {
+        return undefined;
+    }
+    return parseDocLines(docLines) ?? undefined;
+}
+
+function parseDocLines(lines: string[]): DocInfo | null {
+    const descriptionLines: string[] = [];
+    const params: DocParam[] = [];
+    let returnType: string | undefined;
+    let returnDescription: string | undefined;
+
+    for (const rawLine of lines) {
+        const cleaned = stripDocPrefix(rawLine);
+        if (!cleaned) {
+            continue;
+        }
+        const tagMatch = cleaned.match(/^@(\w+)\s*(.*)$/);
+        if (!tagMatch) {
+            descriptionLines.push(cleaned);
+            continue;
+        }
+        const tag = tagMatch[1];
+        const rest = tagMatch[2] || "";
+        if (tag === "param") {
+            const parsed = parseParamDoc(rest);
+            if (parsed) {
+                params.push(parsed);
+            }
+        } else if (tag === "return" && returnType === undefined) {
+            const parsed = parseReturnDoc(rest);
+            if (parsed) {
+                returnType = parsed.type;
+                returnDescription = parsed.description;
+            }
+        }
+    }
+
+    const doc: DocInfo = {};
+    if (descriptionLines.length > 0) {
+        doc.description = descriptionLines.join("\n").trim();
+    }
+    if (params.length > 0) {
+        doc.params = params;
+    }
+    if (returnType) {
+        doc.returnType = returnType;
+    }
+    if (returnDescription) {
+        doc.returnDescription = returnDescription;
+    }
+    if (!doc.description && !doc.params && !doc.returnType && !doc.returnDescription) {
+        return null;
+    }
+    return doc;
+}
+
+function stripDocPrefix(line: string): string | null {
+    let text = line.trim();
+    if (text.startsWith("--")) {
+        text = text.slice(2);
+    }
+    text = text.trimStart();
+    text = text.replace(/^\[=+\[/, "").replace(/^\[\[/, "");
+    text = text.replace(/\]=*\]$/, "");
+    text = text.trim();
+    if (!text) {
+        return null;
+    }
+    if (text.startsWith("-")) {
+        text = text.replace(/^-+/, "").trimStart();
+    }
+    return text || null;
+}
+
+function parseParamDoc(rest: string): DocParam | null {
+    const parts = rest.trim().split(/\s+/).filter((part) => part.length > 0);
+    if (parts.length === 0) {
+        return null;
+    }
+    const name = parts.shift() as string;
+    let type: string | undefined;
+    let description: string | undefined;
+    if (parts.length === 1) {
+        type = parts[0];
+    } else if (parts.length > 1) {
+        type = parts[0];
+        description = parts.slice(1).join(" ");
+    }
+    return { name, type, description };
+}
+
+function parseReturnDoc(rest: string): { type: string; description?: string } | null {
+    const parts = rest.trim().split(/\s+/).filter((part) => part.length > 0);
+    if (parts.length === 0) {
+        return null;
+    }
+    const type = parts[0];
+    const description = parts.length > 1 ? parts.slice(1).join(" ") : undefined;
+    return { type, description };
 }
 
 async function computeFileHashes(filePaths: string[], projectRoot: string): Promise<Map<string, string>> {

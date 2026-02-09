@@ -882,6 +882,15 @@ increases the need for luadoc/emmylua, so we can actually provide more help.
   "range": { /*...*/ }, // full span of the declaration statement (for function, the whole body of the function)
   "selectionRange": { /*...*/ }, // just name, for definition UX
 
+  // parsed luadoc/emmylua docs
+  "doc": {
+    "name": "...", // probably should never use this; if it differs from the real name then more likely a bad copy/paste.
+    "description": "...",
+    "type": "...",
+    "returnType": "...",
+    "returnDescription": "...",
+  },
+
   "scopeId": "scope:src/util/math.lua#1",
   // "local" confines to scope
   // "global"
