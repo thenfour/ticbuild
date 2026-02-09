@@ -11,6 +11,10 @@ import { TicbuildProjectCore } from "./projectCore";
 import { parseLua } from "../utils/lua/lua_processor";
 import * as cons from "../utils/console";
 import {
+  SourceMapBuilder,
+  LuaPreprocessorSourceMap,
+} from "./sourceMap";
+import {
   encodeBytesWithDestSpec,
   encodeLiteralToBytes,
   normalizeEmptySpec,
@@ -23,6 +27,15 @@ export type LuaPreprocessorValue = string | number | boolean;
 export type LuaPreprocessResult = {
   code: string;
   dependencies: string[];
+  sourceMap: LuaPreprocessorSourceMap;
+  preprocessorSymbols: PreprocessorSymbol[];
+};
+
+export type PreprocessorSymbol = {
+  name: string;
+  kind: "macro";
+  sourceFile: string;
+  offset: number;
 };
 
 type PreprocessorState = {
@@ -31,6 +44,7 @@ type PreprocessorState = {
   pragmaOnceKeys: Set<string>;
   includeStack: string[];
   macros: Map<string, MacroDefinition>;
+  macroSymbols: PreprocessorSymbol[];
 };
 
 type MacroDefinition = {
@@ -59,18 +73,26 @@ export async function preprocessLuaCode(
     pragmaOnceKeys: new Set<string>(),
     includeStack: [],
     macros: new Map<string, MacroDefinition>(),
+    macroSymbols: [],
   };
 
   const includeKey = makeIncludeKey(filePath, {});
-  const rawCode = await processSource(project, source, filePath, includeKey, state, {});
-  const expandedCode = expandMacros(project, rawCode, state.macros, filePath);
-  const finalCode = await expandPreprocessorCalls(project, expandedCode, filePath, state);
+  const rawResult = await processSource(project, source, filePath, includeKey, state, {});
+  const expandedResult = expandMacros(project, rawResult, state.macros, filePath);
+  const finalResult = await expandPreprocessorCalls(project, expandedResult, filePath, state);
 
   return {
-    code: finalCode,
+    code: finalResult.code,
     dependencies: Array.from(state.dependencies.values()),
+    sourceMap: finalResult.map.toSourceMap(finalResult.code),
+    preprocessorSymbols: state.macroSymbols,
   };
 }
+
+type ProcessResult = {
+  code: string;
+  map: SourceMapBuilder;
+};
 
 async function processSource(
   project: TicbuildProjectCore,
@@ -80,9 +102,9 @@ async function processSource(
   state: PreprocessorState,
   inputOverrides: Record<string, LuaPreprocessorValue>,
   trackDependency: boolean = true,
-): Promise<string> {
+): Promise<ProcessResult> {
   if (state.pragmaOnceKeys.has(includeKey)) {
-    return "";
+    return { code: "", map: new SourceMapBuilder() };
   }
   if (state.includeStack.includes(includeKey)) {
     const cycle = [...state.includeStack, includeKey].join(" -> ");
@@ -103,7 +125,9 @@ async function processSource(
   }
 
   const conditionalStack: ConditionFrame[] = [];
-  const outputLines: string[] = [];
+  const builder = new SourceMapBuilder();
+  let output = "";
+  let lastEmittedOrigin: { file: string; offset: number } | null = null;
 
   // helper to check if current line is in active conditional block
   const isActive = (): boolean => {
@@ -113,15 +137,24 @@ async function processSource(
     return conditionalStack[conditionalStack.length - 1].active;
   };
 
-  const lines = source.split(/\r?\n/);
+  const lines = splitLinesWithOffsets(source);
+  const lineTexts = lines.map((info) => info.text);
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const lineInfo = lines[i];
+    const line = lineInfo.text;
     const lineNumber = i + 1;
 
     const directiveMatch = line.match(/^\s*--#\s*(\w+)\s*(.*)$/);
     if (!directiveMatch) {
       if (isActive()) {
-        outputLines.push(line);
+        if (output.length > 0) {
+          output += "\n";
+          const newlineOrigin = lastEmittedOrigin ?? { file: filePath, offset: lineInfo.startOffset };
+          builder.appendOriginal("\n", newlineOrigin.file, newlineOrigin.offset);
+        }
+        output += line;
+        builder.appendOriginal(line, filePath, lineInfo.startOffset);
+        lastEmittedOrigin = { file: filePath, offset: lineInfo.endOffset };
       }
       continue;
     }
@@ -132,6 +165,7 @@ async function processSource(
     switch (directive) {
       case "macro": {
         const macroHeader = parseMacroHeader(rest, filePath, lineNumber);
+        const nameOffset = findMacroNameOffset(line, lineInfo.startOffset, macroHeader.name);
         if (macroHeader.inlineBody !== undefined) {
           if (isActive()) {
             state.macros.set(macroHeader.name, {
@@ -141,11 +175,17 @@ async function processSource(
               sourceFile: filePath,
               lineNumber,
             });
+            state.macroSymbols.push({
+              name: macroHeader.name,
+              kind: "macro",
+              sourceFile: filePath,
+              offset: nameOffset,
+            });
           }
           break;
         }
 
-        const bodyResult = readMacroBody(lines, i + 1, filePath, lineNumber);
+        const bodyResult = readMacroBody(lineTexts, i + 1, filePath, lineNumber);
         i = bodyResult.endIndex;
         if (isActive()) {
           const strippedBody = stripLuaCommentsPreserveNewlines(bodyResult.body);
@@ -155,6 +195,12 @@ async function processSource(
             body: strippedBody,
             sourceFile: filePath,
             lineNumber,
+          });
+          state.macroSymbols.push({
+            name: macroHeader.name,
+            kind: "macro",
+            sourceFile: filePath,
+            offset: nameOffset,
           });
         }
         break;
@@ -265,9 +311,19 @@ async function processSource(
         const remainder = includeMatch[2] || "";
         const overrides = parseWithOverrides(remainder, localDefines, filePath, lineNumber);
 
-        const includedText = await resolveInclude(project, includeTarget, filePath, overrides, state, lineNumber);
-        if (includedText) {
-          outputLines.push(includedText);
+        const included = await resolveInclude(project, includeTarget, filePath, overrides, state, lineNumber);
+        if (included.code) {
+          if (output.length > 0) {
+            output += "\n";
+            const newlineOrigin = lastEmittedOrigin ?? { file: filePath, offset: 0 };
+            builder.appendOriginal("\n", newlineOrigin.file, newlineOrigin.offset);
+          }
+          output += included.code;
+          builder.appendMap(included.map);
+          const endOrigin = included.map.mapOffset(included.code.length);
+          if (endOrigin) {
+            lastEmittedOrigin = endOrigin;
+          }
         }
         break;
       }
@@ -303,7 +359,7 @@ async function processSource(
   }
 
   state.includeStack.pop();
-  return outputLines.join("\n");
+  return { code: output, map: builder };
 }
 
 async function resolveInclude(
@@ -313,7 +369,7 @@ async function resolveInclude(
   overrides: Record<string, LuaPreprocessorValue>,
   state: PreprocessorState,
   lineNumber: number,
-): Promise<string> {
+): Promise<ProcessResult> {
   if (includeTarget.startsWith("import:")) {
     return await resolveImportInclude(project, includeTarget, overrides, state, lineNumber);
   }
@@ -335,12 +391,12 @@ async function resolveInclude(
   const includeKey = makeIncludeKey(resolvedPath, overrides);
 
   if (state.pragmaOnceKeys.has(includeKey)) {
-    return "";
+    return { code: "", map: new SourceMapBuilder() };
   }
 
   const source = await readTextFileAsync(resolvedPath);
   const included = await processSource(project, source, resolvedPath, includeKey, state, overrides);
-  return ensureTrailingNewline(included);
+  return ensureTrailingNewline(included, resolvedPath);
 }
 
 async function resolveImportInclude(
@@ -349,7 +405,7 @@ async function resolveImportInclude(
   overrides: Record<string, LuaPreprocessorValue>,
   state: PreprocessorState,
   lineNumber: number,
-): Promise<string> {
+): Promise<ProcessResult> {
   const ref = parseImportReference(includeTarget);
   const importName = ref.importName;
   const chunkSpec = ref.chunkSpec;
@@ -363,11 +419,11 @@ async function resolveImportInclude(
     const resolvedPath = project.resolveImportPath(importDef);
     const includeKey = makeIncludeKey(resolvedPath, overrides);
     if (state.pragmaOnceKeys.has(includeKey)) {
-      return "";
+      return { code: "", map: new SourceMapBuilder() };
     }
     const source = await readTextFileAsync(resolvedPath);
     const included = await processSource(project, source, resolvedPath, includeKey, state, overrides);
-    return ensureTrailingNewline(included);
+    return ensureTrailingNewline(included, resolvedPath);
   }
 
   if (importDef.kind === kImportKind.key.Tic80Cartridge) {
@@ -422,7 +478,7 @@ async function resolveImportInclude(
       overrides,
       false,
     );
-    return ensureTrailingNewline(included);
+    return ensureTrailingNewline(included, `${includeTarget}:${selectedChunk}`);
   }
 
   throw new Error(formatError("<include>", lineNumber, `Unsupported import kind: ${importDef.kind}`));
@@ -631,11 +687,15 @@ function isTruthy(value: LuaPreprocessorValue): boolean {
   return value !== false;
 }
 
-function ensureTrailingNewline(text: string): string {
-  if (!text.endsWith("\n")) {
-    return text + "\n";
+function ensureTrailingNewline(result: ProcessResult, filePath: string): ProcessResult {
+  if (result.code.endsWith("\n")) {
+    return result;
   }
-  return text;
+  const origin = result.map.mapOffset(result.code.length) ?? { file: filePath, offset: 0 };
+  const map = new SourceMapBuilder();
+  map.appendMap(result.map);
+  map.appendGenerated("\n", origin);
+  return { code: result.code + "\n", map };
 }
 
 type LongBracketInfo = {
@@ -847,22 +907,22 @@ function readMacroBody(
 
 function expandMacros(
   project: TicbuildProjectCore,
-  code: string,
+  result: ProcessResult,
   macros: Map<string, MacroDefinition>,
   filePath: string,
-): string {
+): ProcessResult {
   if (macros.size === 0) {
-    return code;
+    return result;
   }
 
-  let current = code;
+  let current = result;
   const maxPasses = 25;
   for (let pass = 0; pass < maxPasses; pass++) {
-    const result = applyMacroPass(project, current, macros, filePath);
-    if (!result.changed) {
+    const passResult = applyMacroPass(project, current, macros, filePath);
+    if (!passResult.changed) {
       return current;
     }
-    current = result.code;
+    current = { code: passResult.code, map: passResult.map };
   }
 
   throw new Error(formatError(filePath, 1, `Macro expansion exceeded ${maxPasses} passes (possible recursion)`));
@@ -870,11 +930,11 @@ function expandMacros(
 
 function applyMacroPass(
   project: TicbuildProjectCore,
-  code: string,
+  result: ProcessResult,
   macros: Map<string, MacroDefinition>,
   filePath: string,
-): { code: string; changed: boolean } {
-  const chunk = parseLua(code)!;
+): { code: string; map: SourceMapBuilder; changed: boolean } {
+  const chunk = parseLua(result.code)!;
   const replacements: Array<{ start: number; end: number; text: string }> = [];
 
   walkLuaAst(chunk, (node, parent) => {
@@ -903,13 +963,15 @@ function applyMacroPass(
       );
     }
 
-    const argTexts = args.map((arg) => stripLuaCommentsPreserveNewlines(sliceRange(code, getRange(arg, filePath))));
+    const argTexts = args.map((arg) =>
+      stripLuaCommentsPreserveNewlines(sliceRange(result.code, getRange(arg, filePath))),
+    );
     const expanded = expandMacroBody(project, macroDef, argTexts, filePath, lineNumber);
     replacements.push({ start: range[0], end: range[1], text: expanded });
   });
 
   if (replacements.length === 0) {
-    return { code, changed: false };
+    return { code: result.code, map: result.map, changed: false };
   }
 
   const sortedByStart = [...replacements].sort((a, b) => a.start - b.start || b.end - a.end);
@@ -927,12 +989,8 @@ function applyMacroPass(
   }
 
   const sorted = filtered.sort((a, b) => b.start - a.start);
-  let out = code;
-  for (const rep of sorted) {
-    out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
-  }
-
-  return { code: out, changed: true };
+  const updated = applyReplacementsWithMap(result, sorted, filePath);
+  return { code: updated.code, map: updated.map, changed: true };
 }
 
 function expandMacroBody(
@@ -994,11 +1052,11 @@ function wrapMacroBody(body: string): string {
 
 async function expandPreprocessorCalls(
   project: TicbuildProjectCore,
-  code: string,
+  result: ProcessResult,
   filePath: string,
   state: PreprocessorState,
-): Promise<string> {
-  const chunk = parseLua(code)!;
+): Promise<ProcessResult> {
+  const chunk = parseLua(result.code)!;
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   const tasks: Promise<void>[] = [];
 
@@ -1152,21 +1210,74 @@ async function expandPreprocessorCalls(
   });
 
   if (tasks.length === 0) {
-    return code;
+    return result;
   }
 
   await Promise.all(tasks);
 
   if (replacements.length === 0) {
-    return code;
+    return result;
   }
 
   const sorted = replacements.sort((a, b) => b.start - a.start);
-  let out = code;
-  for (const rep of sorted) {
+  return applyReplacementsWithMap(result, sorted, filePath);
+}
+
+function applyReplacementsWithMap(
+  result: ProcessResult,
+  replacements: Array<{ start: number; end: number; text: string }>,
+  filePath: string,
+): ProcessResult {
+  let out = result.code;
+  for (const rep of replacements) {
     out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
+    const origin = result.map.mapOffset(rep.start) ?? { file: filePath, offset: 0 };
+    result.map.spliceRange(rep.start, rep.end, rep.text.length, origin);
   }
-  return out;
+  return { code: out, map: result.map };
+}
+
+type LineInfo = {
+  text: string;
+  startOffset: number;
+  endOffset: number;
+};
+
+function splitLinesWithOffsets(source: string): LineInfo[] {
+  const lines: LineInfo[] = [];
+  let i = 0;
+  if (source.length === 0) {
+    return [{ text: "", startOffset: 0, endOffset: 0 }];
+  }
+  while (i < source.length) {
+    const startOffset = i;
+    while (i < source.length && source[i] !== "\n" && source[i] !== "\r") {
+      i++;
+    }
+    const endOffset = i;
+    if (i < source.length && source[i] === "\r" && source[i + 1] === "\n") {
+      i += 2;
+    } else if (i < source.length) {
+      i++;
+    }
+    lines.push({
+      text: source.slice(startOffset, endOffset),
+      startOffset,
+      endOffset,
+    });
+  }
+  if (source.endsWith("\n") || source.endsWith("\r")) {
+    lines.push({ text: "", startOffset: source.length, endOffset: source.length });
+  }
+  return lines;
+}
+
+function findMacroNameOffset(line: string, lineStartOffset: number, name: string): number {
+  const index = line.indexOf(name);
+  if (index < 0) {
+    return lineStartOffset;
+  }
+  return lineStartOffset + index;
 }
 
 function parseExpressionWithRanges(body: string, filePath: string, lineNumber: number): luaparse.Node {

@@ -11,6 +11,10 @@ import { ImportDefinition, kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { kTic80CartChunkTypes, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 
+export function IsImportReference(value: string): boolean {
+  return value.startsWith("import:");
+}
+
 export type ImportReference = {
   importName: string;
   chunkSpec?: Tic80CartChunkTypeKey;

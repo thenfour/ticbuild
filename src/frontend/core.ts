@@ -1,4 +1,5 @@
 import { AssembleOutputResult, TicbuildProject } from "../backend/project";
+import { buildProjectSymbolIndex } from "../backend/symbolIndex";
 import { LuaCodeResource } from "../backend/importers/LuaCodeImporter";
 import { Tic80Resource } from "../backend/importers/tic80CartImporter";
 import { AssetReference } from "../backend/manifestTypes";
@@ -105,6 +106,13 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
     }
     importsLines.push("");
   }
+  if (project.resourceMgr) {
+    const symbolIndex = await buildProjectSymbolIndex(project.resolvedCore, project.resourceMgr);
+    const symbolIndexPath = project.resolvedCore.resolveObjPath("symbols.index.json");
+    await writeTextFile(symbolIndexPath, JSON.stringify(symbolIndex, null, 2), "utf-8");
+    importsLines.push(`Symbol index: ${symbolIndexPath}`);
+  }
+
   await writeTextFile(importsLogPath, importsLines.join("\n"), "utf-8");
 
   // assemble output.

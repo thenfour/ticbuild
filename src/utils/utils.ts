@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const kNullKey = "__NULL__";
 
 export function TryParseInt(value: any): number | null {
@@ -114,4 +116,10 @@ export function trimTrailingZeros(data: Uint8Array): Uint8Array {
     end -= 1;
   }
   return data.slice(0, end);
+}
+
+
+export function hashTextSha1(text: string): string {
+  const hash = createHash("sha1").update(text, "utf-8").digest("hex");
+  return `sha1:${hash}`;
 }

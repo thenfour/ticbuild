@@ -5,11 +5,11 @@ A build & watch system for TIC-80 cart development.
 
 * Multi-file Lua dev system
 * Watch system: live-update a running tic80 when dependent files are updated.
-* Timing and profiling information
-* Import data from existing carts
-* Rich Lua preprocessing
+* Sprites, music, map data import from existing carts
+* Lua preprocessing (`#include`, `#macro`, `#if`, et al)
 * Code size up to 512kb
-* Arbitrary binary & text importing, decoding, encoding.
+* Timing and profiling information
+* Encoding, importing tools
 
 ## Links
 
@@ -596,6 +596,316 @@ allowed (this is an error).
 And for the code chunk alone, if code is larger than 1 bank, it gets automatically
 split across multiple banks.
 
+
+# Symbol / intellisense database / map / index
+
+Builds shall output a JSON index that can be used for intellisense / code inspection.
+
+## Models
+
+- `ProjectIndex` (top-level index for the whole project)
+- `FileIndex` - per-file
+- `Symbol` - of type function/variable/etc..
+- `Scope` - defines which symbols are relevant where, defines a hierarchy.
+- `Span` - defines a text range in a file, offset byte-based (start,length). Don't use line:col because intermediate processing is awkward and complex, and even sometimes ambiguous
+when combining files with newline at ends.
+
+There's some redundancy in the index for the sake of efficient lookups (easy to write
+during gen; awkward to jump around when doing lookups)
+
+## Stable symbol IDs
+
+ids should be at least a bit descriptive, plus be useful as identity
+across the project.
+
+`sym:src/util/math.lua+134:clamp`
+
+- `sym:` for sanity
+- `src/util/math.lua` relative path to file where it's declared
+- `+134` byte offset in file
+- `:clamp` symbol name.
+
+## minifier interaction
+
+No interaction necessary. Minifier runs after preprocessor stuff and we basically
+don't expect the user to interact with minified code in any way that would interact 
+with this index system.
+
+## preprocessor interaction
+
+The indexer will see 1 huge preprocessed Lua file before minification. The preprocessor
+needs to be able to provide a translation from preprocessed locations -> original
+locations.
+
+It's effectively a span-based mapping from preprocessed lua to sources.
+
+So the indexer sees 1 huge file, but symbols within it can refer to other files.
+
+Example 2 source files:
+
+```lua
+-- utils.lua
+function log(msg)
+  print(msg)
+end
+```
+
+```lua
+-- math.lua
+--#include "./utils.lua"
+function clamp(value, min, max)
+  return math.min(math.max(value, min), max);
+end
+```
+```lua
+-- main.lua
+
+--#include "./math.lua"
+function TIC()
+end
+```
+
+What the indexer sees:
+
+```lua
+function log(msg)
+  print(msg)
+end
+function clamp(value, min, max)
+  return math.min(math.max(value, min), max);
+end
+function TIC()
+end
+```
+
+So when you're editing `main.lua` and type `clam` and auto-complete, `clamp` shall
+be shown, and upon `F12` to go to definition, it should refer to `math.lua:2` -
+just after the `--#include`.
+
+The indexer however will see this as `(expanded lua):4`. The indexer will accept a source
+map to translate its locations to "real" source locations.
+
+## macros & other preprocessor interaction
+
+```lua
+--#if DEBUG
+--#macro CLAMP(x, lo, hi)
+  ((x) < (lo) and (lo) or (x) > (hi) and (hi) or (x))
+--#endmacro
+--#endif
+```
+
+We should emit the `CLAMP` macro symbol. So the preprocessor should be able to
+emit global symbols as well (they're not really global symbols but in our index
+it can be)
+
+## Overloads
+
+Overwrite symbol with latest (largest offset in preprocessed file) incarnation.
+
+```lua
+function xyz(a) end -- this will not appear in the index; it's superceded by...
+function xyz(b) end -- ... this one.
+```
+
+## pipeline
+
+`original sources -> preprocessor -> indexer`
+
+Preprocessor outputs:
+
+- a big lua file
+- source map
+- emitted pp symbols
+
+The indexer will accept a source mapper which it uses to generate the correct
+index output json.
+
+Doing this as a post step adds too much extra plumbing. Better to just give the indexer
+the resources to get it right the first time.
+
+## Source Map
+
+internally the structure is effectively a bunch of segments and define where they came from.
+
+```jsonc
+{
+  "preprocessedFile": { "byteLength": 12345, "hash": "sha1:..." },
+  "segments": [
+    { "ppBegin": 0, "ppEnd": 53, "originalFile": "src/utils.lua", "originalOffset": 0 },
+    { "ppBegin": 53, "ppEnd": 150, "originalFile": "src/math.lua", "originalOffset": 24 },
+    { "ppBegin": 150, "ppEnd": 200, "originalFile": "src/main.lua", "originalOffset": 18 }
+  ]
+}
+```
+
+The map functional interface is effectively just
+
+```ts
+interface ISourceMap {
+  preprocessedOffsetToOriginal(expandedByteOffset)
+    : { file, fileByteOffset } | null;
+}
+```
+
+## Cross-file scopes vs. spans
+
+Technically a scope can span multiple files. So a single `range` can't be always accurate.
+
+
+```lua
+-- logsignature.lua
+function log(msg)
+```
+
+```lua
+-- main.lua
+--#include "./logsignature.lua" -- ugh don't ever do this.
+  print(msg)
+end
+```
+
+What the indexer sees (preprocessed output):
+
+```lua
+function log(msg)
+  print(msg)
+end
+```
+
+Maybe there are some more sensible examples where this might actually be handy,
+but anyway in this case the scope isn't really clear and i don't care to support this
+except for making sure things don't totally break.
+
+Well maybe a more obvious example is global scope, which in theory includes all 
+the files which are included (though start/end will still get calculated as being
+in main.lua).
+
+So maybe it's fine to just force all ranges to be described as being in a single
+file. It's not trivial to have cross-file ranges because there's currently no
+sense of file ordering. and adding complexity to support this is not ... no.
+
+## built-in symbols
+
+phase 2: for the built-in TIC-80 symbols, we can make a Lua file that would generate
+the respective symbols in an index. Bundle it with ticbuild and during index, just
+include it silently at the top.
+
+increases the need for luadoc/emmylua, so we can actually provide more help.
+
+## example annotated symbol index file
+
+```jsonc
+
+// PROJECT INDEX
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-02-08T12:34:56.000Z",
+  "projectRoot": "c:\\abs\\path\\to\\project",
+
+  "files": {
+    "src/main.lua": { /* FileIndex (see below) */ },
+    "src/util/math.lua": { /* FileIndex */ }
+  },
+
+  // convenience indices; easier lookups; points to the canonical location.
+  "globalIndex": {// Global cross-file indexes
+    "symbolsByName": {
+      "TIC": [
+        { "file": "src/main.lua", "symbolId": "sym:src/main.lua#12" }
+      ],
+      "clamp": [
+        { "file": "src/util/math.lua", "symbolId": "sym:src/util/math.lua#3" } ]
+    },
+    // more ?
+  },
+}
+
+// PER-FILE INDEX
+{
+  "hash": "<content-hash>", // allow caching
+  "path": "\\path\\to\\file.lua", // relative to project root
+
+  // scopes for locals, for completion + hover + signature help context.
+  "scopes": [
+    {
+      "scopeId": "scope:src/main.lua#1",
+      // | "file"
+      // | "function" 
+      // | "for"
+      // | "do"
+      // | "if"
+      // | "while"
+      // ...
+      "kind": "file",
+      "range": { /*...*/ },
+      // symbols declared in immediate scope body. make fast lookup by name
+      // by making it a Record<symbolName, pointer>
+      "declaredSymbolIds": {
+        "x": "sym:src/main.lua+12:x",
+        "y": "sym:src/main.lua+13:y"},
+      "parentScopeId": null
+    },
+    {
+      "scopeId": "scope:src/main.lua+14",
+      "kind": "function",
+      "range": { /*...*/ },
+      "declaredSymbolIds": { /*... */ },
+      "parentScopeId": "scope:src/main.lua+9"
+    }
+  ],
+
+  "symbols": {
+    "sym:src/main.lua#12": { /* Symbol (see below) */ },
+    "sym:src/main.lua#13": { /* Symbol */ }
+  },
+
+  // more convenience to know "what symbol is under the cursor":
+  "symbolSpans": [
+    { "symbolId": "sym:src/main.lua#12", "range": { /*...*/ } },
+    { "symbolId": "sym:src/main.lua#4#x", "range": { /*...*/ } }
+  ]  
+}
+
+// PER-SYMBOL INDEX
+{
+  "symbolId": "sym:src/util/math.lua#3",
+  "name": "clamp",
+  // | "localVariable"
+  // | "globalVariable"
+  // | "macro" -- i mean, not sure if there's going to be functional difference between this & function
+  // | "function"
+  // | "param"
+  // | "field" -- not sure this will be relevant because we don't capture table shapes / types
+  // | "type" -- not sure this will be relevant because we don't capture table shapes / types
+  "kind": "function",
+  "range": { /*...*/ }, // full span of the declaration statement (for function, the whole body of the function)
+  "selectionRange": { /*...*/ }, // just name, for definition UX
+
+  "scopeId": "scope:src/util/math.lua#1",
+  // "local" confines to scope
+  // "global"
+  "visibility": "local",
+
+  // for LuaDoc / EmmyLua, this could point to its doc
+  // without doc comments, basically everything is guesswork; it's probably
+  // worth it in order to for example understand types. Without
+  // doc comments we just kinda can't touch types.
+  // "docId": "doc:src/util/math.lua#3",
+
+  // For signature help & hover
+  "callable": {
+    "isColonMethod": false, // declared as `function T:foo()` for example
+    "params": [
+      "sym:src/util/math.lua@4(1):x",
+      "sym:src/util/math.lua@4(3):min",
+      "sym:src/util/math.lua@4(7):max",
+    ],
+  },
+}
+
+```
+
 # FAQ
 
-i one day hope to be asked questions.
+gotta be asked questions in order to answer them.

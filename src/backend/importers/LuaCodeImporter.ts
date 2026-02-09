@@ -1,5 +1,4 @@
 // loads a Lua code file.
-// phase 2 we will do preprocessing, validation, macros...
 // sub assets are not supported.
 
 import { deflateSync } from "node:zlib";
@@ -9,7 +8,7 @@ import { OptimizationRuleOptions, processLua } from "../../utils/lua/lua_process
 import { Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
 import { CoalesceBool } from "../../utils/utils";
 import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
-import { preprocessLuaCode } from "../luaPreprocessor";
+import { preprocessLuaCode, LuaPreprocessResult } from "../luaPreprocessor";
 import { ImportDefinition, LuaMinificationConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 
@@ -181,12 +180,20 @@ export class LuaCodeResource extends ImportedResourceBase {
   view: LuaCodeResourceView;
   filePath: string;
   dependencies: string[];
+  preprocessResult: LuaPreprocessResult;
 
-  constructor(filePath: string, inputSource: string, preprocessedSource: string, dependencies: string[]) {
+  constructor(
+    filePath: string,
+    inputSource: string,
+    preprocessedSource: string,
+    dependencies: string[],
+    preprocessResult: LuaPreprocessResult,
+  ) {
     super();
     this.view = new LuaCodeResourceView(inputSource, preprocessedSource);
     this.filePath = filePath;
     this.dependencies = dependencies;
+    this.preprocessResult = preprocessResult;
   }
 
   dump(): void {
@@ -222,6 +229,10 @@ export class LuaCodeResource extends ImportedResourceBase {
       reason: path === this.filePath ? "Imported Lua code file" : "Lua preprocessor dependency",
     }));
   }
+
+  getPreprocessResult(): LuaPreprocessResult {
+    return this.preprocessResult;
+  }
 }
 
 // spec is assumed to be in the project.
@@ -232,5 +243,5 @@ export async function importLuaCode(project: TicbuildProjectCore, spec: ImportDe
   const preprocessResult = await preprocessLuaCode(project, textContent, path);
   const preprocessedSource = preprocessResult.code;
 
-  return new LuaCodeResource(path, textContent, preprocessedSource, preprocessResult.dependencies);
+  return new LuaCodeResource(path, textContent, preprocessedSource, preprocessResult.dependencies, preprocessResult);
 }
