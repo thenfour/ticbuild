@@ -87,6 +87,19 @@ function findSymbolsByName(fileIndex: any, name: string) {
 }
 
 describe("Symbol index", () => {
+    it("should include TIC-80 builtins", async () => {
+        const projectDir = makeTempDir();
+        const source = "local x = 1";
+
+        const index = await buildIndexFromFile(projectDir, "main.lua", source);
+        const builtin = index.globalIndex.symbolsByName.spr?.[0];
+        expect(builtin).toBeDefined();
+        if (!builtin) {
+            throw new Error("Expected builtins to include spr");
+        }
+        expect(builtin.file).toBe("templates/builtins/tic80.lua");
+    });
+
     it("should index functions, params, locals, globals, and scopes", async () => {
         const projectDir = makeTempDir();
         const source = `local function foo(a, b)

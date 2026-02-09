@@ -1,11 +1,12 @@
 import * as path from "node:path";
 import { parseLua } from "../utils/lua/lua_processor";
 import { canonicalizePath, fileExists, readTextFileAsync } from "../utils/fileSystem";
+import { getPathRelativeToTemplates } from "../utils/templates";
 import { ResourceManager } from "./ImportedResourceTypes";
 import { LuaCodeResource } from "./importers/LuaCodeImporter";
 import { TicbuildProjectCore } from "./projectCore";
 import { LuaPreprocessResult, PreprocessorSymbol } from "./luaPreprocessor";
-import { LuaPreprocessorSourceMap, mapPreprocessedOffset } from "./sourceMap";
+import { LuaPreprocessorSourceMap, mapPreprocessedOffset, SourceMapBuilder } from "./sourceMap";
 import * as luaparse from "luaparse";
 import { hashTextSha1 } from "../utils/utils";
 import { IsImportReference } from "./importUtils";
@@ -651,6 +652,10 @@ export async function buildProjectSymbolIndex(
     resources: ResourceManager,
 ): Promise<ProjectIndex> {
     const builder = new ProjectIndexBuilder();
+    const builtins = await loadBuiltinsPreprocess();
+    if (builtins) {
+        buildSymbolIndexForPreprocessed(builtins, project.projectDir, builder);
+    }
     for (const resource of resources.items.values()) {
         if (!(resource instanceof LuaCodeResource)) {
             continue;
@@ -663,6 +668,26 @@ export async function buildProjectSymbolIndex(
     const index = builder.finalizeFiles(hashes);
     index.projectRoot = project.projectDir;
     return index;
+}
+
+async function loadBuiltinsPreprocess(): Promise<LuaPreprocessResult | null> {
+    const builtinsRelativePath = canonicalizePath(path.join("templates", "builtins", "tic80.lua"));
+    const builtinsAbsolutePath = getPathRelativeToTemplates("builtins/tic80.lua");
+    if (!fileExists(builtinsAbsolutePath)) {
+        return null;
+    }
+    const code = await readTextFileAsync(builtinsAbsolutePath, "utf-8");
+    if (!code) {
+        return null;
+    }
+    const mapBuilder = new SourceMapBuilder();
+    mapBuilder.appendOriginal(code, builtinsRelativePath, 0);
+    return {
+        code,
+        dependencies: [],
+        sourceMap: mapBuilder.toSourceMap(code),
+        preprocessorSymbols: [],
+    };
 }
 
 // for normal files, makes relative to project root and normalizes separators.

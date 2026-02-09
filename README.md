@@ -787,11 +787,10 @@ sense of file ordering. and adding complexity to support this is not ... no.
 
 ## built-in symbols
 
-phase 2: for the built-in TIC-80 symbols, we can make a Lua file that would generate
-the respective symbols in an index. Bundle it with ticbuild and during index, just
-include it silently at the top.
-
-increases the need for luadoc/emmylua, so we can actually provide more help.
+For the built-in TIC-80 symbols, we can make a Lua file that would generate
+the respective symbols in an index. Bundle it with ticbuild and during index,
+feed it silently at the start of processing. This lua should just have stubs with
+correct signatures and doc comments // enough info to produce the correct index.
 
 ## example annotated symbol index file
 
