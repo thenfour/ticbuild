@@ -1,3 +1,7 @@
+## v1.0.12 (2026-02-09)
+
+- output symbol / signature index file including TIC-80 builtins #26
+
 ## v1.0.11 (2026-02-02)
 
 - `__ENCODE` and `__IMPORT` can now accept number lists
