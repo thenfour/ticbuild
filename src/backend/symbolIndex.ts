@@ -10,6 +10,7 @@ import { LuaPreprocessorSourceMap, mapPreprocessedOffset, SourceMapBuilder } fro
 import * as luaparse from "luaparse";
 import { hashTextSha1 } from "../utils/utils";
 import { IsImportReference } from "./importUtils";
+import { isLuaDocCommentText, isWhitespaceText } from "../utils/lua/lua_doc";
 
 type Span = {
     start: number;
@@ -810,6 +811,7 @@ function addPreprocessorSymbols(
         const span: Span = { start: symbol.offset, length: symbol.name.length };
         const symbolId = makeSymbolId(filePath, span.start, symbol.name);
         const scope = builder.ensureFileScope(filePath);
+        const doc = symbol.docLines ? parseDocLines(symbol.docLines) ?? undefined : undefined;
         const info: SymbolInfo = {
             symbolId,
             name: symbol.name,
@@ -818,6 +820,11 @@ function addPreprocessorSymbols(
             selectionRange: span,
             scopeId: scope.scopeId,
             visibility: "global",
+            doc,
+            callable: {
+                isColonMethod: false,
+                params: symbol.params,
+            },
         };
         builder.updateFileLength(filePath, span);
         builder.addSymbol(filePath, info, span, scope.scopeId, 0);
@@ -872,13 +879,13 @@ function collectDocBlocks(code: string, comments: luaparse.Comment[]): DocBlock[
     for (const entry of ranges) {
         const [start, end] = entry.range;
         const raw = code.slice(start, end);
-        if (!isDocComment(raw)) {
+        if (!isLuaDocCommentText(raw)) {
             flush();
             continue;
         }
         if (currentEnd !== null) {
             const between = code.slice(currentEnd, start);
-            if (!isWhitespace(between)) {
+            if (!isWhitespaceText(between)) {
                 flush();
             }
         }
@@ -908,23 +915,8 @@ function findDocForSymbol(code: string, blocks: DocBlock[], symbolStart: number)
     return findDocForSymbolFromSource(code, symbolStart);
 }
 
-function isDocComment(text: string): boolean {
-    const trimmed = text.trimStart();
-    return (
-        trimmed.startsWith("---") ||
-        trimmed.startsWith("--@") ||
-        trimmed.startsWith("-- @") ||
-        trimmed.startsWith("--[[") ||
-        trimmed.startsWith("--[=")
-    );
-}
-
-function isWhitespace(text: string): boolean {
-    return /^\s*$/.test(text);
-}
-
 function isImmediateDocGap(text: string): boolean {
-    if (!isWhitespace(text)) {
+    if (!isWhitespaceText(text)) {
         return false;
     }
     if (/\r\n\s*\r\n/.test(text)) {
@@ -959,7 +951,7 @@ function findDocForSymbolFromSource(code: string, symbolStart: number): DocInfo 
         if (trimmed.length === 0) {
             break;
         }
-        if (!isDocComment(line)) {
+        if (!isLuaDocCommentText(line)) {
             break;
         }
         docLines.unshift(line);

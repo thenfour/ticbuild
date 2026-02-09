@@ -9,6 +9,7 @@ import { parseImportReference } from "./importUtils";
 import { kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { parseLua } from "../utils/lua/lua_processor";
+import { collectDocCommentAbove } from "../utils/lua/lua_doc";
 import * as cons from "../utils/console";
 import {
   SourceMapBuilder,
@@ -36,6 +37,8 @@ export type PreprocessorSymbol = {
   kind: "macro";
   sourceFile: string;
   offset: number;
+  params: string[];
+  docLines?: string[];
 };
 
 type PreprocessorState = {
@@ -166,6 +169,7 @@ async function processSource(
       case "macro": {
         const macroHeader = parseMacroHeader(rest, filePath, lineNumber);
         const nameOffset = findMacroNameOffset(line, lineInfo.startOffset, macroHeader.name);
+        const docLines = collectDocCommentAbove(lineTexts, i);
         if (macroHeader.inlineBody !== undefined) {
           if (isActive()) {
             state.macros.set(macroHeader.name, {
@@ -180,6 +184,8 @@ async function processSource(
               kind: "macro",
               sourceFile: filePath,
               offset: nameOffset,
+              params: macroHeader.params,
+              docLines,
             });
           }
           break;
@@ -201,6 +207,8 @@ async function processSource(
             kind: "macro",
             sourceFile: filePath,
             offset: nameOffset,
+            params: macroHeader.params,
+            docLines,
           });
         }
         break;
@@ -833,6 +841,7 @@ function stripLuaCommentsPreserveNewlines(source: string): string {
 
   return out;
 }
+
 
 // unique key for an include based on file path and overrides
 // used for pragma once and cycle detection
