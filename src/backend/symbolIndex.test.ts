@@ -97,7 +97,7 @@ describe("Symbol index", () => {
         if (!builtin) {
             throw new Error("Expected builtins to include spr");
         }
-        expect(builtin.file).toBe("templates/builtins/tic80.lua");
+        expect(builtin.file).toBe("templates\\builtins\\tic80.lua");
     });
 
     it("should index functions, params, locals, globals, and scopes", async () => {
