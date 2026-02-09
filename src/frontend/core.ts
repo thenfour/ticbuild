@@ -107,7 +107,10 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
     importsLines.push("");
   }
   if (project.resourceMgr) {
+    const startTime = Date.now();
     const symbolIndex = await buildProjectSymbolIndex(project.resolvedCore, project.resourceMgr);
+    const duration = Date.now() - startTime;
+    importsLines.push(`Built symbol index in ${duration}ms.`);
     const symbolIndexPath = project.resolvedCore.resolveObjPath("symbols.index.json");
     await writeTextFile(symbolIndexPath, JSON.stringify(symbolIndex, null, 2), "utf-8");
     importsLines.push(`Symbol index: ${symbolIndexPath}`);
