@@ -1,3 +1,7 @@
+## v1.0.14 (2026-2-14)
+
+- Updated tic80.exe with improved perf HUD with graphs and thresholding
+
 ## v1.0.13 (2026-2-13)
 
 - TIC-80.exe updated with improved `perf` HUD, reporting, and multi-disco session file output
