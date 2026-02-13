@@ -1,0 +1,11 @@
+
+ticbuild disco
+
+usage: ticbuild disco
+
+List discovered running TIC-80 remoting sessions.
+
+Discovery sources:
+
+  - %LOCALAPPDATA%\TIC-80\remoting\sessions
+  - .ticbuild\remoting\sessions in the current project

@@ -123,3 +123,8 @@ export function hashTextSha1(text: string): string {
   const hash = createHash("sha1").update(text, "utf-8").digest("hex");
   return `sha1:${hash}`;
 }
+
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

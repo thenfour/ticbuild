@@ -61,3 +61,18 @@ export function printTic80Help(): void {
   const help = renderHelpTemplate("tic80");
   console.log(help);
 }
+
+export function printTic80TerminalHelp(): void {
+  const help = renderHelpTemplate("tt");
+  console.log(help);
+}
+
+export function printTerminalHelp(): void {
+  const help = renderHelpTemplate("terminal");
+  console.log(help);
+}
+
+export function printDiscoHelp(): void {
+  const help = renderHelpTemplate("disco");
+  console.log(help);
+}

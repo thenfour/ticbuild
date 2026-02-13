@@ -2,23 +2,28 @@
 
 import { Command } from "commander";
 import { createTic80Controller } from "./backend/tic80Resolver";
+import { readDiscoveredSessions } from "./backend/tic80Controller/discovery";
 import { buildInfo } from "./buildInfo";
 import { buildCommand } from "./frontend/build";
 import { initCommand, InitOptions } from "./frontend/init";
 import { CommandLineOptions } from "./frontend/parseOptions";
 import { replCommand } from "./frontend/repl";
 import { runCommand } from "./frontend/run";
+import { attachTerminalToLaunchedTic80, discoCommand, terminalCommand } from "./frontend/terminal";
 import { templateListCommand } from "./frontend/templateList";
 import { watchCommand } from "./frontend/watch";
 import * as console from "./utils/console";
 import {
   printBuildHelp,
+  printDiscoHelp,
   printInitHelp,
   printMainHelp,
   printReplHelp,
   printRunHelp,
+  printTerminalHelp,
   printTemplateListHelp,
   printTic80Help,
+  printTic80TerminalHelp,
   printWatchHelp,
 } from "./utils/help";
 import { getBuildVersionTag } from "./utils/versionString";
@@ -47,6 +52,10 @@ async function launchTic80(forwardedArgs: string[] = []): Promise<void> {
   }
   await tic80Location.launchFireAndForget(undefined, forwardedArgs);
 }
+
+type Tic80CommandOptions = {
+  terminal?: boolean;
+};
 
 async function main(): Promise<void> {
   // Intercept help flags early before Commander processes them
@@ -89,6 +98,15 @@ async function main(): Promise<void> {
       case "tic80":
       case "t":
         printTic80Help();
+        return;
+      case "tt":
+        printTic80TerminalHelp();
+        return;
+      case "terminal":
+        printTerminalHelp();
+        return;
+      case "disco":
+        printDiscoHelp();
         return;
       case "help":
         // Let help command handle it naturally
@@ -202,8 +220,43 @@ async function main(): Promise<void> {
     .command("tic80")
     .alias("t")
     .description("Launch TIC-80 directly")
-    .action(async () => {
+    .option("--terminal", "Launch TIC-80 and attach terminal mode")
+    .action(async (options?: Tic80CommandOptions) => {
+      if (!options?.terminal) {
+        await launchTic80(forwardedArgs);
+        return;
+      }
+
+      const preLaunchSessions = await readDiscoveredSessions({ projectDir: process.cwd() });
+      const preLaunchSessionKeys = new Set(preLaunchSessions.map((session) => session.key));
+
       await launchTic80(forwardedArgs);
+      await attachTerminalToLaunchedTic80(preLaunchSessionKeys, forwardedArgs);
+    });
+
+  program
+    .command("tt")
+    .description("Launch TIC-80 and attach terminal mode")
+    .action(async () => {
+      const preLaunchSessions = await readDiscoveredSessions({ projectDir: process.cwd() });
+      const preLaunchSessionKeys = new Set(preLaunchSessions.map((session) => session.key));
+
+      await launchTic80(forwardedArgs);
+      await attachTerminalToLaunchedTic80(preLaunchSessionKeys, forwardedArgs);
+    });
+
+  program
+    .command("terminal [hostPort]")
+    .description("Connect terminal client to TIC-80 remoting")
+    .action(async (hostPort?: string) => {
+      await terminalCommand(hostPort);
+    });
+
+  program
+    .command("disco")
+    .description("List discovered TIC-80 remoting sessions")
+    .action(async () => {
+      await discoCommand();
     });
 
   program
@@ -238,6 +291,15 @@ async function main(): Promise<void> {
           case "tic80":
           case "t":
             printTic80Help();
+            break;
+          case "tt":
+            printTic80TerminalHelp();
+            break;
+          case "terminal":
+            printTerminalHelp();
+            break;
+          case "disco":
+            printDiscoHelp();
             break;
           default:
             console.error(`Unknown command: ${command}`);

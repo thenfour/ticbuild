@@ -1,0 +1,17 @@
+
+ticbuild tt
+
+usage: ticbuild tt
+
+Launch TIC-80 and automatically attach terminal mode.
+
+This is a shortcut for:
+
+  ticbuild tic80 --terminal
+
+Forwarding to TIC-80:
+
+	Use "--" to pass arguments through to TIC-80.
+
+	Example:
+		ticbuild tt -- --remoting-port=55111

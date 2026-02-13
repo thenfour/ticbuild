@@ -1,0 +1,18 @@
+
+ticbuild terminal
+
+usage: ticbuild terminal [host:port]
+
+Connect to the TIC-80 remoting terminal server.
+
+If host:port is omitted:
+
+  - with 0 discovered running sessions, exits immediately
+  - with 1 discovered running session, connects automatically
+  - with multiple sessions, shows a list and prompts for selection
+
+In terminal mode, you type commands one line at a time. Each line should begin with
+the request ID. Example:
+
+> 1 hello
+1 OK "TIC-80 remoting v1"

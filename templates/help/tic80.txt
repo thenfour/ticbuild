@@ -1,11 +1,15 @@
 
 ticbuild tic80
 
-usage: ticbuild tic80
+usage: ticbuild tic80 [--terminal]
 
 Launch TIC-80 directly without building a cart
 
 This is a convenience command to quickly open TIC-80.
+
+Options:
+
+	--terminal      Launch TIC-80, discover launched remoting session, and enter terminal mode
 
 Forwarding to TIC-80:
 

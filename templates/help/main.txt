@@ -19,6 +19,9 @@ Common commands:
 Other commands:
 
   tic80, t                    Launch TIC-80 directly
+  tt                          Launch TIC-80 and attach terminal mode
+  terminal [host:port]        Connect terminal client to TIC-80 remoting
+  disco                       List discovered TIC-80 remoting sessions
   help [command]              Show help for a specific command
 
 Use 'ticbuild help <command>' or 'ticbuild <command> --help' for detailed help.
