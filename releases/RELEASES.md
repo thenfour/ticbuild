@@ -1,3 +1,11 @@
+## v1.0.13 (2026-2-13)
+
+- TIC-80.exe updated with improved `perf` HUD, reporting, and multi-disco session file output
+- Adding `terminal` command for remoting client
+- Adding `disco` discovery listing
+- Adding `--terminal` as an option to `t` command
+- Adding `tt` launch + terminal alias
+
 ## v1.0.12 (2026-02-09)
 
 - output symbol / signature index file including TIC-80 builtins #26
