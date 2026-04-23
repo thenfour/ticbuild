@@ -3,6 +3,10 @@
 - Updated tic80.exe with fixed SCN+BDR timing measurements (#35)
 - Imported code is concatenated / banked properly (#17)
 - Fixed: banked code outputs in the wrong order (#32)
+- added ability to define preprocessor defines in manifest (#29)
+- added support for `#ifdef` and `#ifndef` (#30)
+- auto-update the manifest schema json (#38)
+- fixed: sometimes watch launches the tic80 with no cart (#37)
 
 ## v1.0.14 (2026-2-14)
 
