@@ -1,7 +1,7 @@
 // extracts chunks from tic80 cart into ImportedResource
 
 import { readBinaryFileAsync } from "../../utils/fileSystem";
-import { parseTic80Cart } from "../../utils/tic80/cartLoader";
+import { getCombinedCodeBytes, parseTic80Cart } from "../../utils/tic80/cartLoader";
 import { Tic80Cart, Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
 import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
 import { ImportDefinition } from "../manifestTypes";
@@ -39,9 +39,17 @@ export class Tic80Resource extends ImportedResourceBase {
     super();
     this.cartPath = cartPath;
 
+    const combinedCode = getCombinedCodeBytes(parsedCart);
+
     if (!spec.chunks || spec.chunks.length === 0) {
       // import all chunks
+      if (combinedCode) {
+        this.rootView.subAssets.set("CODE", combinedCode);
+      }
       for (const chunk of parsedCart.chunks) {
+        if (chunk.chunkType === "CODE") {
+          continue;
+        }
         if (this.rootView.subAssets.has(chunk.chunkType)) {
           throw new Error(`Duplicate chunk type in TIC-80 cart: ${chunk.chunkType}`);
         }
@@ -50,6 +58,13 @@ export class Tic80Resource extends ImportedResourceBase {
     } else {
       // import only specified chunks
       for (const chunkType of spec.chunks) {
+        if (chunkType === "CODE") {
+          if (!combinedCode) {
+            throw new Error(`Requested chunk type not found in TIC-80 cart: ${chunkType}`);
+          }
+          this.rootView.subAssets.set("CODE", combinedCode);
+          continue;
+        }
         const chunk = parsedCart.chunks.find((c) => c.chunkType === chunkType);
         if (!chunk) {
           throw new Error(`Requested chunk type not found in TIC-80 cart: ${chunkType}`);

@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { TicbuildProject } from "./project";
+import { parseTic80Cart, getCombinedCodeBytes } from "../utils/tic80/cartLoader";
+import { AssembleTic80Cart } from "../utils/tic80/cartWriter";
 import { kTic80CartChunkTypes } from "../utils/tic80/tic80";
 
 function writeFile(filePath: string, content: string): void {
@@ -59,12 +61,18 @@ describe("Code chunk banking", () => {
 
       const codeChunks = output.chunks.filter((chunk) => chunk.chunkType === "CODE");
       expect(codeChunks).toHaveLength(2);
-      expect(codeChunks[0].bank).toBe(0);
-      expect(codeChunks[1].bank).toBe(1);
+      expect(codeChunks[0].bank).toBe(1);
+      expect(codeChunks[1].bank).toBe(0);
       expect(codeChunks[0].data.length).toBe(maxChunkSize);
 
       const totalLength = new TextEncoder().encode(code).length;
       expect(codeChunks[1].data.length).toBe(totalLength - maxChunkSize);
+
+      const cartBytes = await AssembleTic80Cart({ chunks: output.chunks });
+      const parsedCart = parseTic80Cart(cartBytes);
+      const reconstructedCode = getCombinedCodeBytes(parsedCart);
+
+      expect(new TextDecoder().decode(reconstructedCode!)).toBe(code);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

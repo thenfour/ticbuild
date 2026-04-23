@@ -1,3 +1,4 @@
+import { inflateSync } from "node:zlib";
 import { readUint16LE } from "../bin";
 import { kTic80CartChunkTypes, Tic80Cart, Tic80CartChunk } from "./tic80";
 
@@ -52,4 +53,32 @@ export function parseTic80Cart(data: Uint8Array): Tic80Cart {
   // }
 
   return { chunks };
+}
+
+function concatChunkData(chunks: Tic80CartChunk[]): Uint8Array {
+  let totalLength = 0;
+  for (const chunk of chunks) {
+    totalLength += chunk.data.length;
+  }
+
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk.data, offset);
+    offset += chunk.data.length;
+  }
+  return result;
+}
+
+export function getCombinedCodeBytes(cart: Tic80Cart): Uint8Array | null {
+  const codeChunks = cart.chunks.filter((chunk) => chunk.chunkType === "CODE").sort((a, b) => b.bank - a.bank);
+  if (codeChunks.length === 0) {
+    return null;
+  }
+
+  return concatChunkData(codeChunks);
+}
+
+export function decompressCodeBytes(data: Uint8Array): Uint8Array {
+  return new Uint8Array(inflateSync(Buffer.from(data)));
 }
