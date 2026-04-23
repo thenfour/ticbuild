@@ -6,7 +6,7 @@ import { stringValue } from "../utils/lua/lua_utils";
 import { decompressCodeBytes, getCombinedCodeBytes, parseTic80Cart } from "../utils/tic80/cartLoader";
 import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { parseImportReference } from "./importUtils";
-import { kImportKind } from "./manifestTypes";
+import { kImportKind, PreprocessorValue } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { parseLua } from "../utils/lua/lua_processor";
 import { collectDocCommentAbove } from "../utils/lua/lua_doc";
@@ -23,7 +23,7 @@ import {
   resolveImportBytes,
 } from "./luaEncode";
 
-export type LuaPreprocessorValue = string | number | boolean;
+export type LuaPreprocessorValue = PreprocessorValue;
 
 export type LuaPreprocessResult = {
   code: string;
@@ -70,8 +70,9 @@ export async function preprocessLuaCode(
   source: string,
   filePath: string,
 ): Promise<LuaPreprocessResult> {
+  const manifestDefines = getManifestPreprocessorDefines(project);
   const state: PreprocessorState = {
-    defines: new Map<string, LuaPreprocessorValue>(),
+    defines: new Map<string, LuaPreprocessorValue>(Object.entries(manifestDefines)),
     dependencies: new Set<string>(),
     pragmaOnceKeys: new Set<string>(),
     includeStack: [],
@@ -90,6 +91,19 @@ export async function preprocessLuaCode(
     sourceMap: finalResult.map.toSourceMap(finalResult.code),
     preprocessorSymbols: state.macroSymbols,
   };
+}
+
+function getManifestPreprocessorDefines(project: TicbuildProjectCore): Record<string, LuaPreprocessorValue> {
+  const defines = project.manifest.preprocessor?.defines;
+  if (!defines) {
+    return {};
+  }
+
+  const resolved: Record<string, LuaPreprocessorValue> = {};
+  for (const [key, value] of Object.entries(defines)) {
+    resolved[key] = typeof value === "string" ? project.substituteVariables(value) : value;
+  }
+  return resolved;
 }
 
 type ProcessResult = {

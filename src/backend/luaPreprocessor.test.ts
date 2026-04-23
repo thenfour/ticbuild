@@ -174,6 +174,76 @@ local enabled = true
     expect(result.code).toContain("local enabled = false");
     expect(result.code).not.toContain("local enabled = true");
   });
+
+  it("should seed preprocessor defines from the manifest", async () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      preprocessor: {
+        defines: {
+          FEATURE: true,
+        },
+      },
+      imports: [],
+      assembly: {
+        blocks: [],
+      },
+    };
+
+    const project = makeProject(manifest);
+    const source = `
+--#ifdef FEATURE
+local enabled = true
+--#else
+local enabled = false
+--#endif
+`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("local enabled = true");
+    expect(result.code).not.toContain("local enabled = false");
+  });
+
+  it("should substitute manifest variables in string preprocessor defines", async () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {
+        title: "My Game",
+      },
+      preprocessor: {
+        defines: {
+          TITLE_NAME: "$(title)",
+        },
+      },
+      imports: [],
+      assembly: {
+        blocks: [],
+      },
+    };
+
+    const project = makeProject(manifest);
+    const source = `
+--#if TITLE_NAME == "My Game"
+local titleOk = true
+--#else
+local titleOk = false
+--#endif
+`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("local titleOk = true");
+    expect(result.code).not.toContain("local titleOk = false");
+  });
 });
 
 describe("Lua preprocessor error/warning directives", () => {

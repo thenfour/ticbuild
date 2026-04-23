@@ -14,6 +14,13 @@ describe("Manifest Loader", () => {
       objDir: "./obj",
       outputCartName: "output.tic",
     },
+    preprocessor: {
+      defines: {
+        DEBUG: true,
+        MAX_VOICES: 8,
+        TITLE_NAME: "demo",
+      },
+    },
     imports: [
       {
         name: "maincode",

@@ -62,6 +62,12 @@ export type CodeAssemblyOptions = {
   emitGlobals?: boolean;
 };
 
+export type PreprocessorValue = string | number | boolean;
+
+export interface PreprocessorConfig {
+  defines?: Record<string, PreprocessorValue>;
+}
+
 export type LuaMinificationConfig = Partial<OptimizationRuleOptions>;
 
 export interface LuaAssemblyConfig {
@@ -78,12 +84,14 @@ export interface AssemblyConfig {
 export interface BuildConfiguration {
   project?: Partial<ProjectConfig>;
   variables?: Record<string, string>;
+  preprocessor?: Partial<PreprocessorConfig>;
   assembly?: Partial<AssemblyConfig>;
 }
 
 export interface Manifest {
   project: ProjectConfig;
   variables?: Record<string, string>;
+  preprocessor?: PreprocessorConfig;
   imports: ImportDefinition[];
   assembly: AssemblyConfig;
   buildConfigurations?: Record<string, BuildConfiguration>;

@@ -64,6 +64,29 @@
       },
       "description": "User-defined variables for substitution"
     },
+    "preprocessor": {
+      "type": "object",
+      "properties": {
+        "defines": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "description": "Preprocessor defines available to directives like #if, #ifdef, and #ifndef"
+        }
+      },
+      "description": "Lua preprocessor configuration"
+    },
     "imports": {
       "type": "array",
       "items": {
@@ -323,6 +346,27 @@
             "type": "object",
             "additionalProperties": {
               "type": "string"
+            }
+          },
+          "preprocessor": {
+            "type": "object",
+            "properties": {
+              "defines": {
+                "type": "object",
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              }
             }
           },
           "assembly": {

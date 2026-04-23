@@ -227,6 +227,15 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
   "variables": {
     "anything": "here", // variables can be referred to in values via $(variablename)
   },
+  "preprocessor": {
+    "defines": {
+      "DEBUG": true,
+      "GEOSPHERE_SUBDIVISIONS": 3,
+      "CURVE_BETA": 0.998,
+      "TITLE": "$(project.name)", // variable substitutions is performed just like most things in the manifest.
+      "SUBTITLE": "The best one ever"
+    }
+  },
   "imports": [
     {
       "name": "maincode", // symbolic identifier
