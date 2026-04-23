@@ -54,8 +54,13 @@ export class CustomTic80Controller implements ITic80Controller {
   }
 
   async launchAndControlCart(cartPath: string, userArgs: string[] = []): Promise<void> {
-    await this.ensureProcessRunning(userArgs);
+    const launchedNewProcess = await this.ensureProcessRunning(userArgs, cartPath);
     await this.ensureConnected();
+
+    if (launchedNewProcess) {
+      cons.dim(`[remoting] TIC-80 launched with cart: ${cartPath}`);
+      return;
+    }
 
     await this.client!.loadCart(cartPath, true);
     cons.dim(`[remoting] Loaded cart: ${cartPath}`);
@@ -82,21 +87,24 @@ export class CustomTic80Controller implements ITic80Controller {
     this.tic80Process = undefined;
   }
 
-  private async ensureProcessRunning(userArgs: string[] = []): Promise<void> {
+  private async ensureProcessRunning(userArgs: string[] = [], initialCartPath?: string): Promise<boolean> {
     if (this.tic80Process && !this.tic80Process.killed) {
-      return;
+      return false;
     }
 
     this.applyRemotingPortOverride(userArgs);
     await this.ensurePortSelected();
     const port = this.port!;
     const mergedArgs = mergeTic80Args(this.GetArgsForRemotingSession(), userArgs);
-    this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, mergedArgs);
+    const args = initialCartPath ? [initialCartPath, ...mergedArgs] : mergedArgs;
+    this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, args);
     const processRef = this.tic80Process;
     if (processRef) {
       processRef.once("exit", () => this.handleProcessExit(processRef));
       processRef.once("close", () => this.handleProcessExit(processRef));
     }
+
+    return true;
   }
 
   onExit(handler: () => void): void {
