@@ -169,12 +169,15 @@ export class TicbuildProject {
             throw new Error(`CODE chunk exceeds ${maxChunkSize} bytes but bank was specified`);
           }
           const bankCount = Math.ceil(data.length / maxChunkSize);
+          if (bankCount > codeInfo.bankCount) {
+            throw new Error(`CODE chunk requires ${bankCount} banks but TIC-80 supports only ${codeInfo.bankCount}`);
+          }
           for (let i = 0; i < bankCount; i++) {
             const start = i * maxChunkSize;
             const end = Math.min(start + maxChunkSize, data.length);
             outputChunks.push({
               chunkType,
-              bank: i,
+              bank: bankCount - 1 - i,
               data: data.subarray(start, end),
             });
           }

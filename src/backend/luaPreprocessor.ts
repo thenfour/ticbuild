@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { readBinaryFileAsync, readTextFileAsync, resolveFileWithSearchPaths } from "../utils/fileSystem";
 import { toLuaStringLiteral } from "../utils/lua/lua_fundamentals";
 import { stringValue } from "../utils/lua/lua_utils";
-import { parseTic80Cart } from "../utils/tic80/cartLoader";
+import { decompressCodeBytes, getCombinedCodeBytes, parseTic80Cart } from "../utils/tic80/cartLoader";
 import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { parseImportReference } from "./importUtils";
 import { kImportKind } from "./manifestTypes";
@@ -441,17 +441,19 @@ async function resolveImportInclude(
     state.dependencies.add(resolvedPath);
 
     const availableChunks =
-      importDef.chunks && importDef.chunks.length > 0 ? importDef.chunks : cart.chunks.map((chunk) => chunk.chunkType);
+      importDef.chunks && importDef.chunks.length > 0
+        ? importDef.chunks
+        : Array.from(new Set(cart.chunks.map((chunk) => chunk.chunkType)));
 
-    const hasCode = availableChunks.includes("CODE");
+    const hasCode = availableChunks.includes("CODE") || availableChunks.includes("CODE_COMPRESSED");
     if (!hasCode) {
-      throw new Error(formatError(resolvedPath, lineNumber, `No CODE chunk found in cart: ${importName}`));
+      throw new Error(formatError(resolvedPath, lineNumber, `No CODE or CODE_COMPRESSED chunk found in cart: ${importName}`));
     }
 
-    let selectedChunk: Tic80CartChunkTypeKey = "CODE";
+    let selectedChunk: Tic80CartChunkTypeKey = availableChunks.includes("CODE") ? "CODE" : "CODE_COMPRESSED";
     if (chunkSpec) {
-      if (chunkSpec !== "CODE") {
-        throw new Error(formatError(resolvedPath, lineNumber, `Only CODE chunk is supported for include`));
+      if (chunkSpec !== "CODE" && chunkSpec !== "CODE_COMPRESSED") {
+        throw new Error(formatError(resolvedPath, lineNumber, `Only CODE or CODE_COMPRESSED chunk is supported for include`));
       }
       selectedChunk = chunkSpec as Tic80CartChunkTypeKey;
       if (!availableChunks.includes(selectedChunk)) {
@@ -469,13 +471,20 @@ async function resolveImportInclude(
       );
     }
 
-    const codeChunk = cart.chunks.find((chunk) => chunk.chunkType === selectedChunk);
-    if (!codeChunk) {
+    const decoder = new TextDecoder("utf-8");
+    let sourceBytes: Uint8Array | null = null;
+    if (selectedChunk === "CODE") {
+      sourceBytes = getCombinedCodeBytes(cart);
+    } else {
+      const compressedChunk = cart.chunks.find((chunk) => chunk.chunkType === "CODE_COMPRESSED");
+      sourceBytes = compressedChunk ? decompressCodeBytes(compressedChunk.data) : null;
+    }
+
+    if (!sourceBytes) {
       throw new Error(formatError(resolvedPath, lineNumber, `Requested chunk ${selectedChunk} not found in cart`));
     }
 
-    const decoder = new TextDecoder("utf-8");
-    const source = decoder.decode(codeChunk.data);
+    const source = decoder.decode(sourceBytes);
     const includeKey = makeIncludeKey(`${includeTarget}:${selectedChunk}`, overrides);
     const included = await processSource(
       project,

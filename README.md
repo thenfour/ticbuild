@@ -585,7 +585,8 @@ local y = CLAMP(x + blah(y),
 Code chunk banks on cart are semantically slightly different than other chunk
 types. Most of the time it's the simple, independent banks.
 
-But when code is loaded by TIC-80, all code banks are concatenated in sequence.
+But when code is loaded by TIC-80, all code banks are concatenated, in reverse
+bank order (bank7 + bank6 + ... bank0).
 
 Therefore, it's a warning to specify the bank explicitly for code chunks. But still
 allowed as long as there's no conflict.
@@ -593,9 +594,38 @@ allowed as long as there's no conflict.
 But if code wants to span multiple banks (larger than 1 bank), then no specified code banks should be
 allowed (this is an error).
 
-And for the code chunk alone, if code is larger than 1 bank, it gets automatically
-split across multiple banks.
+For the code chunk alone, if code is larger than 1 bank, ticbuild automatically
+splits it across multiple banks.
 
+## CODE_COMPRESSED
+
+You can choose to emit code in `CODE_COMPRESSED` form, which is still supported
+(and practically, will always be).
+
+A limitation is that it cannot span more than 1 bank, so whereas you get 512kb of
+uncompressed code, you only get 64kb of compressed code.
+
+Code typically compresses very well though; On a test project my code compresses
+from 83 -> 18 kb (~22% of original). 512kb would, at the same rate, compress to about
+111kb, so you really do have to just decide when this works for you.
+
+To emit compressed code, specify your code block output to output to the
+`CODE_COMPRESSED` chunk, like:
+
+```json
+{
+  "assembly": {
+    "blocks": [
+      {
+      "chunks": [
+        "CODE_COMPRESSED"
+      ],
+        "asset": "maincode"
+      }
+    ]
+  }
+}
+```
 
 # Symbol / intellisense database / map / index
 
