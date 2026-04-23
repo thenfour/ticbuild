@@ -401,7 +401,6 @@ between files, inline macros, access project variables, import assets, condition
 and even import binaries with various encodings.
 
 ```lua
--- Simple text-based Lua preprocessor.
 -- we want to support a few preprocessor features, and make the syntax not totally
 -- break the language syntax. therefore, we will put it in comments.
 -- Expressions and syntax should feel Lua-ish (not C++-ish, despite the preprocessor
@@ -430,7 +429,7 @@ print() --#define XYZ -- note that here #define will not be processed.
 -- the key/value style is Lua.
 --#include "bayerKernel.lua" with { BAYER_SIZE = 4, DEBUG = true }
 
---#if DEBUG
+--#if DEBUG -- note that this tests truthiness, not presence.
 print("debug")
 --#else
 -- something
@@ -444,14 +443,19 @@ print("debug")
 --#define MAX_VOICES 8
 --#endif
 
+-- can also do it like this with a shortcut
+--#ifndef MAX_VOICES
+--#define MAX_VOICES 8
+--#endif
+
 -- Undefined preproc symbols shall not be `nil` even if that might feel natural.
 -- using them in an expression shall be an error. Testing existence must be done
--- via `defined()`.
+-- via `defined()` or `#ifdef`.
 
 -- To be as "lua" as possible, `then` may feel natural at the end of that line,
 --#if (MAX_VOICES < 4) then
 --...
--- but don't support this. doesn't add anything and making it optional is unnecessary
+-- but ticbuild doesn't support this. doesn't add anything and making it optional is unnecessary
 -- complexity.
 
 -- undefine:
@@ -579,6 +583,34 @@ local y = CLAMP(x + blah(y),
 --#macro PROJECT_NAME => __EXPAND("the project name is: $(project.name)")
 
 ```
+
+## Preprocessor variable behavior (`#if` vs `#ifdef`) and what you can use in `--#macro`
+
+Preprocessor defines are used by `#if`, `#ifdef`, `#ifndef`, `defined(...)`, `#undef`.
+
+They can be overridden during `#include` via ` with { ... }` overrides.
+
+They can be string, number, or boolean.
+
+- `#if X` asks if the preprocessor variable evaluates to true
+- `#ifdef X` asks if it's defined at all
+
+It means undefined symbols are errors when used in `#if`, but they are allowed in `#ifdef`.
+
+Lua-style truthiness is employed, so
+
+```lua
+--#define NAME 0
+--#if NAME
+-- this will NOT be evaluated; `0` is not truthy in Lua.
+--#endif
+```
+
+Macro symbols are a different table. Macro symbol names and preprocessor defines
+exist in totally different worlds.
+
+**Project variables** are also separate. This is a way to make project config values
+available to Lua code; this is a different system than macros or preprocessor defines.
 
 # Code chunk behavior
 

@@ -273,6 +273,42 @@ async function processSource(
         });
         break;
       }
+      case "ifdef": {
+        const parentActive = isActive();
+        let conditionMet = false;
+        if (parentActive) {
+          const ifdefMatch = rest.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)$/);
+          if (!ifdefMatch) {
+            throw new Error(formatError(filePath, lineNumber, `Invalid --#ifdef syntax: ${line}`));
+          }
+          conditionMet = localDefines.has(ifdefMatch[1]);
+        }
+        conditionalStack.push({
+          parentActive,
+          conditionMet,
+          active: parentActive && conditionMet,
+          hasElse: false,
+        });
+        break;
+      }
+      case "ifndef": {
+        const parentActive = isActive();
+        let conditionMet = false;
+        if (parentActive) {
+          const ifndefMatch = rest.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)$/);
+          if (!ifndefMatch) {
+            throw new Error(formatError(filePath, lineNumber, `Invalid --#ifndef syntax: ${line}`));
+          }
+          conditionMet = !localDefines.has(ifndefMatch[1]);
+        }
+        conditionalStack.push({
+          parentActive,
+          conditionMet,
+          active: parentActive && conditionMet,
+          hasElse: false,
+        });
+        break;
+      }
       case "else": {
         if (conditionalStack.length === 0) {
           throw new Error(formatError(filePath, lineNumber, `--#else without matching --#if`));

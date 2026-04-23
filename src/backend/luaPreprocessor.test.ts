@@ -115,6 +115,65 @@ local x = 2
     expect(result.code).toContain("local x = 1");
     expect(result.code).not.toContain("local x = 2");
   });
+
+  it("should support --#ifdef for defined symbols", async () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      imports: [],
+      assembly: {
+        blocks: [],
+      },
+    };
+
+    const project = makeProject(manifest);
+    const source = `
+--#define FEATURE
+--#ifdef FEATURE
+local enabled = true
+--#else
+local enabled = false
+--#endif
+`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("local enabled = true");
+    expect(result.code).not.toContain("local enabled = false");
+  });
+
+  it("should support --#ifndef for undefined symbols", async () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      imports: [],
+      assembly: {
+        blocks: [],
+      },
+    };
+
+    const project = makeProject(manifest);
+    const source = `
+--#ifndef FEATURE
+local enabled = false
+--#else
+local enabled = true
+--#endif
+`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("local enabled = false");
+    expect(result.code).not.toContain("local enabled = true");
+  });
 });
 
 describe("Lua preprocessor error/warning directives", () => {
