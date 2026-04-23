@@ -1,3 +1,9 @@
+## v1.0.14 (2026-4-23)
+
+- Updated tic80.exe with fixed SCN+BDR timing measurements (#35)
+- Imported code is concatenated / banked properly (#17)
+- Fixed: banked code outputs in the wrong order (#32)
+
 ## v1.0.14 (2026-2-14)
 
 - Updated tic80.exe with improved perf HUD with graphs and thresholding
