@@ -223,6 +223,29 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
     "binDir": "./dist/bin",
     "objDir": "./dist/obj",
     "outputCartName": "$(project.name).tic", // leaf name only
+
+    // Upon build, ticbuild checks that your manifest schema is in sync with the expected
+    // schema. This schema doesn't affect the build, but it helps editors understand
+    // the manifest structure, provide auto-complete, validation, etc.
+    //
+    // This is true by default. If the project's schema file is different than
+    // what ticbuild is expecting, then ticbuild will update it.
+    // Setting to false will leave your existing schema untouched. Could be useful to 
+    // keep commits cleaner?
+    //
+    // Note that this is only done at build-time. So if you want to manually update the schema,
+    // you need to trigger a build. Even if the build doesn't complete, the sync is performed.
+    //
+    // Q: why check content, not a version?
+    // A: - versions are annoying to track, room for error
+    //    - there is no scenario where the content check would be less accurate
+    // Q: what if the schema doesn't exist in the first place? will it get placed?
+    // A: Yes. Ticbuild will create `.ticbuild/` and place the schema there.
+    //
+    // Q: What if $schema points elsewhere?
+    // A: Ticbuild will assume the user is managing it; do the check, warn if content mismatch.
+    //    Ticbuild in this case will not change the $schema path, and won't touch the schema file.
+    "autoUpdateManifestSchema": true,
   },
   "variables": {
     "anything": "here", // variables can be referred to in values via $(variablename)
@@ -594,6 +617,11 @@ local y = CLAMP(x + blah(y),
 ```
 
 ## Preprocessor variable behavior (`#if` vs `#ifdef`) and what you can use in `--#macro`
+
+Don't get confused by C/C++-like language. "Macros" are different from defines.
+Macros in C/C++ share semantics, acting both as callables and as values with no arguments.
+Ticbuild distinguishes between thos. Macros are callable, preprocessor defines are
+values.
 
 Preprocessor defines are used by `#if`, `#ifdef`, `#ifndef`, `defined(...)`, `#undef`.
 

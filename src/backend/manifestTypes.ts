@@ -34,6 +34,7 @@ export interface ProjectConfig {
   binDir: string;
   objDir: string;
   outputCartName: string;
+  autoUpdateManifestSchema?: boolean;
 }
 
 export interface ImportDefinition {
@@ -89,6 +90,7 @@ export interface BuildConfiguration {
 }
 
 export interface Manifest {
+  $schema?: string;
   project: ProjectConfig;
   variables?: Record<string, string>;
   preprocessor?: PreprocessorConfig;

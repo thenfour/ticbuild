@@ -9,6 +9,10 @@
     "assembly"
   ],
   "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path to the manifest JSON schema for editor support"
+    },
     "project": {
       "type": "object",
       "required": [
@@ -54,6 +58,10 @@
         "outputCartName": {
           "type": "string",
           "description": "Name of the output cartridge file"
+        },
+        "autoUpdateManifestSchema": {
+          "type": "boolean",
+          "description": "Whether ticbuild should keep the project's copied manifest schema in sync during builds"
         }
       }
     },

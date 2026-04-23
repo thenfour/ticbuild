@@ -4,11 +4,13 @@ import { LuaCodeResource } from "../backend/importers/LuaCodeImporter";
 import { Tic80Resource } from "../backend/importers/tic80CartImporter";
 import { AssetReference } from "../backend/manifestTypes";
 import * as cons from "../utils/console";
-import { ensureDir, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
+import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
+import { canonicalizePath } from "../utils/fileSystem";
 import { formatBytes } from "../utils/utils";
 import { kTic80CartChunkTypes } from "../utils/tic80/tic80";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { writeFileSync } from "node:fs";
+import * as path from "node:path";
 
 export async function buildCore(manifestPath?: string, options?: CommandLineOptions): Promise<void> {
   const buildStartTime = Date.now();
@@ -34,6 +36,8 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
   cons.h1("Project loaded from:");
   cons.info(`  ${project.resolvedCore.manifestPath}`);
   //cons.dim(`  (loaded in ${loadDuration}ms)`);
+
+  await syncManifestSchema(project);
 
   // output variables
   const variablesOutputPath = project.resolvedCore.resolveObjPath("variables.json");
@@ -141,6 +145,52 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
   cons.success(`Build completed successfully in ${totalDuration}ms.`);
   cons.info(`  Log : ${logFilePath}`);
   cons.info(`  Cart: ${outputFilePath}`);
+}
+
+function getBundledManifestSchemaPath(): string {
+  return path.resolve(__dirname, "..", "..", "ticbuild.schema.json");
+}
+
+function getManagedManifestSchemaPath(project: TicbuildProject): string {
+  return canonicalizePath(path.join(project.resolvedCore.projectDir, ".ticbuild", "ticbuild.schema.json"));
+}
+
+async function syncManifestSchema(project: TicbuildProject): Promise<void> {
+  if (project.resolvedCore.manifest.project.autoUpdateManifestSchema === false) {
+    return;
+  }
+
+  const bundledSchemaPath = getBundledManifestSchemaPath();
+  const bundledSchema = await readTextFileAsync(bundledSchemaPath, "utf-8");
+  const managedSchemaPath = getManagedManifestSchemaPath(project);
+
+  const schemaRef = project.resolvedCore.manifest.$schema;
+  const resolvedSchemaPath = schemaRef ? canonicalizePath(project.resolvedCore.resolveProjectPath(schemaRef)) : managedSchemaPath;
+  const usesManagedSchemaPath = resolvedSchemaPath === managedSchemaPath;
+
+  if (!usesManagedSchemaPath) {
+    if (!fileExists(resolvedSchemaPath)) {
+      cons.warning(`Manifest $schema points elsewhere and is missing: ${schemaRef}`);
+      return;
+    }
+
+    const existingSchema = await readTextFileAsync(resolvedSchemaPath, "utf-8");
+    if (existingSchema !== bundledSchema) {
+      cons.warning(`Manifest $schema points elsewhere and differs from bundled schema: ${schemaRef}`);
+    }
+    return;
+  }
+
+  if (fileExists(managedSchemaPath)) {
+    const existingSchema = await readTextFileAsync(managedSchemaPath, "utf-8");
+    if (existingSchema === bundledSchema) {
+      return;
+    }
+  }
+
+  await ensureDir(path.dirname(managedSchemaPath));
+  await writeTextFile(managedSchemaPath, bundledSchema, "utf-8");
+  cons.info(`Synced manifest schema: ${managedSchemaPath}`);
 }
 
 function logCartStats(assemblyOutput: AssembleOutputResult): void {

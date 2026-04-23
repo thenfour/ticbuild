@@ -8,11 +8,13 @@ const mockFs = fs as jest.Mocked<typeof fs>;
 
 describe("Manifest Loader", () => {
   const validManifest = {
+    $schema: "./.ticbuild/ticbuild.schema.json",
     project: {
       name: "test-project",
       binDir: "./bin",
       objDir: "./obj",
       outputCartName: "output.tic",
+      autoUpdateManifestSchema: true,
     },
     preprocessor: {
       defines: {
