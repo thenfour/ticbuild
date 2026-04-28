@@ -399,6 +399,32 @@ local value = (ID(42))`;
     expect(result.code).toContain("local value = (42+1)");
   });
 
+  it("should allow empty inline macros", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ASSERT(condition, message) => --
+ASSERT(x > 0, "x must be positive")
+local value = 42`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).not.toContain("ASSERT(");
+    expect(result.code).toContain("local value = 42");
+  });
+
+  it("should allow empty multi-line macros", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#macro ASSERT(condition, message)
+-- release build strips assertions
+--#endmacro
+ASSERT(x > 0, "x must be positive")
+local value = 42`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).not.toContain("ASSERT(");
+    expect(result.code).toContain("local value = 42");
+  });
+
   it("should not treat double dashes in strings as comments (be lexically aware generally)", async () => {
     const project = makeProject(manifest);
     const source = `

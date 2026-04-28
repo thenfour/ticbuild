@@ -1068,8 +1068,14 @@ function expandMacroBody(
   filePath: string,
   lineNumber: number,
 ): string {
+  const wrappedBody = wrapMacroBody(macro.body);
+  if (wrappedBody.length === 0) {
+    // empty macro bodies should be explicitly supported for things like ASSERT or NOP-like macros.
+    return "";
+  }
+
   if (macro.params.length === 0) {
-    return wrapMacroBody(macro.body);
+    return wrappedBody;
   }
 
   const parsed = parseExpressionWithRanges(macro.body, macro.sourceFile, macro.lineNumber);
@@ -1097,7 +1103,7 @@ function expandMacroBody(
   });
 
   if (replacements.length === 0) {
-    return wrapMacroBody(macro.body);
+    return wrappedBody;
   }
 
   const sorted = replacements.sort((a, b) => b.start - a.start);
