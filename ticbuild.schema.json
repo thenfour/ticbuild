@@ -54,6 +54,13 @@
           },
           "description": "Additional glob patterns to watch during ticbuild watch, relative to the manifest directory unless absolute"
         },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "TIC-80 cart metadata comments emitted at the top of the final Lua source"
+        },
         "binDir": {
           "type": "string",
           "description": "Output directory for built cartridges"

@@ -220,7 +220,18 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
     "launchArgs": ["--fs=./", "--skip"], // args that are passed to the tic80 when launched.
     "includeDirs": ["./src", "./include"], // includes these dirs in source file lookup
     "importDirs": ["./assets", "./images"], // include these dirs in resource import lookup
-    "additionalWatchGlobs": ["./tools/**/*.json", "./shared/**/*.lua"], // optional extra watch targets used by ticbuild watch
+    // optional extra watch targets used by ticbuild watch
+    "additionalWatchGlobs": ["./tools/**/*.json", "./shared/**/*.lua"],
+
+    // emits metadata comments at the top of the final Lua source, after
+    // minification so it survives normal comment stripping.
+    // emitted in the insertion order.
+    // values must be single-line strings.
+    "metadata": {
+      "title": "game title",
+      "author": "game developer, email, etc.",
+      "menu": "MENU1 MENU2 MENU3"
+    },
     "binDir": "./dist/bin",
     "objDir": "./dist/obj",
     "outputCartName": "$(project.name).tic", // leaf name only

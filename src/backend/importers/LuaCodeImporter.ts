@@ -122,6 +122,7 @@ export class LuaCodeResourceView extends ResourceViewBase {
       const options = buildMinificationOptions(project.manifest.assembly.lua?.minification);
       code = processLua(code, options);
     }
+    code = this.injectMetadata(project, code);
 
     if (emitGlobals) {
       this.cachedMinifyEnabled = minifyEnabled;
@@ -165,6 +166,30 @@ export class LuaCodeResourceView extends ResourceViewBase {
       }
     }
     return header + source;
+  }
+
+  private injectMetadata(project: TicbuildProjectCore, source: string): string {
+    const metadata = project.manifest.project.metadata;
+    if (!metadata) {
+      return source;
+    }
+
+    const entries = Object.entries(metadata);
+    if (entries.length === 0) {
+      return source;
+    }
+
+    const maxKeyLength = entries.reduce((longest, [key]) => Math.max(longest, key.length), 0);
+    const lines = entries.map(([key, value]) => {
+      const substitutedValue = project.substituteVariables(value);
+      if (substitutedValue.includes("\n") || substitutedValue.includes("\r")) {
+        throw new Error(`Project metadata ${key} must be a single line`);
+      }
+      const spacing = " ".repeat(maxKeyLength - key.length + 1);
+      return `-- ${key}:${spacing}${substitutedValue}`;
+    });
+
+    return `${lines.join("\n")}\n\n${source}`;
   }
 }
 

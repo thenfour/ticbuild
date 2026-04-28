@@ -32,6 +32,7 @@ export interface ProjectConfig {
   includeDirs?: string[];
   importDirs?: string[];
   additionalWatchGlobs?: string[];
+  metadata?: Record<string, string>;
   binDir: string;
   objDir: string;
   outputCartName: string;
