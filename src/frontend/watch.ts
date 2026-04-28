@@ -73,7 +73,7 @@ export async function watchCommand(
   };
 
   // Function to perform build and launch
-  const buildAndLaunch = async (changedPath?: string) => {
+  const buildAndLaunch = async () => {
     if (isBuilding) {
       pendingRebuild = true;
       return;
@@ -120,10 +120,9 @@ export async function watchCommand(
       await tic80Controller.launchAndControlCart(outputFilePath, mergedArgs);
       //cons.success("TIC-80 launched successfully.");
 
-      // If the manifest changed, update the watch list
-      if (changedPath === project.resolvedCore.manifestPath) {
-        await updateWatchList();
-      }
+      // Recompute dependencies after every successful build so newly discovered
+      // includes/import dependencies are added to the watch list.
+      await updateWatchList();
 
       cons.info("\nWatching for changes... (press Ctrl+C to stop)");
     } catch (error) {
@@ -162,7 +161,7 @@ export async function watchCommand(
 
   watcher.on("change", (path: string) => {
     cons.info(`\nFile changed: ${path}`);
-    buildAndLaunch(path);
+    buildAndLaunch();
   });
 
   watcher.on("error", (error: Error) => {
