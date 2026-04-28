@@ -8,6 +8,9 @@ Build a TIC-80 cart, launch it, and watch for changes
 When source files or the manifest change, the cart is automatically
 rebuilt and TIC-80 is relaunched with the updated cart.
 
+Additional watch globs can be configured via project.additionalWatchGlobs
+in the manifest.
+
 Arguments:
 
   [manifest]           Path to manifest file (default: first *.ticbuild.jsonc)

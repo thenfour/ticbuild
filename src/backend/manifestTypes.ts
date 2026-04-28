@@ -31,6 +31,7 @@ export interface ProjectConfig {
   launchArgs?: string[];
   includeDirs?: string[];
   importDirs?: string[];
+  additionalWatchGlobs?: string[];
   binDir: string;
   objDir: string;
   outputCartName: string;

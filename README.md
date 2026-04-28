@@ -220,6 +220,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
     "launchArgs": ["--fs=./", "--skip"], // args that are passed to the tic80 when launched.
     "includeDirs": ["./src", "./include"], // includes these dirs in source file lookup
     "importDirs": ["./assets", "./images"], // include these dirs in resource import lookup
+    "additionalWatchGlobs": ["./tools/**/*.json", "./shared/**/*.lua"], // optional extra watch targets used by ticbuild watch
     "binDir": "./dist/bin",
     "objDir": "./dist/obj",
     "outputCartName": "$(project.name).tic", // leaf name only
@@ -407,7 +408,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
     // build configurations allow overriding things in the base config above.
     // you cannot override individual elements of arrays. for example, `assembly.blocks`
     // if you override that, you must overwrite the whole value.
-    // similar with includeDirs, you can't "add 1" or so; you have to replace the whole array.
+    // similar with includeDirs / additionalWatchGlobs, you can't "add 1" or so; you have to replace the whole array.
     "debug": {
       "project": {
         "binDir": "./debug/bin",
@@ -425,6 +426,10 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
   },
 };
 ```
+
+When running `ticbuild watch`, ticbuild always watches the manifest file and the dependencies discovered during build and preprocessing. Use `project.additionalWatchGlobs` to add extra glob-based watch targets, relative to the manifest directory unless you provide an absolute pattern. These extra globs can trigger rebuilds on file changes, file additions, and file removals.
+
+`additionalWatchGlobs` is an array value, so build configurations replace the whole array when overriding it.
 
 # Lua preprocessor
 

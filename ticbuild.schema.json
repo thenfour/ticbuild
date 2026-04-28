@@ -47,6 +47,13 @@
           },
           "description": "Directories to include in resource import lookup"
         },
+        "additionalWatchGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional glob patterns to watch during ticbuild watch, relative to the manifest directory unless absolute"
+        },
         "binDir": {
           "type": "string",
           "description": "Output directory for built cartridges"

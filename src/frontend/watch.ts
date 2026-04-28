@@ -1,4 +1,5 @@
 import chokidar from "chokidar";
+import * as path from "node:path";
 import { TicbuildProject } from "../backend/project";
 import { createTic80Controller } from "../backend/tic80Resolver";
 import * as cons from "../utils/console";
@@ -6,6 +7,34 @@ import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { ITic80Controller } from "../backend/tic80Controller/tic80Controller";
 import { mergeTic80Args } from "../utils/tic80/args";
+
+export function resolveAdditionalWatchGlob(projectDir: string, glob: string): string {
+  const trimmed = glob.trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+
+  // make the glob absolute relative to the project dir. requires a bit of parsing in case of
+  // negated globs ("!./src/generated/**/*.lua") => ("!projectDir/src/generated/**/*.lua")
+  const isNegated = trimmed.startsWith("!");
+  const rawPattern = isNegated ? trimmed.slice(1) : trimmed;
+  const resolvedPattern = path.isAbsolute(rawPattern) ? rawPattern : path.join(projectDir, rawPattern);
+  const normalizedPattern = resolvedPattern.replace(/\\/g, "/");
+  return isNegated ? `!${normalizedPattern}` : normalizedPattern;
+}
+
+export function buildWatchTargets(
+  manifestPath: string,
+  dependencyPaths: string[],
+  projectDir: string,
+  additionalWatchGlobs: string[] = [],
+): string[] {
+  const resolvedAdditionalWatchGlobs = additionalWatchGlobs
+    .map((glob) => resolveAdditionalWatchGlob(projectDir, glob))
+    .filter((glob) => glob.length > 0);
+
+  return Array.from(new Set([manifestPath, ...dependencyPaths, ...resolvedAdditionalWatchGlobs])).sort();
+}
 
 export async function watchCommand(
   manifestPath?: string,
@@ -20,7 +49,7 @@ export async function watchCommand(
   let isBuilding = false;
   let pendingRebuild = false;
   let watcher: chokidar.FSWatcher | undefined;
-  let currentWatchPaths: string[] = [];
+  let currentWatchTargets: string[] = [];
   let isShuttingDown = false;
 
   // Function to update the watched file list
@@ -33,42 +62,45 @@ export async function watchCommand(
 
     // turn that into a distinct list.
     const distinctPaths = Array.from(new Set(dependencyList.map((dep) => dep.path))).sort();
+    const additionalWatchGlobs = project.resolvedCore.manifest.project.additionalWatchGlobs || [];
 
-    const newWatchPaths = [
-      project.resolvedCore.manifestPath, // Watch the manifest file itself
-      ...distinctPaths, // Watch all dependencies
-    ];
+    const newWatchTargets = buildWatchTargets(
+      project.resolvedCore.manifestPath,
+      distinctPaths,
+      project.resolvedCore.projectDir,
+      additionalWatchGlobs,
+    );
 
     // Check if watch list has changed
-    const pathsChanged =
-      newWatchPaths.length !== currentWatchPaths.length ||
-      newWatchPaths.some((path, index) => path !== currentWatchPaths[index]);
+    const targetsChanged =
+      newWatchTargets.length !== currentWatchTargets.length ||
+      newWatchTargets.some((target, index) => target !== currentWatchTargets[index]);
 
-    if (pathsChanged) {
-      const addedPaths = newWatchPaths.filter((path) => !currentWatchPaths.includes(path));
-      const removedPaths = currentWatchPaths.filter((path) => !newWatchPaths.includes(path));
+    if (targetsChanged) {
+      const addedTargets = newWatchTargets.filter((target) => !currentWatchTargets.includes(target));
+      const removedTargets = currentWatchTargets.filter((target) => !newWatchTargets.includes(target));
 
-      if (addedPaths.length > 0) {
-        cons.info(`\nAdding ${addedPaths.length} new file(s) to watch list:`);
-        for (const path of addedPaths) {
-          cons.dim(`  + ${path}`);
+      if (addedTargets.length > 0) {
+        cons.info(`\nAdding ${addedTargets.length} new watch target(s):`);
+        for (const target of addedTargets) {
+          cons.dim(`  + ${target}`);
         }
         if (watcher) {
-          watcher.add(addedPaths);
+          watcher.add(addedTargets);
         }
       }
 
-      if (removedPaths.length > 0) {
-        cons.info(`\nRemoving ${removedPaths.length} file(s) from watch list:`);
-        for (const path of removedPaths) {
-          cons.dim(`  - ${path}`);
+      if (removedTargets.length > 0) {
+        cons.info(`\nRemoving ${removedTargets.length} watch target(s):`);
+        for (const target of removedTargets) {
+          cons.dim(`  - ${target}`);
         }
         if (watcher) {
-          watcher.unwatch(removedPaths);
+          watcher.unwatch(removedTargets);
         }
       }
 
-      currentWatchPaths = newWatchPaths;
+      currentWatchTargets = newWatchTargets;
     }
   };
 
@@ -145,13 +177,13 @@ export async function watchCommand(
   // Get all dependencies to watch
   await updateWatchList();
 
-  cons.info(`\nWatching ${currentWatchPaths.length} file(s) for changes...`);
-  for (const path of currentWatchPaths) {
-    cons.dim(`  ${path}`);
+  cons.info(`\nWatching ${currentWatchTargets.length} target(s) for changes...`);
+  for (const target of currentWatchTargets) {
+    cons.dim(`  ${target}`);
   }
 
   // Set up file watcher with debouncing
-  watcher = chokidar.watch(currentWatchPaths, {
+  watcher = chokidar.watch(currentWatchTargets, {
     ignoreInitial: true,
     awaitWriteFinish: {
       stabilityThreshold: 100,
@@ -159,9 +191,21 @@ export async function watchCommand(
     },
   });
 
-  watcher.on("change", (path: string) => {
-    cons.info(`\nFile changed: ${path}`);
+  const onWatchEvent = (event: string, watchTarget: string) => {
+    cons.info(`\nWatch target ${event}: ${watchTarget}`);
     buildAndLaunch();
+  };
+
+  watcher.on("change", (watchTarget: string) => {
+    onWatchEvent("changed", watchTarget);
+  });
+
+  watcher.on("add", (watchTarget: string) => {
+    onWatchEvent("added", watchTarget);
+  });
+
+  watcher.on("unlink", (watchTarget: string) => {
+    onWatchEvent("removed", watchTarget);
   });
 
   watcher.on("error", (error: Error) => {
