@@ -1,4 +1,15 @@
-## v1.0.14 (2026-4-23)
+## v1.0.16 (2026-4-28)
+
+- Allow macros to be empty / NOP support (#41)
+- More reliable dependency watching/tracking (#36)
+- `additionalWatchGlobs` support (#36)
+- Can now emit metadata comments (#39)
+- Updated tic80.exe with support (#42)
+  - uncapped FPS, host wall clock timings
+  - performance profiling sample based capture for flame graphs
+  - improved data exchange
+
+## v1.0.15 (2026-4-23)
 
 - Updated tic80.exe with fixed SCN+BDR timing measurements (#35)
 - Imported code is concatenated / banked properly (#17)
