@@ -38,30 +38,16 @@ function formatSessionSummary(session: DiscoveredTic80Session, index?: number): 
     return `${prefix}${session.host}:${session.port} pid=${session.pid} started=${started} version=${session.remotingVersion} source=${session.source}`;
 }
 
-function createSocketLineReader(socket: net.Socket): { readNextLine: () => Promise<string | null>; close: () => void } {
+function createSocketLinePump(socket: net.Socket, onLine: (line: string) => void, onClosed: () => void): { close: () => void } {
     let buffer = "";
     let closed = false;
-    const pending: Array<(value: string | null) => void> = [];
-    const queued: string[] = [];
-
-    const flushLine = (value: string) => {
-        if (pending.length > 0) {
-            const resolver = pending.shift()!;
-            resolver(value);
-            return;
-        }
-        queued.push(value);
-    };
 
     const resolveClosed = () => {
         if (closed) {
             return;
         }
         closed = true;
-        while (pending.length > 0) {
-            const resolver = pending.shift()!;
-            resolver(null);
-        }
+        onClosed();
     };
 
     const onData = (chunk: Buffer) => {
@@ -70,14 +56,14 @@ function createSocketLineReader(socket: net.Socket): { readNextLine: () => Promi
         while (lineBreak !== -1) {
             const line = buffer.slice(0, lineBreak).replace(/\r$/, "");
             buffer = buffer.slice(lineBreak + 1);
-            flushLine(line);
+            onLine(line);
             lineBreak = buffer.indexOf("\n");
         }
     };
 
     const onClose = () => {
         if (buffer.length > 0) {
-            flushLine(buffer);
+            onLine(buffer);
             buffer = "";
         }
         resolveClosed();
@@ -88,17 +74,6 @@ function createSocketLineReader(socket: net.Socket): { readNextLine: () => Promi
     socket.once("error", onClose);
 
     return {
-        readNextLine: async () => {
-            if (queued.length > 0) {
-                return queued.shift()!;
-            }
-            if (closed) {
-                return null;
-            }
-            return new Promise<string | null>((resolve) => {
-                pending.push(resolve);
-            });
-        },
         close: () => {
             socket.removeListener("data", onData);
             socket.removeListener("close", onClose);
@@ -236,7 +211,6 @@ function connectSocket(host: string, port: number, timeoutMs: number): Promise<n
 export async function runTerminalClient(target: TerminalTarget): Promise<void> {
     const { host, port } = target;
     const socket = await connectSocket(host, port, 5000);
-    const socketReader = createSocketLineReader(socket);
 
     cons.info(`Connected to ${host}:${port}. Type lines like: 1 ping  (Ctrl+C to quit)`);
 
@@ -245,6 +219,18 @@ export async function runTerminalClient(target: TerminalTarget): Promise<void> {
         output: process.stdout,
         terminal: true,
     });
+
+    let disconnected = false;
+    const socketPump = createSocketLinePump(
+        socket,
+        (line) => {
+            process.stdout.write(`${line}\n`);
+        },
+        () => {
+            disconnected = true;
+            rl.close();
+        },
+    );
 
     rl.on("SIGINT", () => {
         rl.close();
@@ -260,16 +246,14 @@ export async function runTerminalClient(target: TerminalTarget): Promise<void> {
                 continue;
             }
 
-            socket.write(`${line}\n`, "ascii");
-            const response = await socketReader.readNextLine();
-            if (response === null) {
+            if (disconnected) {
                 throw new Error("Disconnected from TIC-80 remoting server");
             }
-            process.stdout.write(`${response}\n`);
+            socket.write(`${line}\n`, "ascii");
         }
     } finally {
         rl.close();
-        socketReader.close();
+        socketPump.close();
         if (!socket.destroyed) {
             socket.end();
             socket.destroy();

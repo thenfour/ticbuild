@@ -1,3 +1,11 @@
+## v1.0.17 (2026-4-30)
+
+- support for client -> server messages
+- New tic80 remoting updates
+  - [Protocol now understands decimal numbers](https://github.com/thenfour/TIC-80-ticbuild/issues/15)
+  - [Server -> client event pushing and subscription](https://github.com/thenfour/TIC-80-ticbuild/issues/14)
+  - [`status` command support](https://github.com/thenfour/TIC-80-ticbuild/issues/13)
+
 ## v1.0.16 (2026-4-28)
 
 - Allow macros to be empty / NOP support (#41)

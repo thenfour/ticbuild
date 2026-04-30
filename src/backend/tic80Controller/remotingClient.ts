@@ -1,5 +1,6 @@
 import net from "node:net";
 import * as cons from "../../utils/console";
+import { parseRemotingLine } from "./remotingProtocol";
 
 export interface RemotingResponse {
   id: number;
@@ -7,10 +8,17 @@ export interface RemotingResponse {
   data: string;
 }
 
+export interface RemotingEvent {
+  id: number;
+  eventType: string;
+  data: string;
+}
+
 export class Tic80RemotingClient {
   private socket: net.Socket | undefined;
   private buffer = "";
   private nextId = 1;
+  private eventHandlers = new Set<(event: RemotingEvent) => void>();
   private pending = new Map<
     number,
     { resolve: (value: RemotingResponse) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout }
@@ -24,6 +32,13 @@ export class Tic80RemotingClient {
 
   isConnected(): boolean {
     return !!this.socket && !this.socket.destroyed;
+  }
+
+  onEvent(handler: (event: RemotingEvent) => void): () => void {
+    this.eventHandlers.add(handler);
+    return () => {
+      this.eventHandlers.delete(handler);
+    };
   }
 
   async connect(timeoutMs: number = 5000): Promise<void> {
@@ -122,26 +137,35 @@ export class Tic80RemotingClient {
     if (this.verbose) {
       cons.dim(`[remoting] << ${line}`);
     }
-    if (line.startsWith("@")) {
-      cons.dim(`[remoting] event: ${line}`);
-      return;
-    }
 
-    const match = /^([^\s]+)\s+([^\s]+)\s*(.*)$/.exec(line);
-    if (!match) {
+    const parsed = parseRemotingLine(line);
+    if (!parsed) {
       cons.warning(`[remoting] Unparseable response: ${line}`);
       return;
     }
 
-    const idValue = match[1];
-    const status = match[2].toUpperCase() as "OK" | "ERR";
-    const data = match[3] ?? "";
-    const id = Number(idValue);
-    if (!Number.isFinite(id)) {
-      cons.warning(`[remoting] Non-numeric response id: ${line}`);
+    if (parsed.kind === "event") {
+      const event: RemotingEvent = {
+        id: parsed.id,
+        eventType: parsed.eventType,
+        data: parsed.data,
+      };
+      if (this.verbose) {
+        cons.dim(`[remoting] event ${event.id} ${event.eventType}${event.data ? ` ${event.data}` : ""}`);
+      }
+      for (const handler of this.eventHandlers) {
+        try {
+          handler(event);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          cons.warning(`[remoting] Event handler failed: ${message}`);
+        }
+      }
       return;
     }
 
+    const { id, data } = parsed;
+    const status = parsed.status as "OK" | "ERR";
     const pending = this.pending.get(id);
     if (!pending) {
       cons.warning(`[remoting] No pending request for id ${id}: ${line}`);
