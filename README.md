@@ -392,7 +392,9 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
         "code": { // optional code assemblyl options
           // if true, emits the globals defined in assembly.lua.globals.
           "emitGlobals": true,
-        }
+          // when applicable (currently only CODE_COMPRESSED), high-level compression options.
+          "compressionMode": "default", // "default" (default zlib) | "zlib-max" (max zlib settings)
+        },
       },
       {
         // Note: Binary resources can be output to any chunk type. they just get placed there
@@ -702,10 +704,30 @@ To emit compressed code, specify your code block output to output to the
   "assembly": {
     "blocks": [
       {
-      "chunks": [
-        "CODE_COMPRESSED"
-      ],
+        "chunks": [
+          "CODE_COMPRESSED"
+        ],
         "asset": "maincode"
+      }
+    ]
+  }
+}
+```
+
+For maximum built-in zlib compression, set the block's code compression mode:
+
+```json
+{
+  "assembly": {
+    "blocks": [
+      {
+        "chunks": [
+          "CODE_COMPRESSED"
+        ],
+        "asset": "maincode",
+        "code": {
+          "compressionMode": "zlib-max"
+        }
       }
     ]
   }

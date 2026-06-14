@@ -61,8 +61,11 @@ export interface AssemblyBlock {
   code?: CodeAssemblyOptions;
 }
 
+export type LuaCompressionMode = "default" | "zlib-max";
+
 export type CodeAssemblyOptions = {
   emitGlobals?: boolean;
+  compressionMode?: LuaCompressionMode;
 };
 
 export type PreprocessorValue = string | number | boolean;

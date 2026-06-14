@@ -1,3 +1,4 @@
+import { inflateSync } from "node:zlib";
 import { LuaCodeResourceView } from "./LuaCodeImporter";
 import { TicbuildProjectCore } from "../projectCore";
 import { Manifest } from "../manifestTypes";
@@ -136,5 +137,56 @@ describe("LuaCodeResourceView emitGlobals", () => {
     const view = new LuaCodeResourceView("print('hello')", "print('hello')");
 
     expect(() => view.getDataForChunk(project, "CODE")).toThrow("Project metadata desc must be a single line");
+  });
+});
+
+describe("LuaCodeResourceView compressionMode", () => {
+  function makeLuaProject(): TicbuildProjectCore {
+    return makeProject({
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      imports: [],
+      assembly: {
+        lua: {
+          minify: false,
+        },
+        blocks: [],
+      },
+    });
+  }
+
+  function makeCompressibleLuaSource(): string {
+    let source = "";
+    for (let i = 0; i < 2000; i += 1) {
+      source += `local variable${i % 40}=function() return ${i % 13} end\n`;
+    }
+    return source;
+  }
+
+  it("should emit valid zlib streams for default and zlib-max modes", () => {
+    const project = makeLuaProject();
+    const source = makeCompressibleLuaSource();
+    const view = new LuaCodeResourceView(source, source);
+
+    const defaultBytes = view.getDataForChunk(project, "CODE_COMPRESSED", { compressionMode: "default" });
+    const zlibMaxBytes = view.getDataForChunk(project, "CODE_COMPRESSED", { compressionMode: "zlib-max" });
+
+    expect(new TextDecoder().decode(inflateSync(defaultBytes))).toBe(source);
+    expect(new TextDecoder().decode(inflateSync(zlibMaxBytes))).toBe(source);
+    expect(zlibMaxBytes.length).toBeLessThan(defaultBytes.length);
+  });
+
+  it("should reject unsupported compression modes", () => {
+    const project = makeLuaProject();
+    const view = new LuaCodeResourceView("print('hello')", "print('hello')");
+
+    expect(() =>
+      view.getDataForChunk(project, "CODE_COMPRESSED", { compressionMode: "zopfli" } as any),
+    ).toThrow("Unsupported Lua compression mode: zopfli");
   });
 });

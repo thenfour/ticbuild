@@ -1,7 +1,7 @@
 // loads a Lua code file.
 // sub assets are not supported.
 
-import { deflateSync } from "node:zlib";
+import { constants as zlibConstants, deflateSync } from "node:zlib";
 import { readTextFileAsync } from "../../utils/fileSystem";
 import { toLuaStringLiteral } from "../../utils/lua/lua_fundamentals";
 import { OptimizationRuleOptions, processLua } from "../../utils/lua/lua_processor";
@@ -9,7 +9,7 @@ import { Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
 import { CoalesceBool } from "../../utils/utils";
 import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
 import { preprocessLuaCode, LuaPreprocessResult } from "../luaPreprocessor";
-import { ImportDefinition, LuaMinificationConfig } from "../manifestTypes";
+import { CodeAssemblyOptions, ImportDefinition, LuaCompressionMode, LuaMinificationConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 
 const releaseOptions: OptimizationRuleOptions = {
@@ -49,6 +49,8 @@ export class LuaCodeResourceView extends ResourceViewBase {
   preprocessedSource: string;
   private cachedMinifiedSource: string | null = null;
   private cachedCompressedBytes: Uint8Array | null = null;
+  private cachedCompressedSource: string | null = null;
+  private cachedCompressionMode: LuaCompressionMode | null = null;
   private cachedMinifyEnabled: boolean | null = null;
 
   constructor(inputSource: string, preprocessedSource: string) {
@@ -59,7 +61,7 @@ export class LuaCodeResourceView extends ResourceViewBase {
   getDataForChunk(
     project: TicbuildProjectCore,
     chunkType: Tic80CartChunkTypeKey,
-    options?: { emitGlobals?: boolean },
+    options?: CodeAssemblyOptions,
   ): Uint8Array {
     // TODO: validate ASCII. no high-bit chars.
     // convert to Uint8Array (ASCII)
@@ -71,8 +73,9 @@ export class LuaCodeResourceView extends ResourceViewBase {
     const minifiedSource = this.getMinifiedSource(project, minifyEnabled, emitGlobals);
 
     if (chunkType === "CODE_COMPRESSED") {
-      const compressed = this.getCompressedBytes(minifiedSource);
-      if (compressed.length > 64 * 1024) {
+      const compressionMode = normalizeCompressionMode(options?.compressionMode);
+      const compressed = this.getCompressedBytes(minifiedSource, compressionMode);
+      if (compressed.length >= 64 * 1024) {
         throw new Error(`Compressed code exceeds 64kb limit: ${compressed.length} bytes`);
       }
       return new Uint8Array(compressed);
@@ -92,7 +95,7 @@ export class LuaCodeResourceView extends ResourceViewBase {
   getArtifacts(project: TicbuildProjectCore): LuaCodeArtifacts {
     const minifyEnabled = CoalesceBool(project.manifest.assembly.lua?.minify, true);
     const minifiedSource = this.getMinifiedSource(project, minifyEnabled, true);
-    const compressedBytes = this.getCompressedBytes(minifiedSource);
+    const compressedBytes = this.getCompressedBytes(minifiedSource, "default");
     return {
       inputSource: this.inputSource,
       preprocessedSource: this.preprocessedSource,
@@ -128,18 +131,34 @@ export class LuaCodeResourceView extends ResourceViewBase {
       this.cachedMinifyEnabled = minifyEnabled;
       this.cachedMinifiedSource = code;
       this.cachedCompressedBytes = null;
+      this.cachedCompressedSource = null;
+      this.cachedCompressionMode = null;
     }
     return code;
   }
 
-  private getCompressedBytes(minifiedSource: string): Uint8Array {
-    if (this.cachedCompressedBytes) {
+  private getCompressedBytes(minifiedSource: string, compressionMode: LuaCompressionMode): Uint8Array {
+    if (
+      this.cachedCompressedBytes &&
+      this.cachedCompressedSource === minifiedSource &&
+      this.cachedCompressionMode === compressionMode
+    ) {
       return this.cachedCompressedBytes;
     }
     const encoder = new TextEncoder();
     const rawBytes = encoder.encode(minifiedSource);
-    const compressed = deflateSync(Buffer.from(rawBytes));
+    const compressed =
+      compressionMode === "zlib-max"
+        ? deflateSync(Buffer.from(rawBytes), {
+            level: zlibConstants.Z_BEST_COMPRESSION,
+            memLevel: zlibConstants.Z_MAX_MEMLEVEL,
+            windowBits: zlibConstants.Z_MAX_WINDOWBITS,
+            strategy: zlibConstants.Z_DEFAULT_STRATEGY,
+          })
+        : deflateSync(Buffer.from(rawBytes));
     this.cachedCompressedBytes = new Uint8Array(compressed);
+    this.cachedCompressedSource = minifiedSource;
+    this.cachedCompressionMode = compressionMode;
     return this.cachedCompressedBytes;
   }
 
@@ -199,6 +218,16 @@ function buildMinificationOptions(overrides?: LuaMinificationConfig): Optimizati
   }
   const options: OptimizationRuleOptions = { ...releaseOptions, ...overrides };
   return options;
+}
+
+function normalizeCompressionMode(mode: LuaCompressionMode | undefined): LuaCompressionMode {
+  if (!mode) {
+    return "default";
+  }
+  if (mode === "default" || mode === "zlib-max") {
+    return mode;
+  }
+  throw new Error(`Unsupported Lua compression mode: ${mode}`);
 }
 
 export class LuaCodeResource extends ImportedResourceBase {

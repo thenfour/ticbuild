@@ -347,6 +347,14 @@
                   "emitGlobals": {
                     "type": "boolean",
                     "description": "Whether to emit assembly.lua.globals for this code block"
+                  },
+                  "compressionMode": {
+                    "type": "string",
+                    "enum": [
+                      "default",
+                      "zlib-max"
+                    ],
+                    "description": "Compression mode for CODE_COMPRESSED chunks emitted by this code block"
                   }
                 }
               }
