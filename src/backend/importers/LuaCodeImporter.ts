@@ -2,12 +2,13 @@
 // sub assets are not supported.
 
 import { constants as zlibConstants, deflateSync } from "node:zlib";
+import { zlibAsync as zopfliZlibAsync, ZopfliOptions } from "@gfx/zopfli";
 import { readTextFileAsync } from "../../utils/fileSystem";
 import { toLuaStringLiteral } from "../../utils/lua/lua_fundamentals";
 import { OptimizationRuleOptions, processLua } from "../../utils/lua/lua_processor";
 import { Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
 import { CoalesceBool } from "../../utils/utils";
-import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
+import { ChunkDataResult, ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
 import { preprocessLuaCode, LuaPreprocessResult } from "../luaPreprocessor";
 import { CodeAssemblyOptions, ImportDefinition, LuaCompressionMode, LuaMinificationConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
@@ -30,6 +31,14 @@ const releaseOptions: OptimizationRuleOptions = {
   tableEntryKeysToRename: [],
 } as const;
 
+const zopfliMaxOptions: ZopfliOptions = {
+  verbose: false,
+  verbose_more: false,
+  numiterations: 15,
+  blocksplitting: true,
+  blocksplittingmax: 15,
+} as const;
+
 export type LuaCodeArtifacts = {
   inputSource: string;
   preprocessedSource: string;
@@ -48,7 +57,7 @@ export class LuaCodeResourceView extends ResourceViewBase {
   inputSource: string;
   preprocessedSource: string;
   private cachedMinifiedSource: string | null = null;
-  private cachedCompressedBytes: Uint8Array | null = null;
+  private cachedCompressedBytes: ChunkDataResult | null = null;
   private cachedCompressedSource: string | null = null;
   private cachedCompressionMode: LuaCompressionMode | null = null;
   private cachedMinifyEnabled: boolean | null = null;
@@ -62,7 +71,7 @@ export class LuaCodeResourceView extends ResourceViewBase {
     project: TicbuildProjectCore,
     chunkType: Tic80CartChunkTypeKey,
     options?: CodeAssemblyOptions,
-  ): Uint8Array {
+  ): ChunkDataResult {
     // TODO: validate ASCII. no high-bit chars.
     // convert to Uint8Array (ASCII)
     if (chunkType !== "CODE" && chunkType !== "CODE_COMPRESSED") {
@@ -75,10 +84,10 @@ export class LuaCodeResourceView extends ResourceViewBase {
     if (chunkType === "CODE_COMPRESSED") {
       const compressionMode = normalizeCompressionMode(options?.compressionMode);
       const compressed = this.getCompressedBytes(minifiedSource, compressionMode);
-      if (compressed.length >= 64 * 1024) {
-        throw new Error(`Compressed code exceeds 64kb limit: ${compressed.length} bytes`);
+      if (compressed instanceof Promise) {
+        return compressed.then((bytes) => validateCompressedCodeBytes(bytes));
       }
-      return new Uint8Array(compressed);
+      return validateCompressedCodeBytes(compressed);
     }
 
     const encoder = new TextEncoder();
@@ -137,7 +146,10 @@ export class LuaCodeResourceView extends ResourceViewBase {
     return code;
   }
 
-  private getCompressedBytes(minifiedSource: string, compressionMode: LuaCompressionMode): Uint8Array {
+  private getCompressedBytes(minifiedSource: string, compressionMode: "default" | "zlib-max"): Uint8Array;
+  private getCompressedBytes(minifiedSource: string, compressionMode: "zopfli"): Promise<Uint8Array>;
+  private getCompressedBytes(minifiedSource: string, compressionMode: LuaCompressionMode): ChunkDataResult;
+  private getCompressedBytes(minifiedSource: string, compressionMode: LuaCompressionMode): ChunkDataResult {
     if (
       this.cachedCompressedBytes &&
       this.cachedCompressedSource === minifiedSource &&
@@ -148,15 +160,19 @@ export class LuaCodeResourceView extends ResourceViewBase {
     const encoder = new TextEncoder();
     const rawBytes = encoder.encode(minifiedSource);
     const compressed =
-      compressionMode === "zlib-max"
-        ? deflateSync(Buffer.from(rawBytes), {
-            level: zlibConstants.Z_BEST_COMPRESSION,
-            memLevel: zlibConstants.Z_MAX_MEMLEVEL,
-            windowBits: zlibConstants.Z_MAX_WINDOWBITS,
-            strategy: zlibConstants.Z_DEFAULT_STRATEGY,
-          })
-        : deflateSync(Buffer.from(rawBytes));
-    this.cachedCompressedBytes = new Uint8Array(compressed);
+      compressionMode === "zopfli"
+        ? zopfliZlibAsync(rawBytes, zopfliMaxOptions).then((bytes) => new Uint8Array(bytes))
+        : new Uint8Array(
+            compressionMode === "zlib-max"
+              ? deflateSync(Buffer.from(rawBytes), {
+                  level: zlibConstants.Z_BEST_COMPRESSION,
+                  memLevel: zlibConstants.Z_MAX_MEMLEVEL,
+                  windowBits: zlibConstants.Z_MAX_WINDOWBITS,
+                  strategy: zlibConstants.Z_DEFAULT_STRATEGY,
+                })
+              : deflateSync(Buffer.from(rawBytes)),
+          );
+    this.cachedCompressedBytes = compressed;
     this.cachedCompressedSource = minifiedSource;
     this.cachedCompressionMode = compressionMode;
     return this.cachedCompressedBytes;
@@ -224,10 +240,17 @@ function normalizeCompressionMode(mode: LuaCompressionMode | undefined): LuaComp
   if (!mode) {
     return "default";
   }
-  if (mode === "default" || mode === "zlib-max") {
+  if (mode === "default" || mode === "zlib-max" || mode === "zopfli") {
     return mode;
   }
   throw new Error(`Unsupported Lua compression mode: ${mode}`);
+}
+
+function validateCompressedCodeBytes(compressed: Uint8Array): Uint8Array {
+  if (compressed.length >= 64 * 1024) {
+    throw new Error(`Compressed code exceeds 64kb limit: ${compressed.length} bytes`);
+  }
+  return new Uint8Array(compressed);
 }
 
 export class LuaCodeResource extends ImportedResourceBase {

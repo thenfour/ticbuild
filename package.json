@@ -47,6 +47,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@gfx/zopfli": "^1.0.15",
     "@types/chokidar": "^2.1.7",
     "@types/luaparse": "^0.2.13",
     "ajv": "^8.12.0",

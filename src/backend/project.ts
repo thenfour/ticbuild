@@ -158,7 +158,7 @@ export class TicbuildProject {
     const requestedChunks = block.chunks || view.getParallelChunkTypes();
     const bank = block.bank ?? 0;
     for (const chunkType of requestedChunks) {
-      const data = view.getDataForChunk(this.resolvedCore, chunkType, block.code);
+      const data = await view.getDataForChunk(this.resolvedCore, chunkType, block.code);
       if (chunkType === "CODE") {
         const codeInfo = kTic80CartChunkTypes.byKey.CODE;
         const maxChunkSize = codeInfo.sizePerBank;

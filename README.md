@@ -393,7 +393,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
           // if true, emits the globals defined in assembly.lua.globals.
           "emitGlobals": true,
           // when applicable (currently only CODE_COMPRESSED), high-level compression options.
-          "compressionMode": "default", // "default" (default zlib) | "zlib-max" (max zlib settings)
+          "compressionMode": "default", // "default" | "zlib-max" | "zopfli"
         },
       },
       {
@@ -714,7 +714,9 @@ To emit compressed code, specify your code block output to output to the
 }
 ```
 
-For maximum built-in zlib compression, set the block's code compression mode:
+For stronger compression, set the block's code compression mode. `zlib-max` uses
+Node's maximum zlib settings. `zopfli` is slower, but usually emits the smallest
+zlib-compatible DEFLATE stream.
 
 ```json
 {
@@ -726,7 +728,7 @@ For maximum built-in zlib compression, set the block's code compression mode:
         ],
         "asset": "maincode",
         "code": {
-          "compressionMode": "zlib-max"
+          "compressionMode": "zopfli"
         }
       }
     ]

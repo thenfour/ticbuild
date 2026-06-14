@@ -9,13 +9,15 @@ export type ExternalDependency = {
   reason: string;
 };
 
+export type ChunkDataResult = Uint8Array | Promise<Uint8Array>;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 export abstract class ResourceViewBase {
   abstract getDataForChunk(
     project: TicbuildProjectCore,
     chunkType: Tic80CartChunkTypeKey,
     options?: CodeAssemblyOptions,
-  ): Uint8Array;
+  ): ChunkDataResult;
   abstract getSupportedChunkTypes(): Tic80CartChunkTypeKey[];
   abstract getParallelChunkTypes(): Tic80CartChunkTypeKey[];
 }

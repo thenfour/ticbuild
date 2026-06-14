@@ -352,7 +352,8 @@
                     "type": "string",
                     "enum": [
                       "default",
-                      "zlib-max"
+                      "zlib-max",
+                      "zopfli"
                     ],
                     "description": "Compression mode for CODE_COMPRESSED chunks emitted by this code block"
                   }

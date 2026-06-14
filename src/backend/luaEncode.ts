@@ -157,7 +157,7 @@ export async function resolveImportBytes(
             );
         }
 
-        return view.getDataForChunk(project, selectedChunk);
+        return await view.getDataForChunk(project, selectedChunk);
     }
 
     if (importDef.kind === kImportKind.key.binary) {
