@@ -264,6 +264,9 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "renameSpecifiedGlobalSymbols": {
+                  "type": "boolean"
                 }
               },
               "description": "Minification options (OptimizationRuleOptions)"

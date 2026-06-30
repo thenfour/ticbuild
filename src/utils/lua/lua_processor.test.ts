@@ -531,6 +531,24 @@ return Demo_AssignedLongName()
     expect(output).not.toContain("Demo_AssignedLongName");
   });
 
+  it("should not rename allowed globals when renameSpecifiedGlobalSymbols is disabled", () => {
+    const input = `
+function Demo_LongName()
+  return 1
+end
+return Demo_LongName()
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      renameSpecifiedGlobalSymbols: false,
+      globalSymbolsToRename: ["Demo_LongName"],
+    }));
+
+    expect(output).toContain("function Demo_LongName()");
+    expect(output).toContain("return Demo_LongName()");
+    expect(output).not.toContain("function a()");
+  });
+
   it("should respect local and parameter shadowing", () => {
     const input = `
 function Demo_LongName()

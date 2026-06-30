@@ -174,6 +174,7 @@ removeUnusedLocals
 removeUnusedFunctions
 renameTableFields
 packLocalDeclarations
+renameSpecifiedGlobalSymbols
 ```
 
 These overrides are applied on top of the manifest’s
@@ -634,6 +635,33 @@ local y = CLAMP(x + blah(y),
 
 -- parameterless syntax is possible
 --#macro PROJECT_NAME => __EXPAND("the project name is: $(project.name)")
+
+-- Minifier: renaming globals
+-- Globals are not renamed by default. Renaming (minifying) them requires the
+-- renameSpecifiedGlobalSymbols minification option to be set (on by default in
+-- release), and you need to specify individually which symbols are allowed to be
+-- renamed. This is done via the --#minify allow_rename directive.
+-- `--#minify allow_rename` will mark the following global symbol name as
+-- renameable.
+
+-- e.g.,
+
+--#minify allow_rename
+-- a regular comment can sit between the annotation and declaration
+function Demo_LongName() end
+
+local y = Demo_LongName() -- call it
+
+--#minify allow_rename
+Demo_AssignedLongName = function() end
+
+local x = Demo_AssignedLongName() -- call it
+
+-- both of these examples are eligible for minification and will end up like,
+function a() end
+local y = a()
+function b() end
+local x = b()
 
 ```
 

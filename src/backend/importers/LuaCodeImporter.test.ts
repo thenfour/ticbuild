@@ -144,6 +144,38 @@ describe("LuaCodeResourceView emitGlobals", () => {
     expect(output).not.toContain("Demo_LongName");
   });
 
+  it("should respect renameSpecifiedGlobalSymbols=false for preprocessor-collected globals", async () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      imports: [],
+      assembly: {
+        lua: {
+          minify: true,
+          minification: {
+            renameSpecifiedGlobalSymbols: false,
+          },
+        },
+        blocks: [],
+      },
+    };
+
+    const project = makeProject(manifest);
+    const source = "function Demo_LongName() return 1 end return Demo_LongName()";
+    const view = new LuaCodeResourceView(source, source, ["Demo_LongName"]);
+
+    const output = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
+
+    expect(output).toContain("function Demo_LongName()");
+    expect(output).toContain("return Demo_LongName()");
+    expect(output).not.toContain("function a()");
+  });
+
   it("should reject multi-line metadata values", () => {
     const manifest: Manifest = {
       project: {

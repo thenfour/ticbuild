@@ -256,8 +256,9 @@ async function processSource(
         if (!isActive()) {
           break;
         }
-        if (rest.trim() !== "allow_rename") {
-          throw new Error(formatError(filePath, lineNumber, `Unsupported --#minify option: ${rest.trim()}`));
+        const minifyOption = stripTrailingLineComment(rest).trim();
+        if (minifyOption !== "allow_rename") {
+          throw new Error(formatError(filePath, lineNumber, `Unsupported --#minify option: ${minifyOption}`));
         }
         if (pendingMinifyAllowRename) {
           throw new Error(formatError(
@@ -470,6 +471,10 @@ async function processSource(
 function isIgnorableMinifyTargetLine(line: string): boolean {
   const trimmed = line.trim();
   return trimmed.length === 0 || trimmed.startsWith("--");
+}
+
+function stripTrailingLineComment(text: string): string {
+  return text.replace(/\s*--.*$/, "");
 }
 
 function parseMinifyAllowRenameTarget(line: string): string | null {

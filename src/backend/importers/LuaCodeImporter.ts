@@ -30,6 +30,7 @@ const releaseOptions: OptimizationRuleOptions = {
   renameTableFields: false,
   tableEntryKeysToRename: [],
   globalSymbolsToRename: [],
+  renameSpecifiedGlobalSymbols: true,
 } as const;
 
 const zopfliMaxOptions: ZopfliOptions = {

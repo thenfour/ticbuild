@@ -55,6 +55,9 @@ export type OptimizationRuleOptions = {
   // externally referenced by TIC-80 or dynamic Lua code.
   globalSymbolsToRename?: string[];
 
+  // Applies globalSymbolsToRename when enabled.
+  renameSpecifiedGlobalSymbols?: boolean;
+
   // Merge consecutive local declarations into one using packing.
   // e.g.,
   // local a=1
@@ -1383,7 +1386,11 @@ export function processLua(code: string, ruleOptions: OptimizationRuleOptions): 
     ast = renameLocalVariablesInAST(ast);
   }
 
-  if (ruleOptions.globalSymbolsToRename && ruleOptions.globalSymbolsToRename.length > 0) {
+  if (
+    ruleOptions.renameSpecifiedGlobalSymbols !== false &&
+    ruleOptions.globalSymbolsToRename &&
+    ruleOptions.globalSymbolsToRename.length > 0
+  ) {
     ast = renameAllowedGlobalsInAST(ast, {
       namesToRename: ruleOptions.globalSymbolsToRename,
       namesToKeep: ruleOptions.functionNamesToKeep,
