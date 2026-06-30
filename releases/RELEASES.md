@@ -1,3 +1,11 @@
+## v1.0.18 (2026-6-30)
+
+- #44 better size build logging
+- #47 fixing minifier handling of `TableKeyString`
+- #46 support for global name minification
+- #48 don't emit compressed payload when not used in cart
+- #49 support for extended 16 code banks and multi-bank compressed code chunks
+
 ## v1.0.17 (2026-4-30)
 
 - support for client -> server messages
