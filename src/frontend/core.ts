@@ -1,13 +1,13 @@
 import { AssembleOutputResult, TicbuildProject } from "../backend/project";
 import { buildProjectSymbolIndex } from "../backend/symbolIndex";
-import { LuaCodeResource } from "../backend/importers/LuaCodeImporter";
+import { LuaCodeResource, LuaCodeSizeStats } from "../backend/importers/LuaCodeImporter";
 import { Tic80Resource } from "../backend/importers/tic80CartImporter";
-import { AssetReference } from "../backend/manifestTypes";
+import { AssetReference, CodeAssemblyOptions } from "../backend/manifestTypes";
 import * as cons from "../utils/console";
 import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
 import { canonicalizePath } from "../utils/fileSystem";
 import { formatBytes } from "../utils/utils";
-import { kTic80CartChunkTypes } from "../utils/tic80/tic80";
+import { kTic80CartChunkTypes, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { writeFileSync } from "node:fs";
 import * as path from "node:path";
@@ -75,17 +75,20 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
     }
 
     if (resource instanceof LuaCodeResource) {
-      const includeCompressed = luaResourceEmitsCompressedCode(project, identifier);
-      const stats = resource.getCodeSizeStats(project.resolvedCore, { includeCompressed });
+      const codeRequests = getLuaCodeAssemblyRequests(project, identifier);
+      const stats = resource.getCodeSizeStats(project.resolvedCore);
+      const compressedOutputs = await getLuaCompressedCodeOutputs(project, resource, codeRequests);
+      logLuaCodeSize(identifier, stats, codeRequests, compressedOutputs);
+
       importsLines.push(`  Code stats:`);
       importsLines.push(`    Input        : ${formatBytes(stats.inputBytes)}`);
       importsLines.push(`    Preprocessed : ${formatBytes(stats.preprocessedBytes)}`);
       importsLines.push(`    Minified     : ${formatBytes(stats.minifiedBytes)}`);
-      if (stats.compressedBytes !== null) {
-        importsLines.push(`    Compressed   : ${formatBytes(stats.compressedBytes)}`);
+      if (compressedOutputs.length > 0) {
+        importsLines.push(`    Compressed   : ${formatBytes(compressedOutputs[0].bytes.length)}`);
       }
 
-      const artifacts = resource.getCodeArtifacts(project.resolvedCore, { includeCompressed });
+      const artifacts = resource.getCodeArtifacts(project.resolvedCore);
       const preprocessedPath = project.resolvedCore.resolveObjPath(`${identifier}.01.preprocessed.lua`);
       const minifiedPath = project.resolvedCore.resolveObjPath(`${identifier}.02.minified.lua`);
 
@@ -94,9 +97,9 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
 
       importsLines.push(`    Wrote: ${preprocessedPath}`);
       importsLines.push(`    Wrote: ${minifiedPath}`);
-      if (artifacts.compressedBytes !== null) {
+      if (compressedOutputs.length > 0) {
         const compressedPath = project.resolvedCore.resolveObjPath(`${identifier}.03.compressed.bin`);
-        await writeBinaryFile(compressedPath, artifacts.compressedBytes);
+        await writeBinaryFile(compressedPath, compressedOutputs[0].bytes);
         importsLines.push(`    Wrote: ${compressedPath}`);
       }
     }
@@ -279,18 +282,118 @@ function warnDeprecatedChunks(assemblyOutput: AssembleOutputResult): void {
   }
 }
 
-function luaResourceEmitsCompressedCode(project: TicbuildProject, identifier: string): boolean {
+type LuaCodeAssemblyRequest = {
+  chunkType: Tic80CartChunkTypeKey;
+  codeOptions?: CodeAssemblyOptions;
+};
+
+type LuaCompressedCodeOutput = {
+  bytes: Uint8Array;
+  compressionMode: string;
+};
+
+function getLuaCodeAssemblyRequests(project: TicbuildProject, identifier: string): LuaCodeAssemblyRequest[] {
+  const requests: LuaCodeAssemblyRequest[] = [];
   for (const block of project.resolvedCore.manifest.assembly.blocks) {
     const assetRef = block.asset as AssetReference;
     if (assetRef.import !== identifier) {
       continue;
     }
     const requestedChunks = block.chunks || ["CODE"];
-    if (requestedChunks.includes("CODE_COMPRESSED")) {
-      return true;
+    for (const chunkType of requestedChunks) {
+      if (chunkType === "CODE" || chunkType === "CODE_COMPRESSED") {
+        requests.push({
+          chunkType,
+          codeOptions: block.code,
+        });
+      }
     }
   }
-  return false;
+  return requests;
+}
+
+async function getLuaCompressedCodeOutputs(
+  project: TicbuildProject,
+  resource: LuaCodeResource,
+  codeRequests: LuaCodeAssemblyRequest[],
+): Promise<LuaCompressedCodeOutput[]> {
+  const outputs: LuaCompressedCodeOutput[] = [];
+  const seenModes = new Set<string>();
+  for (const request of codeRequests) {
+    if (request.chunkType !== "CODE_COMPRESSED") {
+      continue;
+    }
+    const compressionMode = request.codeOptions?.compressionMode ?? "default";
+    if (seenModes.has(compressionMode)) {
+      continue;
+    }
+    seenModes.add(compressionMode);
+    const view = resource.getView(project.resolvedCore, ["CODE_COMPRESSED"]);
+    const bytes = await view.getDataForChunk(project.resolvedCore, "CODE_COMPRESSED", request.codeOptions);
+    outputs.push({ bytes, compressionMode });
+  }
+  return outputs;
+}
+
+function logLuaCodeSize(
+  identifier: string,
+  stats: LuaCodeSizeStats,
+  codeRequests: LuaCodeAssemblyRequest[],
+  compressedOutputs: LuaCompressedCodeOutput[],
+): void {
+  const lines = buildLuaCodeSizeLines(identifier, stats, codeRequests, compressedOutputs);
+  if (lines.length === 0) {
+    return;
+  }
+  cons.h1(lines[0]);
+  for (const line of lines.slice(1)) {
+    cons.info(line);
+  }
+}
+
+function buildLuaCodeSizeLines(
+  identifier: string,
+  stats: LuaCodeSizeStats,
+  codeRequests: LuaCodeAssemblyRequest[],
+  compressedOutputs: LuaCompressedCodeOutput[],
+): string[] {
+  if (codeRequests.length === 0) {
+    return [];
+  }
+
+  const codeInfo = kTic80CartChunkTypes.byKey.CODE;
+  const compressedInfo = kTic80CartChunkTypes.byKey.CODE_COMPRESSED;
+  const codeCapacity = codeInfo.sizePerBank * codeInfo.bankCount;
+  const codeBankCount = Math.max(1, Math.ceil(stats.minifiedBytes / codeInfo.sizePerBank));
+
+  const rows = [
+    {
+      label: "CODE",
+      size: stats.minifiedBytes,
+      capacity: codeCapacity,
+      note: `${codeBankCount > codeInfo.bankCount ? "requires" : "uses"} ${codeBankCount} ${
+        codeBankCount === 1 ? "bank" : "banks"
+      } / ${codeInfo.bankCount}`,
+    },
+    ...compressedOutputs.map((output) => ({
+      label: "CODE_COMPRESSED",
+      size: output.bytes.length,
+      capacity: compressedInfo.sizePerBank,
+      note: `${output.compressionMode} zlib output`,
+    })),
+  ];
+
+  const labelWidth = Math.max(...rows.map((row) => row.label.length));
+  const sizeWidth = Math.max(...rows.map((row) => formatBytes(row.size).length));
+  const capWidth = Math.max(...rows.map((row) => formatBytes(row.capacity).length));
+  const lines = [`Lua code size: ${identifier}`];
+  for (const row of rows) {
+    const label = row.label.padEnd(labelWidth, " ");
+    const size = formatBytes(row.size).padStart(sizeWidth, " ");
+    const capacity = formatBytes(row.capacity).padStart(capWidth, " ");
+    lines.push(`  ${label}  ${size} / ${capacity}  ${row.note}`);
+  }
+  return lines;
 }
 
 // warn if any assembly blocks specify explicit banks for CODE chunks.

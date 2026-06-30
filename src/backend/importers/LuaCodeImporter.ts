@@ -45,18 +45,12 @@ export type LuaCodeArtifacts = {
   inputSource: string;
   preprocessedSource: string;
   minifiedSource: string;
-  compressedBytes: Uint8Array | null;
 };
 
 export type LuaCodeSizeStats = {
   inputBytes: number;
   preprocessedBytes: number;
   minifiedBytes: number;
-  compressedBytes: number | null;
-};
-
-export type LuaCodeArtifactOptions = {
-  includeCompressed?: boolean;
 };
 
 export class LuaCodeResourceView extends ResourceViewBase {
@@ -109,26 +103,23 @@ export class LuaCodeResourceView extends ResourceViewBase {
     return ["CODE"];
   }
 
-  getArtifacts(project: TicbuildProjectCore, options?: LuaCodeArtifactOptions): LuaCodeArtifacts {
+  getArtifacts(project: TicbuildProjectCore): LuaCodeArtifacts {
     const minifyEnabled = CoalesceBool(project.manifest.assembly.lua?.minify, true);
     const minifiedSource = this.getMinifiedSource(project, minifyEnabled, true);
-    const compressedBytes = options?.includeCompressed ? this.getCompressedBytes(minifiedSource, "default") : null;
     return {
       inputSource: this.inputSource,
       preprocessedSource: this.preprocessedSource,
       minifiedSource,
-      compressedBytes,
     };
   }
 
-  getSizeStats(project: TicbuildProjectCore, options?: LuaCodeArtifactOptions): LuaCodeSizeStats {
-    const artifacts = this.getArtifacts(project, options);
+  getSizeStats(project: TicbuildProjectCore): LuaCodeSizeStats {
+    const artifacts = this.getArtifacts(project);
     const encoder = new TextEncoder();
     return {
       inputBytes: encoder.encode(artifacts.inputSource).length,
       preprocessedBytes: encoder.encode(artifacts.preprocessedSource).length,
       minifiedBytes: encoder.encode(artifacts.minifiedSource).length,
-      compressedBytes: artifacts.compressedBytes?.length ?? null,
     };
   }
 
@@ -299,12 +290,12 @@ export class LuaCodeResource extends ImportedResourceBase {
     console.log(`  Content preview: ${preview}`);
   }
 
-  getCodeArtifacts(project: TicbuildProjectCore, options?: LuaCodeArtifactOptions): LuaCodeArtifacts {
-    return this.view.getArtifacts(project, options);
+  getCodeArtifacts(project: TicbuildProjectCore): LuaCodeArtifacts {
+    return this.view.getArtifacts(project);
   }
 
-  getCodeSizeStats(project: TicbuildProjectCore, options?: LuaCodeArtifactOptions): LuaCodeSizeStats {
-    return this.view.getSizeStats(project, options);
+  getCodeSizeStats(project: TicbuildProjectCore): LuaCodeSizeStats {
+    return this.view.getSizeStats(project);
   }
 
   getView(project: TicbuildProjectCore, chunks?: Tic80CartChunkTypeKey[]) {
