@@ -230,7 +230,7 @@ function replaceExpression(node: luaparse.Expression, tracker: any): luaparse.Ex
       case "TableConstructorExpression":
          if (node.fields) {
             node.fields.forEach((field: luaparse.TableKey|luaparse.TableKeyString|luaparse.TableValue) => {
-               if (field.type === "TableKey" || field.type === "TableKeyString") {
+               if (field.type === "TableKey") {
                   if (field.key)
                      field.key = replaceExpression(field.key, tracker);
                }

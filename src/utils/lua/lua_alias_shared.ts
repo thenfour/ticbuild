@@ -346,7 +346,7 @@ export function runAliasPass(ast: luaparse.Chunk, strategy: AliasStrategy): luap
       case "TableConstructorExpression":
         if (node.fields) {
           node.fields.forEach((field: luaparse.TableKey | luaparse.TableKeyString | luaparse.TableValue) => {
-            if (field.type === "TableKey" || field.type === "TableKeyString") {
+            if (field.type === "TableKey") {
               if (field.key) countExpr(field.key, currentScope);
             }
             if (field.value) countExpr(field.value, currentScope);
