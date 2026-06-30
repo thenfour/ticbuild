@@ -18,6 +18,8 @@ type Tic80CartChunkTypeInfo = {
   deprecated: boolean;
 };
 
+export const kTic80ExtendedCodeBankCount = 16;
+
 // https://github.com/nesbox/TIC-80/wiki/.tic-File-Format
 export const kTic80CartChunkTypes = defineEnum({
   // 256 sprites/tiles, 2 pixels per byte.
@@ -145,4 +147,5 @@ export type Tic80CartChunk = {
 
 export type Tic80Cart = {
   chunks: Tic80CartChunk[];
+  allowExtendedCodeBanks?: boolean;
 };

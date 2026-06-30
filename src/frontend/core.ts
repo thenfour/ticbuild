@@ -7,7 +7,7 @@ import * as cons from "../utils/console";
 import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
 import { canonicalizePath } from "../utils/fileSystem";
 import { formatBytes } from "../utils/utils";
-import { kTic80CartChunkTypes, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
+import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { writeFileSync } from "node:fs";
 import * as path from "node:path";
@@ -137,6 +137,7 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
   const assembleDuration = Date.now() - assembleStartTime;
 
   warnDeprecatedChunks(assemblyOutput);
+  warnNonstandardCodeExtensions(assemblyOutput);
 
   const outDir = await project.resolvedCore.resolveBinPath();
   await ensureDir(outDir);
@@ -282,6 +283,21 @@ function warnDeprecatedChunks(assemblyOutput: AssembleOutputResult): void {
   }
 }
 
+function warnNonstandardCodeExtensions(assemblyOutput: AssembleOutputResult): void {
+  const nativeCodeBankCount = kTic80CartChunkTypes.byKey.CODE.bankCount;
+  const extendedCodeBank = assemblyOutput.chunks
+    .filter((chunk) => chunk.chunkType === "CODE" && chunk.bank >= nativeCodeBankCount)
+    .reduce((maxBank, chunk) => Math.max(maxBank, chunk.bank), -1);
+  if (extendedCodeBank < 0) {
+    return;
+  }
+  cons.warning(
+    `Non-standard TIC-80 extension used: CODE emits bank ${extendedCodeBank}. Stock TIC-80 supports CODE banks 0..${
+      nativeCodeBankCount - 1
+    }; this cart requires the private TIC-80 build.`,
+  );
+}
+
 type LuaCodeAssemblyRequest = {
   chunkType: Tic80CartChunkTypeKey;
   codeOptions?: CodeAssemblyOptions;
@@ -363,17 +379,27 @@ function buildLuaCodeSizeLines(
 
   const codeInfo = kTic80CartChunkTypes.byKey.CODE;
   const compressedInfo = kTic80CartChunkTypes.byKey.CODE_COMPRESSED;
-  const codeCapacity = codeInfo.sizePerBank * codeInfo.bankCount;
+  const extendedCodeBanks = codeRequests.some(
+    (request) => request.chunkType === "CODE" && request.codeOptions?.extendedCodeBanks === true,
+  );
+  const codeBankLimit = extendedCodeBanks ? kTic80ExtendedCodeBankCount : codeInfo.bankCount;
+  const codeCapacity = codeInfo.sizePerBank * codeBankLimit;
   const codeBankCount = Math.max(1, Math.ceil(stats.minifiedBytes / codeInfo.sizePerBank));
+  let codeBankNote = `${codeBankCount > codeBankLimit ? "requires" : "uses"} ${codeBankCount} ${
+    codeBankCount === 1 ? "bank" : "banks"
+  } / ${codeBankLimit}`;
+  if (!extendedCodeBanks && codeBankCount > codeInfo.bankCount && codeBankCount <= kTic80ExtendedCodeBankCount) {
+    codeBankNote += `; enable code.extendedCodeBanks for private TIC-80`;
+  } else if (extendedCodeBanks && codeBankCount > codeInfo.bankCount) {
+    codeBankNote += `; non-standard, stock TIC-80 max ${codeInfo.bankCount}`;
+  }
 
   const rows = [
     {
       label: "CODE",
       size: stats.minifiedBytes,
       capacity: codeCapacity,
-      note: `${codeBankCount > codeInfo.bankCount ? "requires" : "uses"} ${codeBankCount} ${
-        codeBankCount === 1 ? "bank" : "banks"
-      } / ${codeInfo.bankCount}`,
+      note: codeBankNote,
     },
     ...compressedOutputs.map((output) => ({
       label: "CODE_COMPRESSED",

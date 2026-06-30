@@ -66,6 +66,7 @@ export type LuaCompressionMode = "default" | "zlib-max" | "zopfli";
 export type CodeAssemblyOptions = {
   emitGlobals?: boolean;
   compressionMode?: LuaCompressionMode;
+  extendedCodeBanks?: boolean;
 };
 
 export type PreprocessorValue = string | number | boolean;

@@ -1,15 +1,30 @@
 import { assert } from "../errorHandling";
 import { trimTrailingZeros } from "../utils";
-import { kTic80CartChunkTypes, Tic80Cart, Tic80CartChunk, Tic80CartChunkTypeKey } from "./tic80";
+import {
+  kTic80CartChunkTypes,
+  kTic80ExtendedCodeBankCount,
+  Tic80Cart,
+  Tic80CartChunk,
+  Tic80CartChunkTypeKey,
+} from "./tic80";
 
 // each chunk consists of a 4-byte header, then chunk data.
 // offset   bits      description
 // -----------------------------------------
 // 0        BBBC CCCC B = bank number (0..7), C = chunk type (0..31)
 // 1..2     Sx16      S = size of chunk, 16-bit little-endian
-// 3        Ux1       U = unused / reserved padding
+// 3        Ux1       U = unused / reserved padding. Private extended CODE banks use this as bank bit 3.
 // 4..      ...       chunk data
-export function serializeChunk(chunkType: Tic80CartChunkTypeKey, data: Uint8Array, bank: number): Uint8Array {
+type SerializeChunkOptions = {
+  allowExtendedCodeBanks?: boolean;
+};
+
+export function serializeChunk(
+  chunkType: Tic80CartChunkTypeKey,
+  data: Uint8Array,
+  bank: number,
+  options?: SerializeChunkOptions,
+): Uint8Array {
   const chunkInfo = kTic80CartChunkTypes.coerceByKey(chunkType);
   if (!chunkInfo) {
     throw new Error(`Unknown chunk type key: ${chunkType}`);
@@ -17,13 +32,23 @@ export function serializeChunk(chunkType: Tic80CartChunkTypeKey, data: Uint8Arra
   if (!Number.isInteger(bank)) {
     throw new Error(`Bank index must be an integer for chunk ${chunkType}`);
   }
-  if (bank < 0 || bank >= chunkInfo.bankCount) {
-    throw new Error(`Bank index ${bank} out of range for chunk ${chunkType} (0..${chunkInfo.bankCount - 1})`);
+  const bankCount =
+    chunkType === "CODE" && options?.allowExtendedCodeBanks ? kTic80ExtendedCodeBankCount : chunkInfo.bankCount;
+  if (bank < 0 || bank >= bankCount) {
+    const baseMessage = `Bank index ${bank} out of range for chunk ${chunkType} (0..${bankCount - 1})`;
+    if (chunkType === "CODE" && !options?.allowExtendedCodeBanks) {
+      throw new Error(
+        `${baseMessage}. Enable allowExtendedCodeBanks to write private extended CODE banks (0..${
+          kTic80ExtendedCodeBankCount - 1
+        })`,
+      );
+    }
+    throw new Error(baseMessage);
   }
   const header = new Uint8Array(4);
   // first byte: BBBC CCCC
   assert(chunkInfo.value >= 0 && chunkInfo.value <= 31, `Chunk type value out of range: ${chunkInfo.value}`);
-  header[0] = (bank << 5) | chunkInfo.value; // BBBC CCCC
+  header[0] = ((bank & 0x7) << 5) | chunkInfo.value; // BBBC CCCC
   // size: Sx16
   const size = data.length;
   if (size > chunkInfo.sizePerBank) {
@@ -31,7 +56,7 @@ export function serializeChunk(chunkType: Tic80CartChunkTypeKey, data: Uint8Arra
   }
   header[1] = size & 0xff;
   header[2] = (size >> 8) & 0xff;
-  header[3] = 0; // unused / reserved
+  header[3] = chunkType === "CODE" && options?.allowExtendedCodeBanks ? bank >> 3 : 0;
   return new Uint8Array([...header, ...data]);
 }
 
@@ -71,7 +96,9 @@ export async function AssembleTic80Cart(input: Tic80Cart): Promise<Uint8Array> {
   const serializedChunks: Uint8Array[] = [];
   for (const { chunk } of chunksWithInfo) {
     const trimmedData = trimTrailingZeros(chunk.data);
-    const serialized = serializeChunk(chunk.chunkType, trimmedData, chunk.bank);
+    const serialized = serializeChunk(chunk.chunkType, trimmedData, chunk.bank, {
+      allowExtendedCodeBanks: input.allowExtendedCodeBanks,
+    });
     serializedChunks.push(serialized);
   }
 

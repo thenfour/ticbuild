@@ -395,6 +395,8 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
           "emitGlobals": true,
           // when applicable (currently only CODE_COMPRESSED), high-level compression options.
           "compressionMode": "default", // "default" | "zlib-max" | "zopfli"
+          // private TIC-80 extension: allow uncompressed CODE to span up to 16 banks.
+          "extendedCodeBanks": false,
         },
       },
       {
@@ -714,6 +716,30 @@ allowed (this is an error).
 
 For the code chunk alone, if code is larger than 1 bank, ticbuild automatically
 splits it across multiple banks.
+
+By default, ticbuild keeps the stock TIC-80 limit: up to 8 uncompressed CODE
+banks. ticbuild's private TIC-80 build can opt into 16 uncompressed CODE banks:
+
+```json
+{
+  "assembly": {
+    "blocks": [
+      {
+        "chunks": [
+          "CODE"
+        ],
+        "asset": "maincode",
+        "code": {
+          "extendedCodeBanks": true
+        }
+      }
+    ]
+  }
+}
+```
+
+Carts that use banks 8..15 require the private TIC-80 build and are not
+compatible with stock TIC-80.
 
 ## CODE_COMPRESSED
 

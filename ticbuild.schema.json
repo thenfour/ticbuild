@@ -323,8 +323,8 @@
               "bank": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 7,
-                "description": "Bank index (defaults to 0)"
+                "maximum": 15,
+                "description": "Bank index (defaults to 0). Standard TIC-80 chunks support banks 0..7; CODE banks 8..15 require code.extendedCodeBanks and the private TIC-80 build"
               },
               "asset": {
                 "oneOf": [
@@ -365,6 +365,10 @@
                       "zopfli"
                     ],
                     "description": "Compression mode for CODE_COMPRESSED chunks emitted by this code block"
+                  },
+                  "extendedCodeBanks": {
+                    "type": "boolean",
+                    "description": "Allow CODE chunks to use private TIC-80 extended banks 8..15. Carts built with this option are not compatible with stock TIC-80"
                   }
                 }
               }

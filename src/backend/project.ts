@@ -1,6 +1,6 @@
 import { assert } from "../utils/errorHandling";
 import { AssembleTic80Cart } from "../utils/tic80/cartWriter";
-import { kTic80CartChunkTypes, Tic80CartChunk } from "../utils/tic80/tic80";
+import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunk } from "../utils/tic80/tic80";
 import { deepMergeObjects } from "../utils/utils";
 import { ResourceManager } from "./ImportedResourceTypes";
 import { loadAllImports } from "./importResources";
@@ -162,6 +162,21 @@ export class TicbuildProject {
       if (chunkType === "CODE") {
         const codeInfo = kTic80CartChunkTypes.byKey.CODE;
         const maxChunkSize = codeInfo.sizePerBank;
+        const nativeBankCount = codeInfo.bankCount;
+        const extendedCodeBanks = block.code?.extendedCodeBanks === true;
+        const supportedBankCount = extendedCodeBanks ? kTic80ExtendedCodeBankCount : nativeBankCount;
+        if (block.bank !== undefined) {
+          if (bank >= nativeBankCount && !extendedCodeBanks) {
+            throw new Error(
+              `CODE bank ${bank} requires assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build (stock TIC-80 supports banks 0..${
+                nativeBankCount - 1
+              })`,
+            );
+          }
+          if (bank >= supportedBankCount) {
+            throw new Error(`CODE bank ${bank} out of range (0..${supportedBankCount - 1})`);
+          }
+        }
         if (data.length > maxChunkSize) {
           if (block.bank !== undefined) {
             // it's confusing what you mean if you specify a bank here.
@@ -169,8 +184,12 @@ export class TicbuildProject {
             throw new Error(`CODE chunk exceeds ${maxChunkSize} bytes but bank was specified`);
           }
           const bankCount = Math.ceil(data.length / maxChunkSize);
-          if (bankCount > codeInfo.bankCount) {
-            throw new Error(`CODE chunk requires ${bankCount} banks but TIC-80 supports only ${codeInfo.bankCount}`);
+          if (bankCount > supportedBankCount) {
+            throw new Error(
+              extendedCodeBanks
+                ? `CODE chunk requires ${bankCount} banks but extended CODE bank support allows only ${supportedBankCount}`
+                : `CODE chunk requires ${bankCount} banks but TIC-80 supports only ${nativeBankCount}. Enable assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build (up to ${kTic80ExtendedCodeBankCount} banks)`,
+            );
           }
           for (let i = 0; i < bankCount; i++) {
             const start = i * maxChunkSize;
@@ -211,10 +230,14 @@ export class TicbuildProject {
     for (const chunkList of results) {
       finalChunks.push(...chunkList);
     }
+    const usesExtendedCodeBanks = finalChunks.some(
+      (chunk) => chunk.chunkType === "CODE" && chunk.bank >= kTic80CartChunkTypes.byKey.CODE.bankCount,
+    );
 
     // generate final tic80 cart binary
     const output = await AssembleTic80Cart({
       chunks: finalChunks,
+      allowExtendedCodeBanks: usesExtendedCodeBanks,
     });
 
     return { output, chunks: finalChunks };

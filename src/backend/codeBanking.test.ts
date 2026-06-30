@@ -77,4 +77,58 @@ describe("Code chunk banking", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("should split CODE across private extended banks when opted in", async () => {
+    const maxChunkSize = kTic80CartChunkTypes.byKey.CODE.sizePerBank;
+    const payloadLength = maxChunkSize * kTic80CartChunkTypes.byKey.CODE.bankCount + 10;
+    const code = `local s = "${"a".repeat(payloadLength)}"`;
+
+    const { dir, manifestPath } = createTempProject(code, {
+      chunks: ["CODE"],
+      asset: "maincode",
+      code: {
+        extendedCodeBanks: true,
+      },
+    });
+
+    try {
+      const project = TicbuildProject.loadFromManifest({ manifestPath });
+      await project.loadImports();
+      const output = await project.assembleOutput();
+
+      const codeChunks = output.chunks.filter((chunk) => chunk.chunkType === "CODE");
+      expect(codeChunks).toHaveLength(9);
+      expect(codeChunks.map((chunk) => chunk.bank)).toEqual([8, 7, 6, 5, 4, 3, 2, 1, 0]);
+
+      const cartBytes = await AssembleTic80Cart({ chunks: output.chunks, allowExtendedCodeBanks: true });
+      const parsedCart = parseTic80Cart(cartBytes);
+      const reconstructedCode = getCombinedCodeBytes(parsedCart);
+
+      expect(new TextDecoder().decode(reconstructedCode!)).toBe(code);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("should advertise extended CODE banks when native CODE banking overflows", async () => {
+    const maxChunkSize = kTic80CartChunkTypes.byKey.CODE.sizePerBank;
+    const payloadLength = maxChunkSize * kTic80CartChunkTypes.byKey.CODE.bankCount + 10;
+    const code = `local s = "${"a".repeat(payloadLength)}"`;
+
+    const { dir, manifestPath } = createTempProject(code, {
+      chunks: ["CODE"],
+      asset: "maincode",
+    });
+
+    try {
+      const project = TicbuildProject.loadFromManifest({ manifestPath });
+      await project.loadImports();
+
+      await expect(project.assembleOutput()).rejects.toThrow(
+        "Enable assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build",
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

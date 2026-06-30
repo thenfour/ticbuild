@@ -7,7 +7,7 @@ import { kTic80CartChunkTypes, Tic80Cart, Tic80CartChunk } from "./tic80";
 // -----------------------------------------
 // 0        BBBC CCCC B = bank number (0..7), C = chunk type (0..31)
 // 1..2     Sx16      S = size of chunk, 16-bit little-endian
-// 3        Ux1       U = unused / reserved padding
+// 3        Ux1       U = unused / reserved padding. Private extended CODE banks use this as bank bit 3.
 // 4..      ...       chunk data
 
 function parseThisChunk(data: Uint8Array, offset: number): { chunk: Tic80CartChunk; nextOffset: number } {
@@ -16,8 +16,9 @@ function parseThisChunk(data: Uint8Array, offset: number): { chunk: Tic80CartChu
   }
   const headerByte = data[offset];
   const chunkTypeValue = headerByte & 0x1f;
-  const bank = headerByte >> 5;
+  const lowBankBits = headerByte >> 5;
   const size = readUint16LE(data, offset + 1);
+  const temp = data[offset + 3];
   const nextOffset = offset + 4 + size;
   if (nextOffset > data.length) {
     throw new Error("Unexpected end of data while reading chunk data");
@@ -27,6 +28,7 @@ function parseThisChunk(data: Uint8Array, offset: number): { chunk: Tic80CartChu
   if (!chunkTypeKey) {
     throw new Error(`Unknown chunk type: ${chunkTypeValue}`);
   }
+  const bank = chunkTypeKey === "CODE" ? lowBankBits | (temp << 3) : lowBankBits;
   return {
     chunk: {
       chunkType: chunkTypeKey,
