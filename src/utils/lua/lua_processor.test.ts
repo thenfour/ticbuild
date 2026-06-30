@@ -471,3 +471,125 @@ return t["shared-value"] .. a .. b
     expect(output).toContain("return t[La]..a..b");
   });
 });
+
+describe("Lua allowed global symbol renaming", () => {
+  function renameGlobalOptions(overrides: Partial<OptimizationRuleOptions> = {}): OptimizationRuleOptions {
+    return {
+      stripComments: true,
+      maxIndentLevel: 1,
+      lineBehavior: "tight",
+      maxLineLength: 180,
+      renameLocalVariables: false,
+      aliasRepeatedExpressions: false,
+      aliasLiterals: false,
+      packLocalDeclarations: false,
+      simplifyExpressions: false,
+      removeUnusedLocals: false,
+      removeUnusedFunctions: false,
+      functionNamesToKeep: [],
+      renameTableFields: false,
+      tableEntryKeysToRename: [],
+      ...overrides,
+    };
+  }
+
+  it("should rename explicitly allowed global function declarations and references", () => {
+    const input = `
+function Demo_LongName(n)
+  if n > 0 then
+    return Demo_LongName(n - 1)
+  end
+  return 0
+end
+return Demo_LongName(3)
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolsToRename: ["Demo_LongName"],
+    }));
+
+    expect(output).toContain("function a(n)");
+    expect(output).toContain("return a(n-1)");
+    expect(output).toContain("return a(3)");
+    expect(output).not.toContain("Demo_LongName");
+  });
+
+  it("should rename explicitly allowed global assignments and references", () => {
+    const input = `
+Demo_AssignedLongName = function()
+  return 1
+end
+return Demo_AssignedLongName()
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolsToRename: ["Demo_AssignedLongName"],
+    }));
+
+    expect(output).toContain("a=function()");
+    expect(output).toContain("return a()");
+    expect(output).not.toContain("Demo_AssignedLongName");
+  });
+
+  it("should respect local and parameter shadowing", () => {
+    const input = `
+function Demo_LongName()
+  return 1
+end
+local function useLocal()
+  local Demo_LongName = 2
+  return Demo_LongName
+end
+local function useParam(Demo_LongName)
+  return Demo_LongName
+end
+return Demo_LongName() + useLocal() + useParam(3)
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolsToRename: ["Demo_LongName"],
+    }));
+
+    expect(output).toContain("function a()");
+    expect(output).toContain("local Demo_LongName=2");
+    expect(output).toContain("local function useParam(Demo_LongName)");
+    expect(output).toContain("return a()+useLocal()+useParam(3)");
+  });
+
+  it("should not rewrite table field names or member names", () => {
+    const input = `
+function Demo_LongName() end
+local t = {
+  Demo_LongName = Demo_LongName,
+  [Demo_LongName] = Demo_LongName,
+}
+obj.Demo_LongName = Demo_LongName
+return t.Demo_LongName + t[Demo_LongName]
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolsToRename: ["Demo_LongName"],
+    }));
+
+    expect(output).toContain("Demo_LongName=a");
+    expect(output).toContain("[a]=a");
+    expect(output).toContain("obj.Demo_LongName=a");
+    expect(output).toContain("return t.Demo_LongName+t[a]");
+  });
+
+  it("should keep protected entrypoint names even when explicitly allowed", () => {
+    const input = `
+function TIC()
+end
+TIC()
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      functionNamesToKeep: ["TIC"],
+      globalSymbolsToRename: ["TIC"],
+    }));
+
+    expect(output).toContain("function TIC()");
+    expect(output).toContain("TIC()");
+  });
+});

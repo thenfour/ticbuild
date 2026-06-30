@@ -258,6 +258,12 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "globalSymbolsToRename": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "description": "Minification options (OptimizationRuleOptions)"

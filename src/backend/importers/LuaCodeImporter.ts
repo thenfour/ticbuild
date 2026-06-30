@@ -29,6 +29,7 @@ const releaseOptions: OptimizationRuleOptions = {
   functionNamesToKeep: ["TIC", "BDR", "SCN"],
   renameTableFields: false,
   tableEntryKeysToRename: [],
+  globalSymbolsToRename: [],
 } as const;
 
 const zopfliMaxOptions: ZopfliOptions = {
@@ -56,16 +57,18 @@ export type LuaCodeSizeStats = {
 export class LuaCodeResourceView extends ResourceViewBase {
   inputSource: string;
   preprocessedSource: string;
+  minifyAllowedGlobalNames: string[];
   private cachedMinifiedSource: string | null = null;
   private cachedCompressedBytes: ChunkDataResult | null = null;
   private cachedCompressedSource: string | null = null;
   private cachedCompressionMode: LuaCompressionMode | null = null;
   private cachedMinifyEnabled: boolean | null = null;
 
-  constructor(inputSource: string, preprocessedSource: string) {
+  constructor(inputSource: string, preprocessedSource: string, minifyAllowedGlobalNames: string[] = []) {
     super();
     this.inputSource = inputSource;
     this.preprocessedSource = preprocessedSource;
+    this.minifyAllowedGlobalNames = minifyAllowedGlobalNames;
   }
   getDataForChunk(
     project: TicbuildProjectCore,
@@ -131,7 +134,10 @@ export class LuaCodeResourceView extends ResourceViewBase {
 
     let code = emitGlobals ? this.injectGlobals(project, this.preprocessedSource) : this.preprocessedSource;
     if (minifyEnabled) {
-      const options = buildMinificationOptions(project.manifest.assembly.lua?.minification);
+      const options = buildMinificationOptions(
+        project.manifest.assembly.lua?.minification,
+        this.minifyAllowedGlobalNames,
+      );
       code = processLua(code, options);
     }
     code = this.injectMetadata(project, code);
@@ -228,11 +234,18 @@ export class LuaCodeResourceView extends ResourceViewBase {
   }
 }
 
-function buildMinificationOptions(overrides?: LuaMinificationConfig): OptimizationRuleOptions {
+function buildMinificationOptions(
+  overrides?: LuaMinificationConfig,
+  minifyAllowedGlobalNames: string[] = [],
+): OptimizationRuleOptions {
   if (!overrides) {
-    return { ...releaseOptions };
+    return { ...releaseOptions, globalSymbolsToRename: [...minifyAllowedGlobalNames] };
   }
   const options: OptimizationRuleOptions = { ...releaseOptions, ...overrides };
+  options.globalSymbolsToRename = [
+    ...(overrides.globalSymbolsToRename ?? releaseOptions.globalSymbolsToRename ?? []),
+    ...minifyAllowedGlobalNames,
+  ];
   return options;
 }
 
@@ -267,7 +280,7 @@ export class LuaCodeResource extends ImportedResourceBase {
     preprocessResult: LuaPreprocessResult,
   ) {
     super();
-    this.view = new LuaCodeResourceView(inputSource, preprocessedSource);
+    this.view = new LuaCodeResourceView(inputSource, preprocessedSource, preprocessResult.minifyAllowedGlobalNames);
     this.filePath = filePath;
     this.dependencies = dependencies;
     this.preprocessResult = preprocessResult;

@@ -688,6 +688,7 @@ async function loadBuiltinsPreprocess(): Promise<LuaPreprocessResult | null> {
         dependencies: [],
         sourceMap: mapBuilder.toSourceMap(code),
         preprocessorSymbols: [],
+        minifyAllowedGlobalNames: [],
     };
 }
 

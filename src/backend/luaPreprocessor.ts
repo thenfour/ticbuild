@@ -30,6 +30,7 @@ export type LuaPreprocessResult = {
   dependencies: string[];
   sourceMap: LuaPreprocessorSourceMap;
   preprocessorSymbols: PreprocessorSymbol[];
+  minifyAllowedGlobalNames: string[];
 };
 
 export type PreprocessorSymbol = {
@@ -48,6 +49,12 @@ type PreprocessorState = {
   includeStack: string[];
   macros: Map<string, MacroDefinition>;
   macroSymbols: PreprocessorSymbol[];
+  minifyAllowedGlobalNames: string[];
+};
+
+type PendingMinifyAllowRename = {
+  filePath: string;
+  lineNumber: number;
 };
 
 type MacroDefinition = {
@@ -78,6 +85,7 @@ export async function preprocessLuaCode(
     includeStack: [],
     macros: new Map<string, MacroDefinition>(),
     macroSymbols: [],
+    minifyAllowedGlobalNames: [],
   };
 
   const includeKey = makeIncludeKey(filePath, {});
@@ -90,6 +98,7 @@ export async function preprocessLuaCode(
     dependencies: Array.from(state.dependencies.values()),
     sourceMap: finalResult.map.toSourceMap(finalResult.code),
     preprocessorSymbols: state.macroSymbols,
+    minifyAllowedGlobalNames: Array.from(new Set(state.minifyAllowedGlobalNames)),
   };
 }
 
@@ -145,6 +154,7 @@ async function processSource(
   const builder = new SourceMapBuilder();
   let output = "";
   let lastEmittedOrigin: { file: string; offset: number } | null = null;
+  let pendingMinifyAllowRename: PendingMinifyAllowRename | null = null;
 
   // helper to check if current line is in active conditional block
   const isActive = (): boolean => {
@@ -164,6 +174,18 @@ async function processSource(
     const directiveMatch = line.match(/^\s*--#\s*(\w+)\s*(.*)$/);
     if (!directiveMatch) {
       if (isActive()) {
+        if (pendingMinifyAllowRename && !isIgnorableMinifyTargetLine(line)) {
+          const targetName = parseMinifyAllowRenameTarget(line);
+          if (!targetName) {
+            throw new Error(formatError(
+              pendingMinifyAllowRename.filePath,
+              pendingMinifyAllowRename.lineNumber,
+              `--#minify allow_rename must be followed by a simple global function or assignment`,
+            ));
+          }
+          state.minifyAllowedGlobalNames.push(targetName);
+          pendingMinifyAllowRename = null;
+        }
         if (output.length > 0) {
           output += "\n";
           const newlineOrigin = lastEmittedOrigin ?? { file: filePath, offset: lineInfo.startOffset };
@@ -229,6 +251,23 @@ async function processSource(
       }
       case "endmacro": {
         throw new Error(formatError(filePath, lineNumber, `--#endmacro without matching --#macro`));
+      }
+      case "minify": {
+        if (!isActive()) {
+          break;
+        }
+        if (rest.trim() !== "allow_rename") {
+          throw new Error(formatError(filePath, lineNumber, `Unsupported --#minify option: ${rest.trim()}`));
+        }
+        if (pendingMinifyAllowRename) {
+          throw new Error(formatError(
+            filePath,
+            lineNumber,
+            `--#minify allow_rename cannot be repeated before a target declaration`,
+          ));
+        }
+        pendingMinifyAllowRename = { filePath, lineNumber };
+        break;
       }
       case "define": {
         if (!isActive()) {
@@ -416,8 +455,35 @@ async function processSource(
     throw new Error(formatError(filePath, lines.length, `Unclosed --#if block`));
   }
 
+  if (pendingMinifyAllowRename) {
+    throw new Error(formatError(
+      pendingMinifyAllowRename.filePath,
+      pendingMinifyAllowRename.lineNumber,
+      `--#minify allow_rename must be followed by a simple global function or assignment`,
+    ));
+  }
+
   state.includeStack.pop();
   return { code: output, map: builder };
+}
+
+function isIgnorableMinifyTargetLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length === 0 || trimmed.startsWith("--");
+}
+
+function parseMinifyAllowRenameTarget(line: string): string | null {
+  const functionMatch = line.match(/^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
+  if (functionMatch) {
+    return functionMatch[1];
+  }
+
+  const assignmentMatch = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+  if (assignmentMatch) {
+    return assignmentMatch[1];
+  }
+
+  return null;
 }
 
 async function resolveInclude(

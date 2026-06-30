@@ -8,6 +8,7 @@ import { removeUnusedLocalsInAST } from "./lua_remove_unused_locals";
 import { removeUnusedFunctionsInAST } from "./lua_remove_unused_functions";
 import { renameTableFieldsInAST } from "./lua_rename_table_fields";
 import { renameAllowedTableKeysInAST } from "./lua_rename_allowed_table_keys";
+import { renameAllowedGlobalsInAST } from "./lua_rename_allowed_globals";
 import { extractLuaBlocks, replaceLuaBlock, toLuaStringLiteral } from "./lua_fundamentals";
 
 export type OptimizationRuleOptions = {
@@ -49,6 +50,10 @@ export type OptimizationRuleOptions = {
   // Globally rename specific table entry keys (string/identifier keys and member/index accesses) to short names.
   // Intended for callers that know these keys are safe to minify even when the table escapes.
   tableEntryKeysToRename: string[];
+
+  // Explicitly allowed globals that may be renamed. This is opt-in because global names can be
+  // externally referenced by TIC-80 or dynamic Lua code.
+  globalSymbolsToRename?: string[];
 
   // Merge consecutive local declarations into one using packing.
   // e.g.,
@@ -1376,6 +1381,13 @@ export function processLua(code: string, ruleOptions: OptimizationRuleOptions): 
 
   if (ruleOptions.renameLocalVariables) {
     ast = renameLocalVariablesInAST(ast);
+  }
+
+  if (ruleOptions.globalSymbolsToRename && ruleOptions.globalSymbolsToRename.length > 0) {
+    ast = renameAllowedGlobalsInAST(ast, {
+      namesToRename: ruleOptions.globalSymbolsToRename,
+      namesToKeep: ruleOptions.functionNamesToKeep,
+    });
   }
 
   if (ruleOptions.tableEntryKeysToRename && ruleOptions.tableEntryKeysToRename.length > 0) {

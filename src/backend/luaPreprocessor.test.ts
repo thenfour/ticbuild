@@ -283,6 +283,93 @@ describe("Lua preprocessor error/warning directives", () => {
   });
 });
 
+describe("Lua preprocessor minify directives", () => {
+  const manifest: Manifest = {
+    project: {
+      name: "test",
+      binDir: "./bin",
+      objDir: "./obj",
+      outputCartName: "test.tic",
+    },
+    variables: {},
+    imports: [],
+    assembly: {
+      blocks: [],
+    },
+  };
+
+  it("should collect allow_rename targets from simple global declarations", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#minify allow_rename
+-- a regular comment can sit between the annotation and declaration
+function Demo_LongName() end
+
+--#minify allow_rename
+Demo_AssignedLongName = function() end
+`;
+
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("function Demo_LongName() end");
+    expect(result.code).toContain("Demo_AssignedLongName = function() end");
+    expect(result.code).not.toContain("--#minify allow_rename");
+    expect(result.minifyAllowedGlobalNames).toEqual(["Demo_LongName", "Demo_AssignedLongName"]);
+  });
+
+  it("should allow same-line comments", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#minify allow_rename -- a comment can be here too
+function Demo_LongName() end
+
+--#minify allow_rename
+Demo_AssignedLongName = function() end
+`;
+
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("function Demo_LongName() end");
+    expect(result.code).toContain("Demo_AssignedLongName = function() end");
+    expect(result.code).not.toContain("--#minify allow_rename");
+    expect(result.minifyAllowedGlobalNames).toEqual(["Demo_LongName", "Demo_AssignedLongName"]);
+  });
+
+  it("should ignore inactive allow_rename directives", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#if false
+--#minify allow_rename
+function Demo_Inactive() end
+--#endif
+function Demo_ActiveButUnmarked() end
+`;
+
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.minifyAllowedGlobalNames).toEqual([]);
+    expect(result.code).not.toContain("Demo_Inactive");
+  });
+
+  it("should reject unknown minify options", async () => {
+    const project = makeProject(manifest);
+    const source = "--#minify unknown\nfunction Demo_LongName() end";
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "Unsupported --#minify option: unknown",
+    );
+  });
+
+  it("should reject allow_rename when the next code line is not a simple global declaration", async () => {
+    const project = makeProject(manifest);
+    const source = "--#minify allow_rename\nlocal function Demo_LocalName() end";
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "--#minify allow_rename must be followed by a simple global function or assignment",
+    );
+  });
+});
+
 describe("Lua preprocessor macros", () => {
   const manifest: Manifest = {
     project: {
