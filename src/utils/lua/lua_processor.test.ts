@@ -329,3 +329,145 @@ describe("Lua printer parenthesis handling", () => {
     }
   });
 });
+
+describe("Lua aliasing table constructor keys", () => {
+  function aliasOptions(overrides: Partial<OptimizationRuleOptions>): OptimizationRuleOptions {
+    return {
+      stripComments: true,
+      maxIndentLevel: 1,
+      lineBehavior: "tight",
+      maxLineLength: 180,
+      renameLocalVariables: false,
+      aliasRepeatedExpressions: false,
+      aliasLiterals: false,
+      packLocalDeclarations: false,
+      simplifyExpressions: false,
+      removeUnusedLocals: false,
+      removeUnusedFunctions: false,
+      functionNamesToKeep: [],
+      renameTableFields: false,
+      tableEntryKeysToRename: [],
+      ...overrides,
+    };
+  }
+
+  it("should not rewrite named table fields that match aliased globals", () => {
+    const options = aliasOptions({
+      aliasRepeatedExpressions: true,
+    });
+
+    const input = `
+local somatic_transport = {
+  time = {
+    demoMillis = 0,
+  },
+  prevWallMillis = time(),
+}
+local a = time()
+local b = time()
+local c = time()
+local d = time()
+local e = time()
+local f = time()
+local g = time()
+somatic_transport.time.demoMillis = somatic_transport.time.demoMillis + 1
+`;
+
+    const output = processLua(input, options);
+
+    expect(output).toContain("local _a=time");
+    expect(output).toContain("time={demoMillis=0}");
+    expect(output).not.toContain("_a={demoMillis=0}");
+    expect(output).toContain("somatic_transport.time.demoMillis");
+  });
+
+  it("should not count named table fields as repeated global expression uses", () => {
+    const options = aliasOptions({
+      aliasRepeatedExpressions: true,
+    });
+
+    const input = `
+local a = { time = 1 }
+local b = { time = 2 }
+local c = { time = 3 }
+local d = { time = 4 }
+local e = { time = 5 }
+local f = { time = 6 }
+local g = { time = 7 }
+return a.time + b.time + c.time + d.time + e.time + f.time + g.time
+`;
+
+    const output = processLua(input, options);
+
+    expect(output).not.toContain("local _a=time");
+    expect(output).toContain("time=1");
+    expect(output).toContain("return a.time+b.time+c.time+d.time+e.time+f.time+g.time");
+  });
+
+  it("should still alias computed table keys during expression aliasing", () => {
+    const options = aliasOptions({
+      aliasRepeatedExpressions: true,
+    });
+
+    const input = `
+local a = { [time] = 1 }
+local b = { [time] = 2 }
+local c = { [time] = 3 }
+local d = { [time] = 4 }
+local e = { [time] = 5 }
+local f = { [time] = 6 }
+local g = { [time] = 7 }
+return a[time] + b[time] + c[time] + d[time] + e[time] + f[time] + g[time]
+`;
+
+    const output = processLua(input, options);
+
+    expect(output).toContain("local _a=time");
+    expect(output).toContain("[_a]=1");
+    expect(output).toContain("return a[_a]+b[_a]+c[_a]+d[_a]+e[_a]+f[_a]+g[_a]");
+  });
+
+  it("should preserve named table fields during literal aliasing", () => {
+    const options = aliasOptions({
+      aliasLiterals: true,
+    });
+
+    const input = `
+local t = {
+  label = "shared-value",
+  other = "shared-value",
+}
+local a = "shared-value"
+local b = "shared-value"
+return t.label .. t.other .. a .. b
+`;
+
+    const output = processLua(input, options);
+
+    expect(output).toContain('local La="shared-value"');
+    expect(output).toContain("label=La");
+    expect(output).toContain("other=La");
+    expect(output).toContain("return t.label..t.other..a..b");
+  });
+
+  it("should still alias computed table keys during literal aliasing", () => {
+    const options = aliasOptions({
+      aliasLiterals: true,
+    });
+
+    const input = `
+local t = {
+  ["shared-value"] = "shared-value",
+}
+local a = "shared-value"
+local b = "shared-value"
+return t["shared-value"] .. a .. b
+`;
+
+    const output = processLua(input, options);
+
+    expect(output).toContain('local La="shared-value"');
+    expect(output).toContain("[La]=La");
+    expect(output).toContain("return t[La]..a..b");
+  });
+});

@@ -629,6 +629,9 @@ local y = CLAMP(x + blah(y),
 -- single-line macro syntax uses the arrow operator.
 --#macro ADD(a, b) => ((a) + (b))
 
+-- point to nothing for a nop.
+--#macro ADD(a, b) => -- nop
+
 -- parameterless syntax is possible
 --#macro PROJECT_NAME => __EXPAND("the project name is: $(project.name)")
 
