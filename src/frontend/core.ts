@@ -75,25 +75,30 @@ export async function buildCore(manifestPath?: string, options?: CommandLineOpti
     }
 
     if (resource instanceof LuaCodeResource) {
-      const stats = resource.getCodeSizeStats(project.resolvedCore);
+      const includeCompressed = luaResourceEmitsCompressedCode(project, identifier);
+      const stats = resource.getCodeSizeStats(project.resolvedCore, { includeCompressed });
       importsLines.push(`  Code stats:`);
       importsLines.push(`    Input        : ${formatBytes(stats.inputBytes)}`);
       importsLines.push(`    Preprocessed : ${formatBytes(stats.preprocessedBytes)}`);
       importsLines.push(`    Minified     : ${formatBytes(stats.minifiedBytes)}`);
-      importsLines.push(`    Compressed   : ${formatBytes(stats.compressedBytes)}`);
+      if (stats.compressedBytes !== null) {
+        importsLines.push(`    Compressed   : ${formatBytes(stats.compressedBytes)}`);
+      }
 
-      const artifacts = resource.getCodeArtifacts(project.resolvedCore);
+      const artifacts = resource.getCodeArtifacts(project.resolvedCore, { includeCompressed });
       const preprocessedPath = project.resolvedCore.resolveObjPath(`${identifier}.01.preprocessed.lua`);
       const minifiedPath = project.resolvedCore.resolveObjPath(`${identifier}.02.minified.lua`);
-      const compressedPath = project.resolvedCore.resolveObjPath(`${identifier}.03.compressed.bin`);
 
       await writeTextFile(preprocessedPath, artifacts.preprocessedSource, "utf-8");
       await writeTextFile(minifiedPath, artifacts.minifiedSource, "utf-8");
-      await writeBinaryFile(compressedPath, artifacts.compressedBytes);
 
       importsLines.push(`    Wrote: ${preprocessedPath}`);
       importsLines.push(`    Wrote: ${minifiedPath}`);
-      importsLines.push(`    Wrote: ${compressedPath}`);
+      if (artifacts.compressedBytes !== null) {
+        const compressedPath = project.resolvedCore.resolveObjPath(`${identifier}.03.compressed.bin`);
+        await writeBinaryFile(compressedPath, artifacts.compressedBytes);
+        importsLines.push(`    Wrote: ${compressedPath}`);
+      }
     }
     if (resource instanceof Tic80Resource) {
       const cartStatsLines = buildCartStatsLines(
@@ -272,6 +277,20 @@ function warnDeprecatedChunks(assemblyOutput: AssembleOutputResult): void {
     warned.add(key);
     cons.warning(`Deprecated chunk emitted: ${key}`);
   }
+}
+
+function luaResourceEmitsCompressedCode(project: TicbuildProject, identifier: string): boolean {
+  for (const block of project.resolvedCore.manifest.assembly.blocks) {
+    const assetRef = block.asset as AssetReference;
+    if (assetRef.import !== identifier) {
+      continue;
+    }
+    const requestedChunks = block.chunks || ["CODE"];
+    if (requestedChunks.includes("CODE_COMPRESSED")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // warn if any assembly blocks specify explicit banks for CODE chunks.

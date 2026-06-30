@@ -45,14 +45,18 @@ export type LuaCodeArtifacts = {
   inputSource: string;
   preprocessedSource: string;
   minifiedSource: string;
-  compressedBytes: Uint8Array;
+  compressedBytes: Uint8Array | null;
 };
 
 export type LuaCodeSizeStats = {
   inputBytes: number;
   preprocessedBytes: number;
   minifiedBytes: number;
-  compressedBytes: number;
+  compressedBytes: number | null;
+};
+
+export type LuaCodeArtifactOptions = {
+  includeCompressed?: boolean;
 };
 
 export class LuaCodeResourceView extends ResourceViewBase {
@@ -105,10 +109,10 @@ export class LuaCodeResourceView extends ResourceViewBase {
     return ["CODE"];
   }
 
-  getArtifacts(project: TicbuildProjectCore): LuaCodeArtifacts {
+  getArtifacts(project: TicbuildProjectCore, options?: LuaCodeArtifactOptions): LuaCodeArtifacts {
     const minifyEnabled = CoalesceBool(project.manifest.assembly.lua?.minify, true);
     const minifiedSource = this.getMinifiedSource(project, minifyEnabled, true);
-    const compressedBytes = this.getCompressedBytes(minifiedSource, "default");
+    const compressedBytes = options?.includeCompressed ? this.getCompressedBytes(minifiedSource, "default") : null;
     return {
       inputSource: this.inputSource,
       preprocessedSource: this.preprocessedSource,
@@ -117,14 +121,14 @@ export class LuaCodeResourceView extends ResourceViewBase {
     };
   }
 
-  getSizeStats(project: TicbuildProjectCore): LuaCodeSizeStats {
-    const artifacts = this.getArtifacts(project);
+  getSizeStats(project: TicbuildProjectCore, options?: LuaCodeArtifactOptions): LuaCodeSizeStats {
+    const artifacts = this.getArtifacts(project, options);
     const encoder = new TextEncoder();
     return {
       inputBytes: encoder.encode(artifacts.inputSource).length,
       preprocessedBytes: encoder.encode(artifacts.preprocessedSource).length,
       minifiedBytes: encoder.encode(artifacts.minifiedSource).length,
-      compressedBytes: artifacts.compressedBytes.length,
+      compressedBytes: artifacts.compressedBytes?.length ?? null,
     };
   }
 
@@ -295,12 +299,12 @@ export class LuaCodeResource extends ImportedResourceBase {
     console.log(`  Content preview: ${preview}`);
   }
 
-  getCodeArtifacts(project: TicbuildProjectCore): LuaCodeArtifacts {
-    return this.view.getArtifacts(project);
+  getCodeArtifacts(project: TicbuildProjectCore, options?: LuaCodeArtifactOptions): LuaCodeArtifacts {
+    return this.view.getArtifacts(project, options);
   }
 
-  getCodeSizeStats(project: TicbuildProjectCore): LuaCodeSizeStats {
-    return this.view.getSizeStats(project);
+  getCodeSizeStats(project: TicbuildProjectCore, options?: LuaCodeArtifactOptions): LuaCodeSizeStats {
+    return this.view.getSizeStats(project, options);
   }
 
   getView(project: TicbuildProjectCore, chunks?: Tic80CartChunkTypeKey[]) {
