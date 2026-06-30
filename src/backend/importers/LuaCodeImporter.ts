@@ -87,9 +87,9 @@ export class LuaCodeResourceView extends ResourceViewBase {
       const compressionMode = normalizeCompressionMode(options?.compressionMode);
       const compressed = this.getCompressedBytes(minifiedSource, compressionMode);
       if (compressed instanceof Promise) {
-        return compressed.then((bytes) => validateCompressedCodeBytes(bytes));
+        return compressed.then((bytes) => new Uint8Array(bytes));
       }
-      return validateCompressedCodeBytes(compressed);
+      return new Uint8Array(compressed);
     }
 
     const encoder = new TextEncoder();
@@ -253,13 +253,6 @@ function normalizeCompressionMode(mode: LuaCompressionMode | undefined): LuaComp
     return mode;
   }
   throw new Error(`Unsupported Lua compression mode: ${mode}`);
-}
-
-function validateCompressedCodeBytes(compressed: Uint8Array): Uint8Array {
-  if (compressed.length >= 64 * 1024) {
-    throw new Error(`Compressed code exceeds 64kb limit: ${compressed.length} bytes`);
-  }
-  return new Uint8Array(compressed);
 }
 
 export class LuaCodeResource extends ImportedResourceBase {

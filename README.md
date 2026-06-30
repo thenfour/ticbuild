@@ -397,6 +397,8 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
           "compressionMode": "default", // "default" | "zlib-max" | "zopfli"
           // private TIC-80 extension: allow uncompressed CODE to span up to 16 banks.
           "extendedCodeBanks": false,
+          // private TIC-80 extension: allow CODE_COMPRESSED to span multiple banks.
+          "multiBankCompressedCode": false,
         },
       },
       {
@@ -746,8 +748,8 @@ compatible with stock TIC-80.
 You can choose to emit code in `CODE_COMPRESSED` form, which is still supported
 (and practically, will always be).
 
-A limitation is that it cannot span more than 1 bank, so whereas you get 512kb of
-uncompressed code, you only get 64kb of compressed code.
+A stock TIC-80 limitation is that it cannot span more than 1 bank, so whereas
+you get 512kb of uncompressed code, you only get 64kb of compressed code.
 
 Code typically compresses very well though; On a test project my code compresses
 from 83 -> 18 kb (~22% of original). 512kb would, at the same rate, compress to about
@@ -792,6 +794,32 @@ zlib-compatible DEFLATE stream.
   }
 }
 ```
+
+ticbuild's private TIC-80 build supports multiple compressed code banks. The compressed
+zlib stream is split into 64kb chunks and emitted in reverse bank order, matching
+normal CODE banking:
+
+```json
+{
+  "assembly": {
+    "blocks": [
+      {
+        "chunks": [
+          "CODE_COMPRESSED"
+        ],
+        "asset": "maincode",
+        "code": {
+          "compressionMode": "zopfli",
+          "multiBankCompressedCode": true
+        }
+      }
+    ]
+  }
+}
+```
+
+Carts that use more than one `CODE_COMPRESSED` bank require the private TIC-80
+build and are not compatible with stock TIC-80.
 
 # Symbol / intellisense database / map / index
 

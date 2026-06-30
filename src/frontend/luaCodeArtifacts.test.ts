@@ -42,6 +42,20 @@ function createTempProject(code: string, assemblyBlock: object): { dir: string; 
   return { dir, manifestPath };
 }
 
+function makeHighEntropyLuaComment(length: number): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let seed = 0x12345678;
+  let result = "-- ";
+  for (let i = 0; i < length; i++) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    result += chars[seed % chars.length];
+    if (i % 96 === 95 && i + 1 < length) {
+      result += "\n-- ";
+    }
+  }
+  return result;
+}
+
 describe("Lua code build artifacts", () => {
   it("does not write compressed diagnostics when CODE_COMPRESSED is not assembled", async () => {
     const { dir, manifestPath } = createTempProject("print('ok')", {
@@ -149,6 +163,32 @@ describe("Lua code build artifacts", () => {
     }
   });
 
+  it("logs CODE_COMPRESSED overflow metrics before assembly fails", async () => {
+    const { dir, manifestPath } = createTempProject(makeHighEntropyLuaComment(120000), {
+      chunks: ["CODE_COMPRESSED"],
+      asset: "maincode",
+    });
+    const h1Spy = jest.spyOn(cons, "h1").mockImplementation(() => undefined);
+    const infoSpy = jest.spyOn(cons, "info").mockImplementation(() => undefined);
+
+    try {
+      await expect(buildCore(manifestPath)).rejects.toThrow(
+        "CODE_COMPRESSED chunk requires 2 banks but TIC-80 supports only 1. Enable assembly.blocks[].code.multiBankCompressedCode",
+      );
+
+      expect(h1Spy).toHaveBeenCalledWith("Lua code size: maincode");
+      const infoLines = infoSpy.mock.calls.map(([line]) => line);
+      expect(infoLines.some((line) => line.includes("CODE_COMPRESSED") && line.includes("requires 2 banks / 1"))).toBe(
+        true,
+      );
+      expect(infoLines.some((line) => line.includes("enable code.multiBankCompressedCode"))).toBe(true);
+    } finally {
+      h1Spy.mockRestore();
+      infoSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("warns when extended CODE banks are emitted", async () => {
     const codeInfo = kTic80CartChunkTypes.byKey.CODE;
     const overNativeSource = "--" + "a".repeat(codeInfo.sizePerBank * codeInfo.bankCount + 1);
@@ -172,6 +212,37 @@ describe("Lua code build artifacts", () => {
       expect(infoLines.some((line) => line.includes("uses 9 banks / 16"))).toBe(true);
       expect(infoLines.some((line) => line.includes("non-standard, stock TIC-80 max 8"))).toBe(true);
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Non-standard TIC-80 extension used"));
+    } finally {
+      h1Spy.mockRestore();
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when multi-bank CODE_COMPRESSED chunks are emitted", async () => {
+    const { dir, manifestPath } = createTempProject(makeHighEntropyLuaComment(120000), {
+      chunks: ["CODE_COMPRESSED"],
+      asset: "maincode",
+      code: {
+        multiBankCompressedCode: true,
+      },
+    });
+    const h1Spy = jest.spyOn(cons, "h1").mockImplementation(() => undefined);
+    const infoSpy = jest.spyOn(cons, "info").mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(cons, "warning").mockImplementation(() => undefined);
+
+    try {
+      await buildCore(manifestPath);
+
+      expect(h1Spy).toHaveBeenCalledWith("Lua code size: maincode");
+      const infoLines = infoSpy.mock.calls.map(([line]) => line);
+      expect(infoLines.some((line) => line.includes("CODE_COMPRESSED") && line.includes("/ 1024.0 KB"))).toBe(true);
+      expect(infoLines.some((line) => line.includes("uses 2 banks / 16"))).toBe(true);
+      expect(infoLines.some((line) => line.includes("non-standard, stock TIC-80 max 1"))).toBe(true);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Non-standard TIC-80 extension used: CODE_COMPRESSED emits bank 1"),
+      );
     } finally {
       h1Spy.mockRestore();
       infoSpy.mockRestore();

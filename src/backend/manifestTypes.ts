@@ -67,6 +67,7 @@ export type CodeAssemblyOptions = {
   emitGlobals?: boolean;
   compressionMode?: LuaCompressionMode;
   extendedCodeBanks?: boolean;
+  multiBankCompressedCode?: boolean;
 };
 
 export type PreprocessorValue = string | number | boolean;

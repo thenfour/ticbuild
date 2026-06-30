@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { inflateSync } from "node:zlib";
 import { TicbuildProject } from "./project";
 import { parseTic80Cart, getCombinedCodeBytes } from "../utils/tic80/cartLoader";
 import { AssembleTic80Cart } from "../utils/tic80/cartWriter";
@@ -41,6 +42,31 @@ function createTempProject(code: string, assemblyBlock: object): { dir: string; 
   const manifestPath = path.join(dir, "project.ticbuild.jsonc");
   writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   return { dir, manifestPath };
+}
+
+function makeHighEntropyLuaComment(length: number): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let seed = 0x12345678;
+  let result = "-- ";
+  for (let i = 0; i < length; i++) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    result += chars[seed % chars.length];
+    if (i % 96 === 95 && i + 1 < length) {
+      result += "\n-- ";
+    }
+  }
+  return result;
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
 }
 
 describe("Code chunk banking", () => {
@@ -126,6 +152,60 @@ describe("Code chunk banking", () => {
 
       await expect(project.assembleOutput()).rejects.toThrow(
         "Enable assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build",
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("should split CODE_COMPRESSED across private compressed banks when opted in", async () => {
+    const code = makeHighEntropyLuaComment(120000);
+
+    const { dir, manifestPath } = createTempProject(code, {
+      chunks: ["CODE_COMPRESSED"],
+      asset: "maincode",
+      code: {
+        multiBankCompressedCode: true,
+      },
+    });
+
+    try {
+      const project = TicbuildProject.loadFromManifest({ manifestPath });
+      await project.loadImports();
+      const output = await project.assembleOutput();
+
+      const compressedChunks = output.chunks.filter((chunk) => chunk.chunkType === "CODE_COMPRESSED");
+      expect(compressedChunks).toHaveLength(2);
+      expect(compressedChunks.map((chunk) => chunk.bank)).toEqual([1, 0]);
+      for (const chunk of compressedChunks) {
+        expect(chunk.data.length).toBeLessThanOrEqual(kTic80CartChunkTypes.byKey.CODE_COMPRESSED.sizePerBank);
+      }
+
+      const compressedStream = concatBytes(compressedChunks.map((chunk) => chunk.data));
+      expect(new TextDecoder().decode(inflateSync(compressedStream))).toBe(code);
+
+      const parsedCart = parseTic80Cart(output.output);
+      const parsedCompressedChunks = parsedCart.chunks.filter((chunk) => chunk.chunkType === "CODE_COMPRESSED");
+      expect(parsedCompressedChunks.map((chunk) => chunk.bank)).toEqual([0, 1]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("should advertise multi-bank CODE_COMPRESSED when native compressed banking overflows", async () => {
+    const code = makeHighEntropyLuaComment(120000);
+
+    const { dir, manifestPath } = createTempProject(code, {
+      chunks: ["CODE_COMPRESSED"],
+      asset: "maincode",
+    });
+
+    try {
+      const project = TicbuildProject.loadFromManifest({ manifestPath });
+      await project.loadImports();
+
+      await expect(project.assembleOutput()).rejects.toThrow(
+        "Enable assembly.blocks[].code.multiBankCompressedCode for the private TIC-80 build",
       );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

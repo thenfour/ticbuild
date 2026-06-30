@@ -13,10 +13,11 @@ import {
 // -----------------------------------------
 // 0        BBBC CCCC B = bank number (0..7), C = chunk type (0..31)
 // 1..2     Sx16      S = size of chunk, 16-bit little-endian
-// 3        Ux1       U = unused / reserved padding. Private extended CODE banks use this as bank bit 3.
+// 3        Ux1       U = unused / reserved padding. Private extended code chunks use this as bank bit 3.
 // 4..      ...       chunk data
 type SerializeChunkOptions = {
   allowExtendedCodeBanks?: boolean;
+  allowMultiBankCompressedCode?: boolean;
 };
 
 export function serializeChunk(
@@ -33,12 +34,22 @@ export function serializeChunk(
     throw new Error(`Bank index must be an integer for chunk ${chunkType}`);
   }
   const bankCount =
-    chunkType === "CODE" && options?.allowExtendedCodeBanks ? kTic80ExtendedCodeBankCount : chunkInfo.bankCount;
+    (chunkType === "CODE" && options?.allowExtendedCodeBanks) ||
+    (chunkType === "CODE_COMPRESSED" && options?.allowMultiBankCompressedCode)
+      ? kTic80ExtendedCodeBankCount
+      : chunkInfo.bankCount;
   if (bank < 0 || bank >= bankCount) {
     const baseMessage = `Bank index ${bank} out of range for chunk ${chunkType} (0..${bankCount - 1})`;
     if (chunkType === "CODE" && !options?.allowExtendedCodeBanks) {
       throw new Error(
         `${baseMessage}. Enable allowExtendedCodeBanks to write private extended CODE banks (0..${
+          kTic80ExtendedCodeBankCount - 1
+        })`,
+      );
+    }
+    if (chunkType === "CODE_COMPRESSED" && !options?.allowMultiBankCompressedCode) {
+      throw new Error(
+        `${baseMessage}. Enable allowMultiBankCompressedCode to write private multi-bank CODE_COMPRESSED chunks (0..${
           kTic80ExtendedCodeBankCount - 1
         })`,
       );
@@ -56,7 +67,11 @@ export function serializeChunk(
   }
   header[1] = size & 0xff;
   header[2] = (size >> 8) & 0xff;
-  header[3] = chunkType === "CODE" && options?.allowExtendedCodeBanks ? bank >> 3 : 0;
+  header[3] =
+    (chunkType === "CODE" && options?.allowExtendedCodeBanks) ||
+    (chunkType === "CODE_COMPRESSED" && options?.allowMultiBankCompressedCode)
+      ? bank >> 3
+      : 0;
   return new Uint8Array([...header, ...data]);
 }
 
@@ -98,6 +113,7 @@ export async function AssembleTic80Cart(input: Tic80Cart): Promise<Uint8Array> {
     const trimmedData = trimTrailingZeros(chunk.data);
     const serialized = serializeChunk(chunk.chunkType, trimmedData, chunk.bank, {
       allowExtendedCodeBanks: input.allowExtendedCodeBanks,
+      allowMultiBankCompressedCode: input.allowMultiBankCompressedCode,
     });
     serializedChunks.push(serialized);
   }

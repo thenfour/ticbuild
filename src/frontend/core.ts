@@ -288,13 +288,24 @@ function warnNonstandardCodeExtensions(assemblyOutput: AssembleOutputResult): vo
   const extendedCodeBank = assemblyOutput.chunks
     .filter((chunk) => chunk.chunkType === "CODE" && chunk.bank >= nativeCodeBankCount)
     .reduce((maxBank, chunk) => Math.max(maxBank, chunk.bank), -1);
-  if (extendedCodeBank < 0) {
+  if (extendedCodeBank >= 0) {
+    cons.warning(
+      `Non-standard TIC-80 extension used: CODE emits bank ${extendedCodeBank}. Stock TIC-80 supports CODE banks 0..${
+        nativeCodeBankCount - 1
+      }; this cart requires the private TIC-80 build.`,
+    );
+  }
+
+  const nativeCompressedBankCount = kTic80CartChunkTypes.byKey.CODE_COMPRESSED.bankCount;
+  const compressedCodeChunks = assemblyOutput.chunks.filter(
+    (chunk) => chunk.chunkType === "CODE_COMPRESSED" && chunk.bank >= nativeCompressedBankCount,
+  );
+  if (compressedCodeChunks.length === 0) {
     return;
   }
+  const maxCompressedBank = compressedCodeChunks.reduce((maxBank, chunk) => Math.max(maxBank, chunk.bank), -1);
   cons.warning(
-    `Non-standard TIC-80 extension used: CODE emits bank ${extendedCodeBank}. Stock TIC-80 supports CODE banks 0..${
-      nativeCodeBankCount - 1
-    }; this cart requires the private TIC-80 build.`,
+    `Non-standard TIC-80 extension used: CODE_COMPRESSED emits bank ${maxCompressedBank}. Stock TIC-80 supports one CODE_COMPRESSED chunk; this cart requires the private TIC-80 build.`,
   );
 }
 
@@ -306,6 +317,7 @@ type LuaCodeAssemblyRequest = {
 type LuaCompressedCodeOutput = {
   bytes: Uint8Array;
   compressionMode: string;
+  multiBankCompressedCode: boolean;
 };
 
 function getLuaCodeAssemblyRequests(project: TicbuildProject, identifier: string): LuaCodeAssemblyRequest[] {
@@ -340,13 +352,15 @@ async function getLuaCompressedCodeOutputs(
       continue;
     }
     const compressionMode = request.codeOptions?.compressionMode ?? "default";
-    if (seenModes.has(compressionMode)) {
+    const multiBankCompressedCode = request.codeOptions?.multiBankCompressedCode === true;
+    const outputKey = `${compressionMode}:${multiBankCompressedCode ? "multi" : "single"}`;
+    if (seenModes.has(outputKey)) {
       continue;
     }
-    seenModes.add(compressionMode);
+    seenModes.add(outputKey);
     const view = resource.getView(project.resolvedCore, ["CODE_COMPRESSED"]);
     const bytes = await view.getDataForChunk(project.resolvedCore, "CODE_COMPRESSED", request.codeOptions);
-    outputs.push({ bytes, compressionMode });
+    outputs.push({ bytes, compressionMode, multiBankCompressedCode });
   }
   return outputs;
 }
@@ -401,12 +415,31 @@ function buildLuaCodeSizeLines(
       capacity: codeCapacity,
       note: codeBankNote,
     },
-    ...compressedOutputs.map((output) => ({
-      label: "CODE_COMPRESSED",
-      size: output.bytes.length,
-      capacity: compressedInfo.sizePerBank,
-      note: `${output.compressionMode} zlib output`,
-    })),
+    ...compressedOutputs.map((output) => {
+      const compressedBankLimit = output.multiBankCompressedCode
+        ? kTic80ExtendedCodeBankCount
+        : compressedInfo.bankCount;
+      const compressedCapacity = compressedInfo.sizePerBank * compressedBankLimit;
+      const compressedBankCount = Math.max(1, Math.ceil(output.bytes.length / compressedInfo.sizePerBank));
+      let compressedBankNote = `${output.compressionMode} zlib output; ${
+        compressedBankCount > compressedBankLimit ? "requires" : "uses"
+      } ${compressedBankCount} ${compressedBankCount === 1 ? "bank" : "banks"} / ${compressedBankLimit}`;
+      if (
+        !output.multiBankCompressedCode &&
+        compressedBankCount > compressedInfo.bankCount &&
+        compressedBankCount <= kTic80ExtendedCodeBankCount
+      ) {
+        compressedBankNote += `; enable code.multiBankCompressedCode for private TIC-80`;
+      } else if (output.multiBankCompressedCode && compressedBankCount > compressedInfo.bankCount) {
+        compressedBankNote += `; non-standard, stock TIC-80 max ${compressedInfo.bankCount}`;
+      }
+      return {
+        label: "CODE_COMPRESSED",
+        size: output.bytes.length,
+        capacity: compressedCapacity,
+        note: compressedBankNote,
+      };
+    }),
   ];
 
   const labelWidth = Math.max(...rows.map((row) => row.label.length));

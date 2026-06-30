@@ -35,6 +35,20 @@ describe("TIC-80 cart bank support", () => {
     expect(Array.from(parsed.chunks[0].data)).toEqual([1, 2, 3]);
   });
 
+  it("should round-trip private multi-bank CODE_COMPRESSED chunks", async () => {
+    const chunks: Tic80CartChunk[] = [{ chunkType: "CODE_COMPRESSED", bank: 8, data: new Uint8Array([1, 2, 3]) }];
+
+    const output = await AssembleTic80Cart({ chunks, allowMultiBankCompressedCode: true });
+    const parsed = parseTic80Cart(output);
+
+    expect(output[0]).toBe(16);
+    expect(output[3]).toBe(1);
+    expect(parsed.chunks).toHaveLength(1);
+    expect(parsed.chunks[0].chunkType).toBe("CODE_COMPRESSED");
+    expect(parsed.chunks[0].bank).toBe(8);
+    expect(Array.from(parsed.chunks[0].data)).toEqual([1, 2, 3]);
+  });
+
   it("should reject duplicate chunk type in same bank", async () => {
     const chunks: Tic80CartChunk[] = [
       { chunkType: "CODE", bank: 0, data: new Uint8Array([1]) },
@@ -48,7 +62,7 @@ describe("TIC-80 cart bank support", () => {
     const chunks: Tic80CartChunk[] = [{ chunkType: "CODE_COMPRESSED", bank: 1, data: new Uint8Array([1]) }];
 
     await expect(AssembleTic80Cart({ chunks })).rejects.toThrow(
-      "Bank index 1 out of range for chunk CODE_COMPRESSED (0..0)",
+      "Bank index 1 out of range for chunk CODE_COMPRESSED (0..0). Enable allowMultiBankCompressedCode",
     );
   });
 

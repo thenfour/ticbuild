@@ -203,6 +203,46 @@ export class TicbuildProject {
           continue;
         }
       }
+      if (chunkType === "CODE_COMPRESSED") {
+        const compressedInfo = kTic80CartChunkTypes.byKey.CODE_COMPRESSED;
+        const maxChunkSize = compressedInfo.sizePerBank;
+        const nativeBankCount = compressedInfo.bankCount;
+        const multiBankCompressedCode = block.code?.multiBankCompressedCode === true;
+        const supportedBankCount = multiBankCompressedCode ? kTic80ExtendedCodeBankCount : nativeBankCount;
+        if (block.bank !== undefined) {
+          if (bank >= nativeBankCount && !multiBankCompressedCode) {
+            throw new Error(
+              `CODE_COMPRESSED bank ${bank} requires assembly.blocks[].code.multiBankCompressedCode for the private TIC-80 build (stock TIC-80 supports bank 0)`,
+            );
+          }
+          if (bank >= supportedBankCount) {
+            throw new Error(`CODE_COMPRESSED bank ${bank} out of range (0..${supportedBankCount - 1})`);
+          }
+        }
+        if (data.length > maxChunkSize) {
+          if (block.bank !== undefined) {
+            throw new Error(`CODE_COMPRESSED chunk exceeds ${maxChunkSize} bytes but bank was specified`);
+          }
+          const bankCount = Math.ceil(data.length / maxChunkSize);
+          if (bankCount > supportedBankCount) {
+            throw new Error(
+              multiBankCompressedCode
+                ? `CODE_COMPRESSED chunk requires ${bankCount} banks but multi-bank compressed CODE support allows only ${supportedBankCount}`
+                : `CODE_COMPRESSED chunk requires ${bankCount} banks but TIC-80 supports only ${nativeBankCount}. Enable assembly.blocks[].code.multiBankCompressedCode for the private TIC-80 build (up to ${kTic80ExtendedCodeBankCount} banks)`,
+            );
+          }
+          for (let i = 0; i < bankCount; i++) {
+            const start = i * maxChunkSize;
+            const end = Math.min(start + maxChunkSize, data.length);
+            outputChunks.push({
+              chunkType,
+              bank: bankCount - 1 - i,
+              data: data.subarray(start, end),
+            });
+          }
+          continue;
+        }
+      }
       outputChunks.push({
         chunkType,
         bank,
@@ -233,11 +273,16 @@ export class TicbuildProject {
     const usesExtendedCodeBanks = finalChunks.some(
       (chunk) => chunk.chunkType === "CODE" && chunk.bank >= kTic80CartChunkTypes.byKey.CODE.bankCount,
     );
+    const usesMultiBankCompressedCode = finalChunks.some(
+      (chunk) =>
+        chunk.chunkType === "CODE_COMPRESSED" && chunk.bank >= kTic80CartChunkTypes.byKey.CODE_COMPRESSED.bankCount,
+    );
 
     // generate final tic80 cart binary
     const output = await AssembleTic80Cart({
       chunks: finalChunks,
       allowExtendedCodeBanks: usesExtendedCodeBanks,
+      allowMultiBankCompressedCode: usesMultiBankCompressedCode,
     });
 
     return { output, chunks: finalChunks };

@@ -148,4 +148,5 @@ export type Tic80CartChunk = {
 export type Tic80Cart = {
   chunks: Tic80CartChunk[];
   allowExtendedCodeBanks?: boolean;
+  allowMultiBankCompressedCode?: boolean;
 };
