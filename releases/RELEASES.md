@@ -1,3 +1,7 @@
+## v1.0.19 (2026-7-4)
+
+- #50 new tic80 build with additional profiling option
+
 ## v1.0.18 (2026-6-30)
 
 - #44 better size build logging
