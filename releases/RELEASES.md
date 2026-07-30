@@ -1,3 +1,9 @@
+## v1.0.21 (2026-7-31)
+
+- #54 fixed minifier: aliasRepeatedExpressions was clobbering some symbolsbug
+- #55 minifier: 200 local limit in Lua is now respected / handled explicitly
+- #56 always output jsonl in obj dir
+
 ## v1.0.20 (2026-7-30)
 
 - #50 fixing minifier "simplify expressions" rule wrongly replacing `TableKey` tokens.
