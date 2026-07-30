@@ -123,7 +123,9 @@ reporter when another program needs to consume build messages:
 ticbuild build --reporter jsonl
 ```
 
-The JSONL reporter writes one JSON object per line to stdout. Lines look like:
+Every build also produces `build.jsonl` in the obj dir.
+
+The JSONL reporter writes one JSON object per line. Lines look like:
 
 ```json
 {"version":1,"type":"comment","data":{"message":"Loading imported resources..."}}

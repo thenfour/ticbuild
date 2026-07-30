@@ -7,33 +7,6 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// routes console messages to the reporter, if the reporter is jsonl, otherwise just logs to console.
-function reportCapturedConsoleMessage(
-  reporter: BuildReporter,
-  level: cons.ConsoleMessageLevel,
-  message: string,
-): void {
-  if (level === "warning" || level === "error") {
-    reporter.message({
-      type: "diagnostic",
-      data: {
-        severity: level,
-        message,
-      },
-      humanReadable: () => undefined,
-    });
-    return;
-  }
-
-  reporter.message({
-    type: "comment",
-    data: {
-      message,
-    },
-    humanReadable: () => undefined,
-  });
-}
-
 export async function buildCommand(
   manifestPath?: string,
   options?: CommandLineOptions,
@@ -46,11 +19,6 @@ export async function buildCommand(
     cons.error(getErrorMessage(error));
     process.exitCode = 1;
     return;
-  }
-
-  const previousConsoleMessageSink = cons.getConsoleMessageSink();
-  if (reporter.name === "jsonl") {
-    cons.setConsoleMessageSink((level, message) => reportCapturedConsoleMessage(reporter, level, message));
   }
 
   try {
@@ -69,8 +37,5 @@ export async function buildCommand(
       },
     });
     process.exitCode = 1;
-  } finally {
-    // for non-jsonl this is a nop
-    cons.setConsoleMessageSink(previousConsoleMessageSink);
   }
 }

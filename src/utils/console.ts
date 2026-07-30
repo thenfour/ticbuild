@@ -3,17 +3,20 @@ import { appendFileSync } from "node:fs";
 
 let logFilePath: string | null = null;
 
-// message sink is needed to route all console messages so that the jsonl reporter can capture them
+// A sink replaces normal console rendering; an observer sees messages without replacing it.
 export type ConsoleMessageLevel = "success" | "error" | "warning" | "info" | "debug";
 export type ConsoleMessageSink = (level: ConsoleMessageLevel, message: string) => void;
+export type ConsoleMessageObserver = (level: ConsoleMessageLevel, message: string) => void;
 
 let consoleMessageSink: ConsoleMessageSink | null = null;
+let consoleMessageObserver: ConsoleMessageObserver | null = null;
 
 function isTestEnv(): boolean {
   return process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
 }
 
 function consoleLogExceptInTestEnv(level: ConsoleMessageLevel, plainMessage: string, decoratedMessage: any): void {
+  consoleMessageObserver?.(level, plainMessage);
   if (consoleMessageSink) {
     consoleMessageSink(level, plainMessage);
     return;
@@ -29,6 +32,14 @@ export function setConsoleMessageSink(sink: ConsoleMessageSink | null): void {
 
 export function getConsoleMessageSink(): ConsoleMessageSink | null {
   return consoleMessageSink;
+}
+
+export function setConsoleMessageObserver(observer: ConsoleMessageObserver | null): void {
+  consoleMessageObserver = observer;
+}
+
+export function getConsoleMessageObserver(): ConsoleMessageObserver | null {
+  return consoleMessageObserver;
 }
 
 export function setLogFile(filePath: string | null): void {

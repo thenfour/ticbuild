@@ -1,6 +1,8 @@
 import type { AliasFunctionReport } from "../utils/lua/lua_alias_shared";
+import type { ConsoleMessageLevel } from "../utils/console";
 
 export const buildReportVersion = 1;
+export const buildReportFileName = "build.jsonl";
 
 export type BuildReporterName = "human" | "jsonl";
 
@@ -118,4 +120,30 @@ export function createBuildReporter(name: string | undefined, writeJsonlLine?: J
     default:
       throw new Error(`Unsupported build reporter '${name}'. Expected 'human' or 'jsonl'.`);
   }
+}
+
+export function reportCapturedConsoleMessage(
+  reporter: BuildReporter,
+  level: ConsoleMessageLevel,
+  message: string,
+): void {
+  if (level === "warning" || level === "error") {
+    reporter.message({
+      type: "diagnostic",
+      data: {
+        severity: level,
+        message,
+      },
+      humanReadable: () => undefined,
+    });
+    return;
+  }
+
+  reporter.message({
+    type: "comment",
+    data: {
+      message,
+    },
+    humanReadable: () => undefined,
+  });
 }

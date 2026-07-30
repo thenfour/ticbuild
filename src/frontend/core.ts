@@ -10,19 +10,121 @@ import { formatBytes } from "../utils/utils";
 import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import type { AliasPassReport, AliasRuleName } from "../utils/lua/lua_alias_shared";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   BuildReporter,
   CartChunkUsageEntry,
   HumanBuildReporter,
+  JsonlBuildReporter,
   LuaCodeSizeEntry,
+  buildReportFileName,
+  reportCapturedConsoleMessage,
 } from "./buildReporter";
+
+type BuildReportSession = {
+  reporter: BuildReporter;
+  initialize: (filePath: string) => void;
+  reportFailure: (error: unknown) => void;
+  dispose: () => void;
+};
+
+function createBuildReportSession(selectedReporter: BuildReporter): BuildReportSession {
+  const pendingBuildReportLines: string[] = [];
+  let buildReportFilePath: string | undefined;
+  const archivedReporter = new JsonlBuildReporter((line) => {
+    if (buildReportFilePath === undefined) {
+      pendingBuildReportLines.push(line);
+      return;
+    }
+    appendFileSync(buildReportFilePath, `${line}\n`, "utf-8");
+  });
+  let renderingSelectedReporter = false;
+  const reporter: BuildReporter = {
+    name: selectedReporter.name,
+    message: (message) => {
+      archivedReporter.message(message);
+      renderingSelectedReporter = true;
+      try {
+        selectedReporter.message(message);
+      } finally {
+        renderingSelectedReporter = false;
+      }
+    },
+  };
+
+  const previousConsoleMessageSink = cons.getConsoleMessageSink();
+  const previousConsoleMessageObserver = cons.getConsoleMessageObserver();
+  const captureLegacyConsoleMessage = (level: cons.ConsoleMessageLevel, message: string): void => {
+    if (!renderingSelectedReporter) {
+      reportCapturedConsoleMessage(reporter, level, message);
+    }
+  };
+
+  if (selectedReporter.name === "jsonl") {
+    cons.setConsoleMessageSink(captureLegacyConsoleMessage);
+  } else {
+    cons.setConsoleMessageObserver((level, message) => {
+      previousConsoleMessageObserver?.(level, message);
+      captureLegacyConsoleMessage(level, message);
+    });
+  }
+
+  return {
+    reporter,
+    initialize: (filePath) => {
+      writeFileSync(
+        filePath,
+        pendingBuildReportLines.length === 0 ? "" : `${pendingBuildReportLines.join("\n")}\n`,
+        "utf-8",
+      );
+      pendingBuildReportLines.length = 0;
+      buildReportFilePath = filePath;
+    },
+    reportFailure: (error) => {
+      if (buildReportFilePath === undefined) {
+        return;
+      }
+      try {
+        archivedReporter.message({
+          type: "build.failed",
+          data: {
+            message: error instanceof Error ? error.message : String(error),
+          },
+          humanReadable: () => undefined,
+        });
+      } catch {
+        // Preserve the original build failure if the archival write also fails.
+      }
+    },
+    dispose: () => {
+      cons.setConsoleMessageSink(previousConsoleMessageSink);
+      cons.setConsoleMessageObserver(previousConsoleMessageObserver);
+    },
+  };
+}
 
 export async function buildCore(
   manifestPath?: string,
   options?: CommandLineOptions,
   reporter: BuildReporter = new HumanBuildReporter(),
+): Promise<void> {
+  const reportSession = createBuildReportSession(reporter);
+  try {
+    await executeBuildCore(manifestPath, options, reportSession.reporter, reportSession.initialize);
+  } catch (error) {
+    reportSession.reportFailure(error);
+    throw error;
+  } finally {
+    reportSession.dispose();
+  }
+}
+
+async function executeBuildCore(
+  manifestPath: string | undefined,
+  options: CommandLineOptions | undefined,
+  reporter: BuildReporter,
+  initializeBuildReport: (filePath: string) => void,
 ): Promise<void> {
   const buildStartTime = Date.now();
   let project: TicbuildProject;
@@ -32,10 +134,11 @@ export async function buildCore(
   project = TicbuildProject.loadFromManifest(projectLoadOptions);
   const loadDuration = Date.now() - loadStartTime;
 
-  // Set up build log file
+  // Set up build log and structured report files.
   const objDir = await project.resolvedCore.resolveObjPath();
   await ensureDir(objDir);
   const logFilePath = project.resolvedCore.resolveObjPath(`build.log`);
+  initializeBuildReport(project.resolvedCore.resolveObjPath(buildReportFileName));
 
   if (logFilePath) {
     // Initialize the log file from scratch otherwise you get a huge file over time.

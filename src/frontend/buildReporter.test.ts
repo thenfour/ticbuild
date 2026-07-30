@@ -6,6 +6,7 @@ import {
   BuildMessage,
   HumanBuildReporter,
   JsonlBuildReporter,
+  buildReportFileName,
   buildReportVersion,
   createBuildReporter,
 } from "./buildReporter";
@@ -64,6 +65,15 @@ function createCollectingReporter(): { reporter: JsonlBuildReporter; messages: J
   const messages: JsonlMessage[] = [];
   const reporter = new JsonlBuildReporter((line) => messages.push(JSON.parse(line) as JsonlMessage));
   return { reporter, messages };
+}
+
+function readBuildReport(dir: string): JsonlMessage[] {
+  return fs
+    .readFileSync(path.join(dir, "obj", buildReportFileName), "utf-8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as JsonlMessage);
 }
 
 describe("Build reporters", () => {
@@ -151,6 +161,7 @@ describe("Build reporters", () => {
         cartPath: path.join(dir, "bin", "out.tic"),
         logPath: path.join(dir, "obj", "build.log"),
       });
+      expect(readBuildReport(dir)).toEqual(messages);
       expect(h1Spy).not.toHaveBeenCalled();
       expect(infoSpy).not.toHaveBeenCalled();
       expect(successSpy).not.toHaveBeenCalled();
@@ -158,6 +169,28 @@ describe("Build reporters", () => {
       h1Spy.mockRestore();
       infoSpy.mockRestore();
       successSpy.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("always writes the structured build report when using the human reporter", async () => {
+    const { dir, manifestPath } = createTempProject();
+    const previousObserver = cons.getConsoleMessageObserver();
+
+    try {
+      await buildCore(manifestPath, undefined, new HumanBuildReporter());
+
+      expect(readBuildReport(dir).map((message) => message.type)).toEqual([
+        "project.loadedFrom",
+        "manifest.resolved",
+        "comment",
+        "lua.codeSize",
+        "cart.usage",
+        "build.completed",
+      ]);
+      expect(cons.getConsoleMessageObserver()).toBe(previousObserver);
+    } finally {
+      cons.setConsoleMessageObserver(previousObserver);
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -181,10 +214,51 @@ describe("Build reporters", () => {
         },
       });
       expect(messages[messages.length - 1]?.type).toBe("build.completed");
+      expect(readBuildReport(dir)).toEqual(messages);
       expect(process.exitCode).toBeUndefined();
       expect(cons.getConsoleMessageSink()).toBe(previousSink);
     } finally {
       process.exitCode = previousExitCode;
+      cons.setConsoleMessageSink(previousSink);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("archives legacy warnings once while preserving human reporting", async () => {
+    const { dir, manifestPath } = createTempProject("--#warning reporter warning\nprint('ok')");
+    const previousSink = cons.getConsoleMessageSink();
+    const renderedMessages: { level: cons.ConsoleMessageLevel; message: string }[] = [];
+    cons.setConsoleMessageSink((level, message) => renderedMessages.push({ level, message }));
+
+    try {
+      await buildCore(manifestPath, undefined, new HumanBuildReporter());
+
+      const messages = readBuildReport(dir);
+      expect(messages.map((message) => message.type)).toEqual([
+        "project.loadedFrom",
+        "manifest.resolved",
+        "comment",
+        "diagnostic",
+        "lua.codeSize",
+        "cart.usage",
+        "build.completed",
+      ]);
+      expect(messages.filter((message) => message.type === "diagnostic")).toEqual([
+        {
+          version: buildReportVersion,
+          type: "diagnostic",
+          data: {
+            severity: "warning",
+            message: expect.stringContaining("reporter warning"),
+          },
+        },
+      ]);
+      expect(
+        renderedMessages.filter(
+          ({ level, message }) => level === "warning" && message.includes("reporter warning"),
+        ),
+      ).toHaveLength(1);
+    } finally {
       cons.setConsoleMessageSink(previousSink);
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -267,6 +341,30 @@ describe("Build reporters", () => {
     } finally {
       process.exitCode = previousExitCode;
       cons.setConsoleMessageSink(previousSink);
+    }
+  });
+
+  it("ends the archived report with a failure after the obj directory is resolved", async () => {
+    const { dir, manifestPath } = createTempProject();
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    fs.rmSync(path.join(dir, "main.lua"));
+
+    try {
+      await buildCommand(manifestPath, undefined, new HumanBuildReporter());
+
+      const messages = readBuildReport(dir);
+      expect(messages[messages.length - 1]).toMatchObject({
+        version: buildReportVersion,
+        type: "build.failed",
+        data: {
+          message: expect.any(String),
+        },
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });
