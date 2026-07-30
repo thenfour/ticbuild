@@ -89,7 +89,7 @@ export function cloneExpression<T extends luaparse.Expression>(node: T): T {
 }
 
 // Shared info about an aliasable item (expression or literal)
-type AliasScopeNode =
+export type AliasScopeNode =
   | luaparse.Chunk
   | luaparse.FunctionDeclaration
   | luaparse.IfClause
@@ -128,64 +128,50 @@ export interface AliasInfo {
   node: luaparse.Expression;
   count: number;
   scopes: AliasScopeNode[];
+  occurrences: luaparse.Expression[];
   aliasName?: string;
   targetScope?: AliasScopeNode;
+  estimatedSavings?: number;
+  selected?: boolean;
+  order: number;
+  strategy: AliasStrategy;
+  conflicts: Set<AliasInfo>;
 }
 
 // Tracker for aliasable items
 export class AliasTracker {
   private items = new Map<string, AliasInfo>();
-  private aliasCounter = 0;
-  private prefix: string;
-  private unavailableNames: Set<string>;
 
-  constructor(prefix: string = "_", unavailableNames: Iterable<string> = []) {
-    this.prefix = prefix;
-    this.unavailableNames = new Set(unavailableNames);
-  }
+  constructor(private strategy: AliasStrategy, private nextOrder: () => number) {}
 
   // Record an occurrence of an item in a given scope
-  record(key: string, node: luaparse.Expression, scope: AliasScopeNode): void {
+  record(key: string, node: luaparse.Expression, scope: AliasScopeNode): AliasInfo {
     const existing = this.items.get(key);
     if (existing) {
       existing.count++;
+      existing.occurrences.push(node);
       if (!existing.scopes.includes(scope)) {
         existing.scopes.push(scope);
       }
+      return existing;
     } else {
-      this.items.set(key, {
+      const info: AliasInfo = {
         serialized: key,
         node: cloneExpression(node),
         count: 1,
         scopes: [scope],
-      });
+        occurrences: [node],
+        order: this.nextOrder(),
+        strategy: this.strategy,
+        conflicts: new Set<AliasInfo>(),
+      };
+      this.items.set(key, info);
+      return info;
     }
   }
 
-  // Get items that should be aliased based on a predicate
-  getAliasableItems(predicate: (info: AliasInfo) => boolean): AliasInfo[] {
-    const result: AliasInfo[] = [];
-
-    for (const info of this.items.values()) {
-      if (predicate(info)) {
-        let aliasName: string;
-        do {
-          aliasName = generateAliasName(this.aliasCounter++, this.prefix);
-        } while (LUA_RESERVED_WORDS.has(aliasName) || this.unavailableNames.has(aliasName));
-
-        info.aliasName = aliasName;
-        this.unavailableNames.add(aliasName);
-        result.push(info);
-      }
-    }
-
-    return result;
-  }
-
-  // Look up an alias for an item by key
-  getAlias(key: string): string | null {
-    const info = this.items.get(key);
-    return info?.aliasName || null;
+  getItems(): AliasInfo[] {
+    return Array.from(this.items.values());
   }
 }
 
@@ -251,6 +237,7 @@ export function findCommonAncestor(
 // Insert declarations into scopes
 export function insertDeclarationsIntoScopes(
   declarationsByScope: Map<AliasScopeNode, AliasInfo[]>,
+  generatedDeclarations?: WeakSet<luaparse.LocalStatement>,
 ): void {
   declarationsByScope.forEach((declarations, scope) => {
     const aliasDeclarations: luaparse.LocalStatement[] = declarations.map((info) => ({
@@ -263,6 +250,7 @@ export function insertDeclarationsIntoScopes(
       ],
       init: [info.node],
     }));
+    aliasDeclarations.forEach((declaration) => generatedDeclarations?.add(declaration));
     scope.body.unshift(...aliasDeclarations);
   });
 }
@@ -272,19 +260,411 @@ export function insertDeclarationsIntoScopes(
 // ---------------------------------------------------------------------------
 
 export type AliasStrategy = {
+  rule: AliasRuleName;
   prefix: string;
   serialize(node: luaparse.Expression | null | undefined, bindings: AliasBindingScope): string | null;
-  shouldAlias(info: AliasInfo): boolean;
+  estimateSavings(info: AliasInfo, aliasNameLength: number): number;
 };
 
-export function runAliasPass(ast: luaparse.Chunk, strategy: AliasStrategy): luaparse.Chunk {
+export type AliasRuleName = "aliasLiterals" | "aliasRepeatedExpressions";
+
+export type AliasRuleReport = {
+  accepted: number;
+  omitted: number;
+  estimatedBytesSaved: number;
+  estimatedBytesOmitted: number;
+};
+
+export type AliasFunctionReport = {
+  functionName: string;
+  sourceLine: number;
+  localLimit: number;
+  peakActiveLocals: number;
+  existingLocalsAtPeak: number;
+  generatedLocalsAtPeak: number;
+  rules: Record<AliasRuleName, AliasRuleReport>;
+};
+
+export type AliasPassReport = {
+  localLimit: number;
+  constrainedFunctions: AliasFunctionReport[];
+};
+
+export type AliasPassResult = {
+  ast: luaparse.Chunk;
+  report: AliasPassReport;
+};
+
+export const LUA_MAX_ACTIVE_LOCALS = 200;
+
+type FunctionScopeNode = luaparse.Chunk | luaparse.FunctionDeclaration;
+
+type LocalCounts = {
+  existing: number;
+  generated: number;
+};
+
+type LocalPressureScope = {
+  scope: AliasScopeNode;
+  functionRoot: FunctionScopeNode;
+  parent: LocalPressureScope | null;
+  children: LocalPressureScope[];
+  directPeak: number;
+  candidates: AliasInfo[];
+};
+
+type FunctionPressure = {
+  root: FunctionScopeNode;
+  rootScope: LocalPressureScope;
+  peakActiveLocals: number;
+  existingLocalsAtPeak: number;
+  generatedLocalsAtPeak: number;
+};
+
+type LocalPressureAnalysis = {
+  scopeByNode: WeakMap<AliasScopeNode, LocalPressureScope>;
+  functions: FunctionPressure[];
+  functionByRoot: Map<FunctionScopeNode, FunctionPressure>;
+};
+
+function analyzeLocalPressure(
+  ast: luaparse.Chunk,
+  generatedDeclarations: WeakSet<luaparse.LocalStatement> = new WeakSet<luaparse.LocalStatement>(),
+): LocalPressureAnalysis {
+  const scopeByNode = new WeakMap<AliasScopeNode, LocalPressureScope>();
+  const functions: FunctionPressure[] = [];
+  const functionByRoot = new Map<FunctionScopeNode, FunctionPressure>();
+  const analyzedFunctions = new WeakSet<FunctionScopeNode>();
+
+  function createScope(
+    scope: AliasScopeNode,
+    functionRoot: FunctionScopeNode,
+    parent: LocalPressureScope | null,
+  ): LocalPressureScope {
+    const pressureScope: LocalPressureScope = {
+      scope,
+      functionRoot,
+      parent,
+      children: [],
+      directPeak: 0,
+      candidates: [],
+    };
+    parent?.children.push(pressureScope);
+    scopeByNode.set(scope, pressureScope);
+    return pressureScope;
+  }
+
+  function recordPoint(scope: LocalPressureScope, counts: LocalCounts): void {
+    const total = counts.existing + counts.generated;
+    scope.directPeak = Math.max(scope.directPeak, total);
+    const fn = functionByRoot.get(scope.functionRoot)!;
+    if (
+      total > fn.peakActiveLocals ||
+      (total === fn.peakActiveLocals && counts.generated > fn.generatedLocalsAtPeak)
+    ) {
+      fn.peakActiveLocals = total;
+      fn.existingLocalsAtPeak = counts.existing;
+      fn.generatedLocalsAtPeak = counts.generated;
+    }
+  }
+
+  function analyzeExpression(node: luaparse.Expression): void {
+    switch (node.type) {
+      case "BinaryExpression":
+      case "LogicalExpression":
+        analyzeExpression(node.left);
+        analyzeExpression(node.right);
+        return;
+
+      case "UnaryExpression":
+        analyzeExpression(node.argument);
+        return;
+
+      case "CallExpression":
+        analyzeExpression(node.base);
+        node.arguments.forEach(analyzeExpression);
+        return;
+
+      case "TableCallExpression":
+        analyzeExpression(node.base);
+        analyzeExpression(node.arguments);
+        return;
+
+      case "StringCallExpression":
+        analyzeExpression(node.base);
+        analyzeExpression(node.argument);
+        return;
+
+      case "MemberExpression":
+        analyzeExpression(node.base);
+        return;
+
+      case "IndexExpression":
+        analyzeExpression(node.base);
+        analyzeExpression(node.index);
+        return;
+
+      case "TableConstructorExpression":
+        node.fields.forEach((field) => {
+          if (field.type === "TableKey") analyzeExpression(field.key);
+          analyzeExpression(field.value);
+        });
+        return;
+
+      case "FunctionDeclaration":
+        analyzeFunction(node);
+        return;
+
+      default:
+        return;
+    }
+  }
+
+  function analyzeStatements(
+    statements: luaparse.Statement[],
+    scope: LocalPressureScope,
+    entryCounts: LocalCounts,
+  ): LocalCounts {
+    const counts = { ...entryCounts };
+    recordPoint(scope, counts);
+
+    for (const stmt of statements) {
+      switch (stmt.type) {
+        case "LocalStatement": {
+          const generated = generatedDeclarations.has(stmt);
+          const declarationCount = stmt.variables.length;
+          const declarationCounts = {
+            existing: counts.existing + (generated ? 0 : declarationCount),
+            generated: counts.generated + (generated ? declarationCount : 0),
+          };
+          // Lua registers every name before compiling the initializer, so the
+          // declaration itself must fit even though its bindings are not visible yet.
+          recordPoint(scope, declarationCounts);
+          counts.existing = declarationCounts.existing;
+          counts.generated = declarationCounts.generated;
+          stmt.init.forEach(analyzeExpression);
+          break;
+        }
+
+        case "AssignmentStatement":
+          stmt.variables.forEach(analyzeExpression);
+          stmt.init.forEach(analyzeExpression);
+          break;
+
+        case "CallStatement":
+          analyzeExpression(stmt.expression);
+          break;
+
+        case "ReturnStatement":
+          stmt.arguments.forEach(analyzeExpression);
+          break;
+
+        case "IfStatement":
+          stmt.clauses.forEach((clause) => {
+            if (clause.type !== "ElseClause") analyzeExpression(clause.condition);
+            const child = createScope(clause, scope.functionRoot, scope);
+            analyzeStatements(clause.body, child, counts);
+          });
+          break;
+
+        case "WhileStatement": {
+          analyzeExpression(stmt.condition);
+          const child = createScope(stmt, scope.functionRoot, scope);
+          analyzeStatements(stmt.body, child, counts);
+          break;
+        }
+
+        case "RepeatStatement": {
+          const child = createScope(stmt, scope.functionRoot, scope);
+          const repeatCounts = analyzeStatements(stmt.body, child, counts);
+          analyzeExpression(stmt.condition);
+          recordPoint(child, repeatCounts);
+          break;
+        }
+
+        case "ForNumericStatement": {
+          stmt.start && analyzeExpression(stmt.start);
+          stmt.end && analyzeExpression(stmt.end);
+          if (stmt.step) analyzeExpression(stmt.step);
+          const child = createScope(stmt, scope.functionRoot, scope);
+          analyzeStatements(
+            stmt.body,
+            child,
+            { existing: counts.existing + 4, generated: counts.generated },
+          );
+          break;
+        }
+
+        case "ForGenericStatement": {
+          stmt.iterators.forEach(analyzeExpression);
+          const child = createScope(stmt, scope.functionRoot, scope);
+          analyzeStatements(
+            stmt.body,
+            child,
+            {
+              existing: counts.existing + 3 + stmt.variables.length,
+              generated: counts.generated,
+            },
+          );
+          break;
+        }
+
+        case "FunctionDeclaration":
+          if (stmt.isLocal && isIdentifier(stmt.identifier)) {
+            counts.existing++;
+            recordPoint(scope, counts);
+          }
+          analyzeFunction(stmt);
+          break;
+
+        case "DoStatement": {
+          const child = createScope(stmt, scope.functionRoot, scope);
+          analyzeStatements(stmt.body, child, counts);
+          break;
+        }
+
+        default:
+          break;
+      }
+    }
+
+    return counts;
+  }
+
+  function analyzeFunction(root: FunctionScopeNode): void {
+    if (analyzedFunctions.has(root)) return;
+    analyzedFunctions.add(root);
+
+    let parameterCount = 0;
+    if (root.type === "FunctionDeclaration") {
+      parameterCount = root.parameters.filter(isIdentifier).length;
+      if (root.identifier?.type === "MemberExpression" && root.identifier.indexer === ":") {
+        parameterCount++;
+      }
+    }
+
+    const rootScope = createScope(root, root, null);
+    const fn: FunctionPressure = {
+      root,
+      rootScope,
+      peakActiveLocals: parameterCount,
+      existingLocalsAtPeak: parameterCount,
+      generatedLocalsAtPeak: 0,
+    };
+    functions.push(fn);
+    functionByRoot.set(root, fn);
+    analyzeStatements(root.body, rootScope, { existing: parameterCount, generated: 0 });
+  }
+
+  analyzeFunction(ast);
+  return { scopeByNode, functions, functionByRoot };
+}
+
+function allocateCandidates(root: LocalPressureScope): Set<AliasInfo> {
+  type MemoEntry = { value: number; selectedHere: number };
+  const memo = new WeakMap<LocalPressureScope, Map<number, MemoEntry>>();
+  const impossible = Number.NEGATIVE_INFINITY;
+
+  function solve(scope: LocalPressureScope, inheritedAliases: number): MemoEntry {
+    let scopeMemo = memo.get(scope);
+    if (!scopeMemo) {
+      scopeMemo = new Map<number, MemoEntry>();
+      memo.set(scope, scopeMemo);
+    }
+    const cached = scopeMemo.get(inheritedAliases);
+    if (cached) return cached;
+
+    if (inheritedAliases > 0 && scope.directPeak + inheritedAliases > LUA_MAX_ACTIVE_LOCALS) {
+      const result = { value: impossible, selectedHere: 0 };
+      scopeMemo.set(inheritedAliases, result);
+      return result;
+    }
+
+    scope.candidates.sort(
+      (a, b) => (b.estimatedSavings ?? 0) - (a.estimatedSavings ?? 0) || a.order - b.order,
+    );
+    const prefixSavings = [0];
+    scope.candidates.forEach((candidate) => {
+      prefixSavings.push(prefixSavings[prefixSavings.length - 1] + (candidate.estimatedSavings ?? 0));
+    });
+
+    const availableHere = Math.max(0, LUA_MAX_ACTIVE_LOCALS - scope.directPeak - inheritedAliases);
+    const maxHere = Math.min(scope.candidates.length, availableHere);
+    let best: MemoEntry = { value: impossible, selectedHere: 0 };
+
+    for (let selectedHere = 0; selectedHere <= maxHere; selectedHere++) {
+      const childInherited = inheritedAliases + selectedHere;
+      let value = prefixSavings[selectedHere];
+      let valid = true;
+      for (const child of scope.children) {
+        const childResult = solve(child, childInherited);
+        if (childResult.value === impossible) {
+          valid = false;
+          break;
+        }
+        value += childResult.value;
+      }
+      if (valid && value > best.value) {
+        best = { value, selectedHere };
+      }
+    }
+
+    scopeMemo.set(inheritedAliases, best);
+    return best;
+  }
+
+  const selected = new Set<AliasInfo>();
+  solve(root, 0);
+
+  function collect(scope: LocalPressureScope, inheritedAliases: number): void {
+    const decision = memo.get(scope)!.get(inheritedAliases)!;
+    scope.candidates.slice(0, decision.selectedHere).forEach((candidate) => selected.add(candidate));
+    const childInherited = inheritedAliases + decision.selectedHere;
+    scope.children.forEach((child) => collect(child, childInherited));
+  }
+
+  collect(root, 0);
+  return selected;
+}
+
+function functionName(root: FunctionScopeNode): string {
+  if (root.type === "Chunk") return "<main chunk>";
+  if (!root.identifier) return "<anonymous>";
+
+  function expressionName(node: luaparse.Expression): string | null {
+    if (node.type === "Identifier") return node.name;
+    if (node.type === "MemberExpression") {
+      const base = expressionName(node.base);
+      return base ? `${base}${node.indexer}${node.identifier.name}` : node.identifier.name;
+    }
+    return null;
+  }
+
+  return expressionName(root.identifier) ?? "<anonymous>";
+}
+
+function emptyRuleReport(): AliasRuleReport {
+  return { accepted: 0, omitted: 0, estimatedBytesSaved: 0, estimatedBytesOmitted: 0 };
+}
+
+export function createEmptyAliasPassReport(): AliasPassReport {
+  return { localLimit: LUA_MAX_ACTIVE_LOCALS, constrainedFunctions: [] };
+}
+
+export function runAliasPasses(ast: luaparse.Chunk, strategies: AliasStrategy[]): AliasPassResult {
+  if (strategies.length === 0) return { ast, report: createEmptyAliasPassReport() };
+
   const unavailableNames = new Set<string>();
   walkAST(ast, (node) => {
     if (isIdentifier(node)) unavailableNames.add(node.name);
   });
 
-  const tracker = new AliasTracker(strategy.prefix, unavailableNames);
-  const candidateKeys = new WeakMap<luaparse.Expression, string>();
+  let nextCandidateOrder = 0;
+  const strategyStates = strategies.map((strategy) => ({
+    strategy,
+    tracker: new AliasTracker(strategy, () => nextCandidateOrder++),
+  }));
+  const candidatesByNode = new WeakMap<luaparse.Expression, AliasInfo[]>();
   const scopeParents = new WeakMap<AliasScopeNode, AliasScopeNode>();
 
   function registerScope(scope: AliasScopeNode, parentScope: AliasScopeNode): void {
@@ -295,53 +675,63 @@ export function runAliasPass(ast: luaparse.Chunk, strategy: AliasStrategy): luap
     node: luaparse.Expression,
     currentScope: AliasScopeNode,
     bindings: LexicalBindingScope,
+    ancestors: AliasInfo[] = [],
   ): void {
     if (!node) return;
 
-    const key = strategy.serialize(node, bindings);
-    if (key) {
-      tracker.record(key, node, currentScope);
-      candidateKeys.set(node, key);
-    }
+    const currentCandidates: AliasInfo[] = [];
+    strategyStates.forEach(({ strategy, tracker }) => {
+      const key = strategy.serialize(node, bindings);
+      if (!key) return;
+      const info = tracker.record(key, node, currentScope);
+      currentCandidates.push(info);
+      ancestors.forEach((ancestor) => {
+        if (ancestor === info) return;
+        ancestor.conflicts.add(info);
+        info.conflicts.add(ancestor);
+      });
+    });
+    if (currentCandidates.length > 0) candidatesByNode.set(node, currentCandidates);
+    const childAncestors = currentCandidates.length > 0 ? [...ancestors, ...currentCandidates] : ancestors;
 
     switch (node.type) {
       case "BinaryExpression":
       case "LogicalExpression":
-        countExpression(node.left, currentScope, bindings);
-        countExpression(node.right, currentScope, bindings);
+        countExpression(node.left, currentScope, bindings, childAncestors);
+        countExpression(node.right, currentScope, bindings, childAncestors);
         return;
 
       case "UnaryExpression":
-        countExpression(node.argument, currentScope, bindings);
+        countExpression(node.argument, currentScope, bindings, childAncestors);
         return;
 
       case "CallExpression":
-        countExpression(node.base, currentScope, bindings);
-        node.arguments.forEach((arg) => countExpression(arg, currentScope, bindings));
+        countExpression(node.base, currentScope, bindings, childAncestors);
+        node.arguments.forEach((arg) => countExpression(arg, currentScope, bindings, childAncestors));
         return;
 
       case "TableCallExpression":
-        countExpression(node.base, currentScope, bindings);
-        countExpression(node.arguments, currentScope, bindings);
+        countExpression(node.base, currentScope, bindings, childAncestors);
+        countExpression(node.arguments, currentScope, bindings, childAncestors);
         return;
 
       case "StringCallExpression":
-        countExpression(node.base, currentScope, bindings);
+        countExpression(node.base, currentScope, bindings, childAncestors);
         return;
 
       case "MemberExpression":
-        countExpression(node.base, currentScope, bindings);
+        countExpression(node.base, currentScope, bindings, childAncestors);
         return;
 
       case "IndexExpression":
-        countExpression(node.base, currentScope, bindings);
-        countExpression(node.index, currentScope, bindings);
+        countExpression(node.base, currentScope, bindings, childAncestors);
+        countExpression(node.index, currentScope, bindings, childAncestors);
         return;
 
       case "TableConstructorExpression":
         node.fields.forEach((field) => {
-          if (field.type === "TableKey") countExpression(field.key, currentScope, bindings);
-          countExpression(field.value, currentScope, bindings);
+          if (field.type === "TableKey") countExpression(field.key, currentScope, bindings, childAncestors);
+          countExpression(field.value, currentScope, bindings, childAncestors);
         });
         return;
 
@@ -480,25 +870,108 @@ export function runAliasPass(ast: luaparse.Chunk, strategy: AliasStrategy): luap
   }
 
   countBlock(ast.body, ast, new LexicalBindingScope());
-  const aliasable = tracker.getAliasableItems(strategy.shouldAlias);
-  if (aliasable.length === 0) return ast;
 
-  aliasable.forEach((info) => {
+  const allCandidates = strategyStates.flatMap(({ tracker }) => tracker.getItems());
+  allCandidates.forEach((info) => {
     info.targetScope = findCommonAncestor(info.scopes, scopeParents, ast);
   });
+  const provisionalNames = new Set(unavailableNames);
+  const provisionalCounters = new Map<string, number>();
+  const profitableCandidates: AliasInfo[] = [];
+  [...allCandidates]
+    .sort((a, b) => a.order - b.order)
+    .forEach((info) => {
+      let counter = provisionalCounters.get(info.strategy.prefix) ?? 0;
+      let aliasName: string;
+      do {
+        aliasName = generateAliasName(counter++, info.strategy.prefix);
+      } while (LUA_RESERVED_WORDS.has(aliasName) || provisionalNames.has(aliasName));
 
-  const declarationsByScope = new Map<AliasScopeNode, AliasInfo[]>();
-  aliasable.forEach((info) => {
-    const scope = info.targetScope!;
-    if (!declarationsByScope.has(scope)) declarationsByScope.set(scope, []);
-    declarationsByScope.get(scope)!.push(info);
+      const savings = info.strategy.estimateSavings(info, aliasName.length);
+      if (savings <= 0) return;
+
+      provisionalCounters.set(info.strategy.prefix, counter);
+      provisionalNames.add(aliasName);
+      info.aliasName = aliasName;
+      info.estimatedSavings = savings;
+      profitableCandidates.push(info);
+    });
+  if (profitableCandidates.length === 0) {
+    return { ast, report: createEmptyAliasPassReport() };
+  }
+
+  // Selecting an outer expression removes its nested occurrences. Resolve
+  // those rare cross-strategy conflicts after capacity allocation, then rerun
+  // the allocator so a discarded overlap cannot leave a usable slot empty.
+  const conflictExcluded = new Set<AliasInfo>();
+  let retainedCandidates: AliasInfo[] = [];
+  let selectedCandidates = new Set<AliasInfo>();
+  let baselinePressure: LocalPressureAnalysis;
+  while (true) {
+    retainedCandidates = profitableCandidates.filter((candidate) => !conflictExcluded.has(candidate));
+    baselinePressure = analyzeLocalPressure(ast);
+    retainedCandidates.forEach((candidate) => {
+      const pressureScope = baselinePressure.scopeByNode.get(candidate.targetScope!);
+      pressureScope?.candidates.push(candidate);
+    });
+
+    selectedCandidates = new Set<AliasInfo>();
+    baselinePressure.functions.forEach((fn) => {
+      allocateCandidates(fn.rootScope).forEach((candidate) => selectedCandidates.add(candidate));
+    });
+
+    const selectedByBenefit = [...selectedCandidates].sort(
+      (a, b) => (b.estimatedSavings ?? 0) - (a.estimatedSavings ?? 0) || a.order - b.order,
+    );
+    const conflictWinners: AliasInfo[] = [];
+    const newlyExcluded: AliasInfo[] = [];
+    selectedByBenefit.forEach((candidate) => {
+      if (conflictWinners.some((winner) => candidate.conflicts.has(winner))) {
+        newlyExcluded.push(candidate);
+      } else {
+        conflictWinners.push(candidate);
+      }
+    });
+    if (newlyExcluded.length === 0) break;
+    newlyExcluded.forEach((candidate) => conflictExcluded.add(candidate));
+  }
+
+  retainedCandidates.forEach((candidate) => {
+    candidate.selected = selectedCandidates.has(candidate);
   });
 
+  const assignedNames = new Set(unavailableNames);
+  const aliasCounters = new Map<string, number>();
+  retainedCandidates.forEach((candidate) => {
+    candidate.aliasName = undefined;
+  });
+  [...selectedCandidates]
+    .sort((a, b) => a.order - b.order)
+    .forEach((candidate) => {
+      let counter = aliasCounters.get(candidate.strategy.prefix) ?? 0;
+      let aliasName: string;
+      do {
+        aliasName = generateAliasName(counter++, candidate.strategy.prefix);
+      } while (LUA_RESERVED_WORDS.has(aliasName) || assignedNames.has(aliasName));
+      aliasCounters.set(candidate.strategy.prefix, counter);
+      assignedNames.add(aliasName);
+      candidate.aliasName = aliasName;
+      candidate.estimatedSavings = candidate.strategy.estimateSavings(candidate, aliasName.length);
+    });
+
+  const declarationsByScope = new Map<AliasScopeNode, AliasInfo[]>();
+  [...selectedCandidates]
+    .sort((a, b) => a.order - b.order)
+    .forEach((info) => {
+      const scope = info.targetScope!;
+      if (!declarationsByScope.has(scope)) declarationsByScope.set(scope, []);
+      declarationsByScope.get(scope)!.push(info);
+    });
+
   function replaceExpression(node: luaparse.Expression): luaparse.Expression {
-    const key = candidateKeys.get(node);
-    if (key) {
-      const alias = tracker.getAlias(key);
-      if (alias) return { type: "Identifier", name: alias } as luaparse.Identifier;
+    const selected = candidatesByNode.get(node)?.find((candidate) => candidate.selected);
+    if (selected?.aliasName) {
+      return { type: "Identifier", name: selected.aliasName } as luaparse.Identifier;
     }
 
     switch (node.type) {
@@ -628,6 +1101,51 @@ export function runAliasPass(ast: luaparse.Chunk, strategy: AliasStrategy): luap
   }
 
   ast.body.forEach(replaceStatement);
-  insertDeclarationsIntoScopes(declarationsByScope);
-  return ast;
+  const generatedDeclarations = new WeakSet<luaparse.LocalStatement>();
+  insertDeclarationsIntoScopes(declarationsByScope, generatedDeclarations);
+  const finalPressure = analyzeLocalPressure(ast, generatedDeclarations);
+
+  const constrainedFunctions: AliasFunctionReport[] = [];
+  baselinePressure.functions.forEach((baselineFn) => {
+    const candidatesForFunction = retainedCandidates.filter((candidate) => {
+      return baselinePressure.scopeByNode.get(candidate.targetScope!)?.functionRoot === baselineFn.root;
+    });
+    const omitted = candidatesForFunction.filter((candidate) => !candidate.selected);
+    if (omitted.length === 0) return;
+
+    const rules: Record<AliasRuleName, AliasRuleReport> = {
+      aliasLiterals: emptyRuleReport(),
+      aliasRepeatedExpressions: emptyRuleReport(),
+    };
+    candidatesForFunction.forEach((candidate) => {
+      const rule = rules[candidate.strategy.rule];
+      if (candidate.selected) {
+        rule.accepted++;
+        rule.estimatedBytesSaved += candidate.estimatedSavings ?? 0;
+      } else {
+        rule.omitted++;
+        rule.estimatedBytesOmitted += candidate.estimatedSavings ?? 0;
+      }
+    });
+
+    const finalFn = finalPressure.functionByRoot.get(baselineFn.root)!;
+    constrainedFunctions.push({
+      functionName: functionName(baselineFn.root),
+      sourceLine: baselineFn.root.loc?.start.line ?? 1,
+      localLimit: LUA_MAX_ACTIVE_LOCALS,
+      peakActiveLocals: finalFn.peakActiveLocals,
+      existingLocalsAtPeak: finalFn.existingLocalsAtPeak,
+      generatedLocalsAtPeak: finalFn.generatedLocalsAtPeak,
+      rules,
+    });
+  });
+
+  return {
+    ast,
+    report: { localLimit: LUA_MAX_ACTIVE_LOCALS, constrainedFunctions },
+  };
+}
+
+export function runAliasPass(ast: luaparse.Chunk, strategy: AliasStrategy): luaparse.Chunk {
+  return runAliasPasses(ast, [strategy]).ast;
 }

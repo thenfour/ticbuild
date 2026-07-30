@@ -1,5 +1,5 @@
 import * as luaparse from "luaparse";
-import {AliasBindingScope, AliasInfo, runAliasPass} from "./lua_alias_shared";
+import {AliasBindingScope, AliasInfo, AliasStrategy, runAliasPass} from "./lua_alias_shared";
 import {StringLiteralNode} from "./lua_utils";
 
 // ============================================================================
@@ -153,20 +153,32 @@ function expressionTextLength(node: luaparse.Expression|null|undefined): number 
    }
 }
 
-function shouldAliasExpression(info: AliasInfo): boolean {
+function estimateExpressionSavings(info: AliasInfo, aliasNameLength: number): number {
    const exprCost = expressionTextLength(info.node);
    if (!Number.isFinite(exprCost))
-      return false;
+      return Number.NEGATIVE_INFINITY;
 
-   const aliasNameLength = info.aliasName?.length ?? (EXPR_ALIAS_PREFIX.length + 1); // e.g., _a
    const declarationCost = 6 + aliasNameLength + exprCost;                           // "local " + name + "=" + expr
    const useCost = aliasNameLength;
 
    const aliasTotal = declarationCost + useCost * info.count;
    const noAliasTotal = exprCost * info.count;
 
-   return aliasTotal < noAliasTotal;
+   return noAliasTotal - aliasTotal;
 }
+
+export const repeatedExpressionAliasStrategy: AliasStrategy = {
+   rule: "aliasRepeatedExpressions",
+   prefix: EXPR_ALIAS_PREFIX,
+   serialize: (node: luaparse.Expression|null|undefined, bindings: AliasBindingScope) => {
+      if (!node)
+         return null;
+      if (!isAliasableExpression(node, bindings))
+         return null;
+      return serializeExpression(node, bindings);
+   },
+   estimateSavings: estimateExpressionSavings,
+};
 
 /**
  * Alias repeated expressions in the AST
@@ -186,17 +198,5 @@ function shouldAliasExpression(info: AliasInfo): boolean {
  *   local y = _b(1) + _b(2) + _b(3)
  */
 export function aliasRepeatedExpressionsInAST(ast: luaparse.Chunk): luaparse.Chunk {
-   const strategy = {
-      prefix: EXPR_ALIAS_PREFIX,
-      serialize: (node: luaparse.Expression|null|undefined, bindings: AliasBindingScope) => {
-         if (!node)
-            return null;
-         if (!isAliasableExpression(node, bindings))
-            return null;
-         return serializeExpression(node, bindings);
-      },
-      shouldAlias: shouldAliasExpression,
-   } as const;
-
-   return runAliasPass(ast, strategy);
+   return runAliasPass(ast, repeatedExpressionAliasStrategy);
 }

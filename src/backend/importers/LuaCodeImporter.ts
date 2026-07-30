@@ -5,7 +5,8 @@ import { constants as zlibConstants, deflateSync } from "node:zlib";
 import { zlibAsync as zopfliZlibAsync, ZopfliOptions } from "@gfx/zopfli";
 import { readTextFileAsync } from "../../utils/fileSystem";
 import { toLuaStringLiteral } from "../../utils/lua/lua_fundamentals";
-import { OptimizationRuleOptions, processLua } from "../../utils/lua/lua_processor";
+import { AliasPassReport, createEmptyAliasPassReport } from "../../utils/lua/lua_alias_shared";
+import { OptimizationRuleOptions, processLuaWithReport } from "../../utils/lua/lua_processor";
 import { Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
 import { CoalesceBool } from "../../utils/utils";
 import { ChunkDataResult, ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
@@ -45,6 +46,7 @@ export type LuaCodeArtifacts = {
   inputSource: string;
   preprocessedSource: string;
   minifiedSource: string;
+  minificationReport: AliasPassReport;
 };
 
 export type LuaCodeSizeStats = {
@@ -58,6 +60,7 @@ export class LuaCodeResourceView extends ResourceViewBase {
   preprocessedSource: string;
   minifyAllowedGlobalNames: string[];
   private cachedMinifiedSource: string | null = null;
+  private cachedMinificationReport: AliasPassReport | null = null;
   private cachedCompressedBytes: ChunkDataResult | null = null;
   private cachedCompressedSource: string | null = null;
   private cachedCompressionMode: LuaCompressionMode | null = null;
@@ -81,7 +84,7 @@ export class LuaCodeResourceView extends ResourceViewBase {
     }
     const minifyEnabled = CoalesceBool(project.manifest.assembly.lua?.minify, true);
     const emitGlobals = options?.emitGlobals !== false;
-    const minifiedSource = this.getMinifiedSource(project, minifyEnabled, emitGlobals);
+    const minifiedSource = this.getMinifiedResult(project, minifyEnabled, emitGlobals).source;
 
     if (chunkType === "CODE_COMPRESSED") {
       const compressionMode = normalizeCompressionMode(options?.compressionMode);
@@ -105,11 +108,12 @@ export class LuaCodeResourceView extends ResourceViewBase {
 
   getArtifacts(project: TicbuildProjectCore): LuaCodeArtifacts {
     const minifyEnabled = CoalesceBool(project.manifest.assembly.lua?.minify, true);
-    const minifiedSource = this.getMinifiedSource(project, minifyEnabled, true);
+    const minified = this.getMinifiedResult(project, minifyEnabled, true);
     return {
       inputSource: this.inputSource,
       preprocessedSource: this.preprocessedSource,
-      minifiedSource,
+      minifiedSource: minified.source,
+      minificationReport: minified.report,
     };
   }
 
@@ -123,29 +127,42 @@ export class LuaCodeResourceView extends ResourceViewBase {
     };
   }
 
-  private getMinifiedSource(project: TicbuildProjectCore, minifyEnabled: boolean, emitGlobals: boolean): string {
-    if (this.cachedMinifyEnabled === minifyEnabled && this.cachedMinifiedSource && emitGlobals) {
-      return this.cachedMinifiedSource;
+  private getMinifiedResult(
+    project: TicbuildProjectCore,
+    minifyEnabled: boolean,
+    emitGlobals: boolean,
+  ): { source: string; report: AliasPassReport } {
+    if (
+      this.cachedMinifyEnabled === minifyEnabled &&
+      this.cachedMinifiedSource !== null &&
+      this.cachedMinificationReport !== null &&
+      emitGlobals
+    ) {
+      return { source: this.cachedMinifiedSource, report: this.cachedMinificationReport };
     }
 
     let code = emitGlobals ? this.injectGlobals(project, this.preprocessedSource) : this.preprocessedSource;
+    let report = createEmptyAliasPassReport();
     if (minifyEnabled) {
       const options = buildMinificationOptions(
         project.manifest.assembly.lua?.minification,
         this.minifyAllowedGlobalNames,
       );
-      code = processLua(code, options);
+      const processed = processLuaWithReport(code, options);
+      code = processed.code;
+      report = processed.report;
     }
     code = this.injectMetadata(project, code);
 
     if (emitGlobals) {
       this.cachedMinifyEnabled = minifyEnabled;
       this.cachedMinifiedSource = code;
+      this.cachedMinificationReport = report;
       this.cachedCompressedBytes = null;
       this.cachedCompressedSource = null;
       this.cachedCompressionMode = null;
     }
-    return code;
+    return { source: code, report };
   }
 
   private getCompressedBytes(minifiedSource: string, compressionMode: "default" | "zlib-max"): Uint8Array;

@@ -141,6 +141,8 @@ Version 1 defines these message types:
 - `comment`: display-only text. Readers must not derive build semantics from it.
 - `diagnostic`: a warning or error message.
 - `lua.codeSize`: raw Lua chunk sizes, capacities, and bank usage.
+- `lua.minification`: emitted when Lua's 200-active-local limit causes profitable aliases to be omitted;
+  includes the constrained function, peak existing/generated locals, per-rule omissions, and estimated bytes not saved.
 - `cart.usage`: raw emitted-cart chunk and total-size information.
 - `build.completed`: successful terminal message with duration, log path, and cart path.
 - `build.failed`: failed terminal message with the error text.

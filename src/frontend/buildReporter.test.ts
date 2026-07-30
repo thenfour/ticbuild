@@ -24,7 +24,7 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf-8");
 }
 
-function createTempProject(code: string = "print('ok')"): { dir: string; manifestPath: string } {
+function createTempProject(code: string = "print('ok')", minify = false): { dir: string; manifestPath: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-reporter-"));
   writeFile(path.join(dir, "main.lua"), code);
   const manifest = {
@@ -44,7 +44,8 @@ function createTempProject(code: string = "print('ok')"): { dir: string; manifes
     ],
     assembly: {
       lua: {
-        minify: false,
+        minify,
+        ...(minify ? { minification: { removeUnusedLocals: false } } : {}),
       },
       blocks: [
         {
@@ -185,6 +186,61 @@ describe("Build reporters", () => {
     } finally {
       process.exitCode = previousExitCode;
       cons.setConsoleMessageSink(previousSink);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports aliases omitted because Lua's local-variable limit was reached", async () => {
+    const names = Array.from({ length: 200 }, (_, index) => `value${index}`).join(",");
+    const uses = Array.from({ length: 7 }, () => "time()").join("\n");
+    const code = `local ${names}\n${uses}\nreturn ${names}`;
+    const { dir, manifestPath } = createTempProject(code, true);
+    const { reporter, messages } = createCollectingReporter();
+
+    try {
+      await buildCore(manifestPath, undefined, reporter);
+
+      expect(messages.find((message) => message.type === "lua.minification")?.data).toMatchObject({
+        importName: "maincode",
+        localLimit: 200,
+        constrainedFunctions: [
+          {
+            functionName: "<main chunk>",
+            peakActiveLocals: 200,
+            existingLocalsAtPeak: 200,
+            generatedLocalsAtPeak: 0,
+            rules: {
+              aliasRepeatedExpressions: {
+                omitted: 1,
+              },
+            },
+          },
+        ],
+      });
+      expect(fs.readFileSync(path.join(dir, "obj", "imports.log"), "utf-8")).toContain(
+        "Lua minification local budget",
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renders local-budget constraints as actionable human warnings", async () => {
+    const names = Array.from({ length: 200 }, (_, index) => `value${index}`).join(",");
+    const uses = Array.from({ length: 7 }, () => "time()").join("\n");
+    const { dir, manifestPath } = createTempProject(`local ${names}\n${uses}\nreturn ${names}`, true);
+    const warningSpy = jest.spyOn(cons, "warning").mockImplementation(() => undefined);
+    const infoSpy = jest.spyOn(cons, "info").mockImplementation(() => undefined);
+
+    try {
+      await buildCore(manifestPath, undefined, new HumanBuildReporter());
+
+      expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining("200/200 active locals"));
+      expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining("aliasRepeatedExpressions=1"));
+      expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("Reduce simultaneously active locals"));
+    } finally {
+      warningSpy.mockRestore();
+      infoSpy.mockRestore();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

@@ -1,7 +1,13 @@
 import * as luaparse from "luaparse";
 import { renameLocalVariablesInAST } from "./lua_renamer";
-import { aliasLiteralsInAST } from "./lua_alias_literals";
-import { aliasRepeatedExpressionsInAST } from "./lua_alias_expressions";
+import { literalAliasStrategy } from "./lua_alias_literals";
+import { repeatedExpressionAliasStrategy } from "./lua_alias_expressions";
+import {
+  AliasPassReport,
+  AliasStrategy,
+  createEmptyAliasPassReport,
+  runAliasPasses,
+} from "./lua_alias_shared";
 import { packLocalDeclarationsInAST } from "./lua_pack_locals";
 import { simplifyExpressionsInAST } from "./lua_simplify";
 import { removeUnusedLocalsInAST } from "./lua_remove_unused_locals";
@@ -1316,7 +1322,12 @@ export function parseLua(code: string): luaparse.Chunk | null {
   return null;
 }
 
-export function processLua(code: string, ruleOptions: OptimizationRuleOptions): string {
+export type LuaProcessResult = {
+  code: string;
+  report: AliasPassReport;
+};
+
+export function processLuaWithReport(code: string, ruleOptions: OptimizationRuleOptions): LuaProcessResult {
   // Apply optimization rules
   //const options = {...DEFAULT_OPTIMIZATION_RULES, ...ruleOptions};
 
@@ -1348,7 +1359,7 @@ export function processLua(code: string, ruleOptions: OptimizationRuleOptions): 
   let ast = parseLua(processedCode);
   if (!ast) {
     console.error("Failed to parse Lua code; returning original code.");
-    return code;
+    return { code, report: createEmptyAliasPassReport() };
   }
   //console.log("Parsed Lua AST:", ast);
 
@@ -1370,13 +1381,11 @@ export function processLua(code: string, ruleOptions: OptimizationRuleOptions): 
     });
   }
 
-  if (ruleOptions.aliasLiterals) {
-    ast = aliasLiteralsInAST(ast);
-  }
-
-  if (ruleOptions.aliasRepeatedExpressions) {
-    ast = aliasRepeatedExpressionsInAST(ast);
-  }
+  const aliasStrategies: AliasStrategy[] = [];
+  if (ruleOptions.aliasLiterals) aliasStrategies.push(literalAliasStrategy);
+  if (ruleOptions.aliasRepeatedExpressions) aliasStrategies.push(repeatedExpressionAliasStrategy);
+  const aliasResult = runAliasPasses(ast, aliasStrategies);
+  ast = aliasResult.ast;
 
   if (ruleOptions.packLocalDeclarations) {
     ast = packLocalDeclarationsInAST(ast);
@@ -1406,7 +1415,14 @@ export function processLua(code: string, ruleOptions: OptimizationRuleOptions): 
   }
 
   const minified = unparseLua(ast, ruleOptions);
-  return reinsertDisableMinificationBlocks(minified, disableMinify.blocks);
+  return {
+    code: reinsertDisableMinificationBlocks(minified, disableMinify.blocks),
+    report: aliasResult.report,
+  };
+}
+
+export function processLua(code: string, ruleOptions: OptimizationRuleOptions): string {
+  return processLuaWithReport(code, ruleOptions).code;
 }
 
 function disambiguateNumericConcat(code: string): string {

@@ -1,3 +1,5 @@
+import type { AliasFunctionReport } from "../utils/lua/lua_alias_shared";
+
 export const buildReportVersion = 1;
 
 export type BuildReporterName = "human" | "jsonl";
@@ -37,6 +39,11 @@ export type BuildMessageDataByType = {
   "lua.codeSize": {
     importName: string;
     chunks: LuaCodeSizeEntry[];
+  };
+  "lua.minification": {
+    importName: string;
+    localLimit: number;
+    constrainedFunctions: AliasFunctionReport[];
   };
   "cart.usage": {
     chunks: CartChunkUsageEntry[];

@@ -1,5 +1,5 @@
 import * as luaparse from "luaparse";
-import { AliasInfo, runAliasPass } from "./lua_alias_shared";
+import { AliasInfo, AliasStrategy, runAliasPass } from "./lua_alias_shared";
 import { StringLiteralNode } from "./lua_utils";
 
 // ============================================================================
@@ -37,8 +37,8 @@ function serializeLiteral(node: luaparse.Expression): string | null {
   }
 }
 
-// Check if a literal is worth aliasing based on space savings
-function shouldAliasLiteral(info: AliasInfo): boolean {
+// Estimate the source bytes saved by aliasing this literal.
+function estimateLiteralSavings(info: AliasInfo, aliasNameLength: number): number {
   const node = info.node;
 
   // Calculate the cost of the literal per use
@@ -68,12 +68,11 @@ function shouldAliasLiteral(info: AliasInfo): boolean {
       break;
 
     default:
-      return false;
+      return Number.NEGATIVE_INFINITY;
   }
 
   // Calculate the cost of creating an alias
   // Format: "local La=<literal>" (minimum)
-  const aliasNameLength = info.aliasName?.length ?? 2; // minimum expected alias length
   const declarationCost = 6 + aliasNameLength + literalCost; // "local " + name + "=" + literal
 
   // Calculate the cost of using the alias (just the identifier length)
@@ -85,9 +84,15 @@ function shouldAliasLiteral(info: AliasInfo): boolean {
   // Total cost without alias: literalCost * count
   const noAliasTotalCost = literalCost * info.count;
 
-  // Only alias if it saves space
-  return aliasTotalCost < noAliasTotalCost;
+  return noAliasTotalCost - aliasTotalCost;
 }
+
+export const literalAliasStrategy: AliasStrategy = {
+  rule: "aliasLiterals",
+  prefix: LITERAL_ALIAS_PREFIX,
+  serialize: serializeLiteral,
+  estimateSavings: estimateLiteralSavings,
+};
 
 /**
  * Alias repeated literal values in the AST
@@ -107,11 +112,5 @@ function shouldAliasLiteral(info: AliasInfo): boolean {
  *   local z = La .. "demo"
  */
 export function aliasLiteralsInAST(ast: luaparse.Chunk): luaparse.Chunk {
-  const strategy = {
-    prefix: LITERAL_ALIAS_PREFIX,
-    serialize: serializeLiteral,
-    shouldAlias: shouldAliasLiteral,
-  } as const;
-
-  return runAliasPass(ast, strategy);
+  return runAliasPass(ast, literalAliasStrategy);
 }

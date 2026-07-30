@@ -8,6 +8,7 @@ import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFil
 import { canonicalizePath } from "../utils/fileSystem";
 import { formatBytes } from "../utils/utils";
 import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
+import type { AliasPassReport, AliasRuleName } from "../utils/lua/lua_alias_shared";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { writeFileSync } from "node:fs";
 import * as path from "node:path";
@@ -122,6 +123,7 @@ export async function buildCore(
       }
 
       const artifacts = resource.getCodeArtifacts(project.resolvedCore);
+      reportLuaMinification(reporter, identifier, artifacts.minificationReport);
       const preprocessedPath = project.resolvedCore.resolveObjPath(`${identifier}.01.preprocessed.lua`);
       const minifiedPath = project.resolvedCore.resolveObjPath(`${identifier}.02.minified.lua`);
 
@@ -130,6 +132,7 @@ export async function buildCore(
 
       importsLines.push(`    Wrote: ${preprocessedPath}`);
       importsLines.push(`    Wrote: ${minifiedPath}`);
+      appendLuaMinificationLog(importsLines, artifacts.minificationReport);
       if (compressedOutputs.length > 0) {
         const compressedPath = project.resolvedCore.resolveObjPath(`${identifier}.03.compressed.bin`);
         await writeBinaryFile(compressedPath, compressedOutputs[0].bytes);
@@ -221,6 +224,58 @@ function reportDiagnostic(reporter: BuildReporter, severity: "warning" | "error"
         cons.error(message);
       }
     },
+  });
+}
+
+function omittedAliasSummary(report: AliasPassReport["constrainedFunctions"][number]): string {
+  const ruleNames: AliasRuleName[] = ["aliasLiterals", "aliasRepeatedExpressions"];
+  return ruleNames
+    .filter((rule) => report.rules[rule].omitted > 0)
+    .map((rule) => `${rule}=${report.rules[rule].omitted}`)
+    .join(", ");
+}
+
+function reportLuaMinification(reporter: BuildReporter, importName: string, report: AliasPassReport): void {
+  if (report.constrainedFunctions.length === 0) return;
+
+  reporter.message({
+    type: "lua.minification",
+    data: {
+      importName,
+      localLimit: report.localLimit,
+      constrainedFunctions: report.constrainedFunctions,
+    },
+    humanReadable: () => {
+      report.constrainedFunctions.forEach((fn) => {
+        const omittedBytes =
+          fn.rules.aliasLiterals.estimatedBytesOmitted +
+          fn.rules.aliasRepeatedExpressions.estimatedBytesOmitted;
+        cons.warning(
+          `Lua minification local budget reached in ${fn.functionName} ` +
+            `(minifier input line ${fn.sourceLine}): ${fn.peakActiveLocals}/${fn.localLimit} active locals; ` +
+            `omitted ${omittedAliasSummary(fn)} (${omittedBytes} estimated bytes not saved).`,
+        );
+        cons.info(
+          `  Peak composition: ${fn.existingLocalsAtPeak} existing, ${fn.generatedLocalsAtPeak} generated. ` +
+            `Reduce simultaneously active locals or narrow their scopes to admit more aliases.`,
+        );
+      });
+    },
+  });
+}
+
+function appendLuaMinificationLog(lines: string[], report: AliasPassReport): void {
+  if (report.constrainedFunctions.length === 0) return;
+
+  lines.push(`  Lua minification local budget:`);
+  report.constrainedFunctions.forEach((fn) => {
+    const omittedBytes =
+      fn.rules.aliasLiterals.estimatedBytesOmitted + fn.rules.aliasRepeatedExpressions.estimatedBytesOmitted;
+    lines.push(
+      `    ${fn.functionName} (line ${fn.sourceLine}): peak ${fn.peakActiveLocals}/${fn.localLimit}; ` +
+        `existing ${fn.existingLocalsAtPeak}; generated ${fn.generatedLocalsAtPeak}; ` +
+        `omitted ${omittedAliasSummary(fn)}; estimated bytes not saved ${omittedBytes}`,
+    );
   });
 }
 
