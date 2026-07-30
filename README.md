@@ -114,6 +114,37 @@ ticbuild init
 
 ```
 
+## Machine-readable build output
+
+`ticbuild build` uses the human-readable reporter by default. Use the JSONL
+reporter when another program needs to consume build messages:
+
+```bash
+ticbuild build --reporter jsonl
+```
+
+The JSONL reporter writes one JSON object per line to stdout. Lines look like:
+
+```json
+{"version":1,"type":"comment","data":{"message":"Loading imported resources..."}}
+```
+
+- `version` is the schema/contract version.
+- `type` determines the shape of `data`.
+- `data` contains raw values such as byte counts, durations, resolved paths...
+  Human-readable formatting is not part of the JSONL contract.
+
+Version 1 defines these message types:
+
+- `project.loadedFrom`: resolved source manifest path.
+- `manifest.resolved`: path of the generated resolved manifest.
+- `comment`: display-only text. Readers must not derive build semantics from it.
+- `diagnostic`: a warning or error message.
+- `lua.codeSize`: raw Lua chunk sizes, capacities, and bank usage.
+- `cart.usage`: raw emitted-cart chunk and total-size information.
+- `build.completed`: successful terminal message with duration, log path, and cart path.
+- `build.failed`: failed terminal message with the error text.
+
 ## REPL mode (interactive preprocessing/minification)
 
 Interactive Lua processing on the command line, using the same context as

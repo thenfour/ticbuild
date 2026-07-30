@@ -133,6 +133,7 @@ async function main(): Promise<void> {
     .alias("b")
     .description("Build the cart based on the input manifest")
     .option("-m, --mode <name>", "Build configuration name")
+    .option("--reporter <name>", "Build output reporter: human or jsonl", "human")
     .option(
       "-v, --var <key=value>",
       "Override manifest variable",
