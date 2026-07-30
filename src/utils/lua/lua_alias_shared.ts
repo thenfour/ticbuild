@@ -1,5 +1,5 @@
 import * as luaparse from "luaparse";
-import { LUA_RESERVED_WORDS } from "./lua_ast";
+import { isIdentifier, LUA_RESERVED_WORDS, walkAST } from "./lua_ast";
 
 // ============================================================================
 // Shared aliasing utilities
@@ -89,13 +89,47 @@ export function cloneExpression<T extends luaparse.Expression>(node: T): T {
 }
 
 // Shared info about an aliasable item (expression or literal)
+type AliasScopeNode =
+  | luaparse.Chunk
+  | luaparse.FunctionDeclaration
+  | luaparse.IfClause
+  | luaparse.ElseifClause
+  | luaparse.ElseClause
+  | luaparse.WhileStatement
+  | luaparse.DoStatement
+  | luaparse.RepeatStatement
+  | luaparse.ForNumericStatement
+  | luaparse.ForGenericStatement;
+
+export interface AliasBindingScope {
+  isShadowed(name: string): boolean;
+}
+
+class LexicalBindingScope implements AliasBindingScope {
+  private localNames = new Set<string>();
+
+  constructor(private parent: LexicalBindingScope | null = null) {}
+
+  createChild(): LexicalBindingScope {
+    return new LexicalBindingScope(this);
+  }
+
+  define(name: string | undefined | null): void {
+    if (name) this.localNames.add(name);
+  }
+
+  isShadowed(name: string): boolean {
+    return this.localNames.has(name) || (this.parent?.isShadowed(name) ?? false);
+  }
+}
+
 export interface AliasInfo {
   serialized: string;
   node: luaparse.Expression;
   count: number;
-  scopes: Array<luaparse.Chunk | luaparse.Statement>;
+  scopes: AliasScopeNode[];
   aliasName?: string;
-  targetScope?: luaparse.Chunk | luaparse.Statement;
+  targetScope?: AliasScopeNode;
 }
 
 // Tracker for aliasable items
@@ -103,13 +137,15 @@ export class AliasTracker {
   private items = new Map<string, AliasInfo>();
   private aliasCounter = 0;
   private prefix: string;
+  private unavailableNames: Set<string>;
 
-  constructor(prefix: string = "_") {
+  constructor(prefix: string = "_", unavailableNames: Iterable<string> = []) {
     this.prefix = prefix;
+    this.unavailableNames = new Set(unavailableNames);
   }
 
   // Record an occurrence of an item in a given scope
-  record(key: string, node: luaparse.Expression, scope: luaparse.Chunk | luaparse.Statement): void {
+  record(key: string, node: luaparse.Expression, scope: AliasScopeNode): void {
     const existing = this.items.get(key);
     if (existing) {
       existing.count++;
@@ -135,9 +171,10 @@ export class AliasTracker {
         let aliasName: string;
         do {
           aliasName = generateAliasName(this.aliasCounter++, this.prefix);
-        } while (LUA_RESERVED_WORDS.has(aliasName));
+        } while (LUA_RESERVED_WORDS.has(aliasName) || this.unavailableNames.has(aliasName));
 
         info.aliasName = aliasName;
+        this.unavailableNames.add(aliasName);
         result.push(info);
       }
     }
@@ -152,27 +189,12 @@ export class AliasTracker {
   }
 }
 
-// Build scope hierarchy map
-export function buildScopeHierarchy(
-  ast: luaparse.Chunk,
-  processStatements: (
-    stmts: luaparse.Statement[],
-    scope: luaparse.Chunk | luaparse.Statement,
-    parent: luaparse.Chunk | luaparse.Statement | null,
-    scopeParents: WeakMap<luaparse.Chunk | luaparse.Statement, luaparse.Chunk | luaparse.Statement>,
-  ) => void,
-): WeakMap<luaparse.Chunk | luaparse.Statement, luaparse.Chunk | luaparse.Statement> {
-  const scopeParents = new WeakMap<luaparse.Chunk | luaparse.Statement, luaparse.Chunk | luaparse.Statement>();
-  processStatements(ast.body, ast, null, scopeParents);
-  return scopeParents;
-}
-
 // Find common ancestor scope for multiple scopes
 export function findCommonAncestor(
-  scopes: Array<luaparse.Chunk | luaparse.Statement>,
-  scopeParents: WeakMap<luaparse.Chunk | luaparse.Statement, luaparse.Chunk | luaparse.Statement>,
-  rootScope: luaparse.Chunk | luaparse.Statement,
-): luaparse.Chunk | luaparse.Statement {
+  scopes: AliasScopeNode[],
+  scopeParents: WeakMap<AliasScopeNode, AliasScopeNode>,
+  rootScope: AliasScopeNode,
+): AliasScopeNode {
   if (scopes.length === 0) return rootScope;
   if (scopes.length === 1) return scopes[0];
 
@@ -228,14 +250,9 @@ export function findCommonAncestor(
 
 // Insert declarations into scopes
 export function insertDeclarationsIntoScopes(
-  ast: luaparse.Chunk,
-  declarationsByScope: Map<luaparse.Chunk | luaparse.Statement, AliasInfo[]>,
+  declarationsByScope: Map<AliasScopeNode, AliasInfo[]>,
 ): void {
-  // Helper to insert declarations at the beginning of a scope
-  function insertDeclarations(scope: any): void {
-    const declarations = declarationsByScope.get(scope);
-    if (!declarations || declarations.length === 0) return;
-
+  declarationsByScope.forEach((declarations, scope) => {
     const aliasDeclarations: luaparse.LocalStatement[] = declarations.map((info) => ({
       type: "LocalStatement",
       variables: [
@@ -246,45 +263,8 @@ export function insertDeclarationsIntoScopes(
       ],
       init: [info.node],
     }));
-
-    let body: any[];
-    if (scope === ast) {
-      body = ast.body;
-    } else if (scope.body) {
-      body = scope.body;
-    } else {
-      return;
-    }
-
-    body.unshift(...aliasDeclarations);
-  }
-
-  // Process statements recursively to insert into nested scopes
-  function processStatementsForInsertion(stmts: any[]): void {
-    stmts.forEach((stmt) => {
-      switch (stmt.type) {
-        case "IfStatement":
-          stmt.clauses.forEach((clause: any) => {
-            insertDeclarations(clause);
-            processStatementsForInsertion(clause.body);
-          });
-          break;
-
-        case "WhileStatement":
-        case "RepeatStatement":
-        case "ForNumericStatement":
-        case "ForGenericStatement":
-        case "FunctionDeclaration":
-        case "DoStatement":
-          insertDeclarations(stmt);
-          processStatementsForInsertion(stmt.body);
-          break;
-      }
-    });
-  }
-
-  insertDeclarations(ast);
-  processStatementsForInsertion(ast.body);
+    scope.body.unshift(...aliasDeclarations);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -293,145 +273,213 @@ export function insertDeclarationsIntoScopes(
 
 export type AliasStrategy = {
   prefix: string;
-  serialize(node: luaparse.Expression | null | undefined): string | null;
+  serialize(node: luaparse.Expression | null | undefined, bindings: AliasBindingScope): string | null;
   shouldAlias(info: AliasInfo): boolean;
-  replaceExpression(node: luaparse.Expression, tracker: AliasTracker): luaparse.Expression;
 };
 
 export function runAliasPass(ast: luaparse.Chunk, strategy: AliasStrategy): luaparse.Chunk {
-  const tracker = new AliasTracker(strategy.prefix);
+  const unavailableNames = new Set<string>();
+  walkAST(ast, (node) => {
+    if (isIdentifier(node)) unavailableNames.add(node.name);
+  });
 
-  type ScopeNode = luaparse.Chunk | luaparse.Statement;
+  const tracker = new AliasTracker(strategy.prefix, unavailableNames);
+  const candidateKeys = new WeakMap<luaparse.Expression, string>();
+  const scopeParents = new WeakMap<AliasScopeNode, AliasScopeNode>();
 
-  function countExpr(node: luaparse.Expression, currentScope: ScopeNode): void {
+  function registerScope(scope: AliasScopeNode, parentScope: AliasScopeNode): void {
+    scopeParents.set(scope, parentScope);
+  }
+
+  function countExpression(
+    node: luaparse.Expression,
+    currentScope: AliasScopeNode,
+    bindings: LexicalBindingScope,
+  ): void {
     if (!node) return;
 
-    const key = strategy.serialize(node);
-    if (key) tracker.record(key, node, currentScope);
+    const key = strategy.serialize(node, bindings);
+    if (key) {
+      tracker.record(key, node, currentScope);
+      candidateKeys.set(node, key);
+    }
 
     switch (node.type) {
       case "BinaryExpression":
       case "LogicalExpression":
-        countExpr(node.left, currentScope);
-        countExpr(node.right, currentScope);
-        break;
+        countExpression(node.left, currentScope, bindings);
+        countExpression(node.right, currentScope, bindings);
+        return;
 
       case "UnaryExpression":
-        countExpr(node.argument, currentScope);
-        break;
+        countExpression(node.argument, currentScope, bindings);
+        return;
 
       case "CallExpression":
-        countExpr(node.base, currentScope);
-        if (node.arguments) node.arguments.forEach((arg) => countExpr(arg, currentScope));
-        break;
+        countExpression(node.base, currentScope, bindings);
+        node.arguments.forEach((arg) => countExpression(arg, currentScope, bindings));
+        return;
 
       case "TableCallExpression":
-        countExpr(node.base, currentScope);
-        countExpr(node.arguments, currentScope);
-        break;
+        countExpression(node.base, currentScope, bindings);
+        countExpression(node.arguments, currentScope, bindings);
+        return;
 
       case "StringCallExpression":
-        countExpr(node.base, currentScope);
-        break;
+        countExpression(node.base, currentScope, bindings);
+        return;
 
       case "MemberExpression":
-        countExpr(node.base, currentScope);
-        break;
+        countExpression(node.base, currentScope, bindings);
+        return;
 
       case "IndexExpression":
-        countExpr(node.base, currentScope);
-        countExpr(node.index, currentScope);
-        break;
+        countExpression(node.base, currentScope, bindings);
+        countExpression(node.index, currentScope, bindings);
+        return;
 
       case "TableConstructorExpression":
-        if (node.fields) {
-          node.fields.forEach((field: luaparse.TableKey | luaparse.TableKeyString | luaparse.TableValue) => {
-            if (field.type === "TableKey") {
-              if (field.key) countExpr(field.key, currentScope);
-            }
-            if (field.value) countExpr(field.value, currentScope);
-          });
-        }
-        break;
+        node.fields.forEach((field) => {
+          if (field.type === "TableKey") countExpression(field.key, currentScope, bindings);
+          countExpression(field.value, currentScope, bindings);
+        });
+        return;
+
+      case "FunctionDeclaration": {
+        registerScope(node, currentScope);
+        const functionBindings = bindings.createChild();
+        node.parameters.forEach((parameter) => {
+          if (isIdentifier(parameter)) functionBindings.define(parameter.name);
+        });
+        countBlock(node.body, node, functionBindings);
+        return;
+      }
+
+      default:
+        return;
     }
   }
 
-  function processScope(
-    stmts: luaparse.Statement[],
-    currentScope: ScopeNode,
-    parentScope: ScopeNode | null,
-    scopeParents: WeakMap<ScopeNode, ScopeNode>,
+  function countAssignmentTarget(
+    node: luaparse.Identifier | luaparse.MemberExpression | luaparse.IndexExpression,
+    currentScope: AliasScopeNode,
+    bindings: LexicalBindingScope,
   ): void {
-    if (parentScope) scopeParents.set(currentScope, parentScope);
+    switch (node.type) {
+      case "MemberExpression":
+        countExpression(node.base, currentScope, bindings);
+        return;
 
-    stmts.forEach((stmt) => countInStatement(stmt, currentScope, scopeParents));
+      case "IndexExpression":
+        countExpression(node.base, currentScope, bindings);
+        countExpression(node.index, currentScope, bindings);
+        return;
+
+      default:
+        return;
+    }
   }
 
-  function countInStatement(
-    stmt: luaparse.Statement,
-    currentScope: ScopeNode,
-    scopeParents: WeakMap<ScopeNode, ScopeNode>,
+  function countBlock(
+    statements: luaparse.Statement[],
+    currentScope: AliasScopeNode,
+    bindings: LexicalBindingScope,
   ): void {
-    if (!stmt) return;
+    statements.forEach((statement) => countStatement(statement, currentScope, bindings));
+  }
 
+  function countStatement(
+    stmt: luaparse.Statement,
+    currentScope: AliasScopeNode,
+    bindings: LexicalBindingScope,
+  ): void {
     switch (stmt.type) {
       case "LocalStatement":
-        if (stmt.init) stmt.init.forEach((expr) => countExpr(expr, currentScope));
-        break;
+        stmt.init.forEach((expression) => countExpression(expression, currentScope, bindings));
+        stmt.variables.forEach((variable) => bindings.define(variable.name));
+        return;
 
       case "AssignmentStatement":
-        stmt.variables.forEach((v) => countExpr(v, currentScope));
-        stmt.init.forEach((expr) => countExpr(expr, currentScope));
-        break;
+        stmt.variables.forEach((variable) => countAssignmentTarget(variable, currentScope, bindings));
+        stmt.init.forEach((expression) => countExpression(expression, currentScope, bindings));
+        return;
 
       case "CallStatement":
-        countExpr(stmt.expression, currentScope);
-        break;
+        countExpression(stmt.expression, currentScope, bindings);
+        return;
 
       case "ReturnStatement":
-        stmt.arguments.forEach((arg) => countExpr(arg, currentScope));
-        break;
+        stmt.arguments.forEach((argument) => countExpression(argument, currentScope, bindings));
+        return;
 
       case "IfStatement":
         stmt.clauses.forEach((clause) => {
-          if (clause.type !== "ElseClause" && clause.condition) countExpr(clause.condition, currentScope);
-          processScope(clause.body, stmt, currentScope, scopeParents);
+          if (clause.type !== "ElseClause") countExpression(clause.condition, currentScope, bindings);
+          registerScope(clause, currentScope);
+          countBlock(clause.body, clause, bindings.createChild());
         });
-        break;
+        return;
 
       case "WhileStatement":
-        countExpr(stmt.condition, currentScope);
-        processScope(stmt.body, stmt, currentScope, scopeParents);
-        break;
+        countExpression(stmt.condition, currentScope, bindings);
+        registerScope(stmt, currentScope);
+        countBlock(stmt.body, stmt, bindings.createChild());
+        return;
 
-      case "RepeatStatement":
-        processScope(stmt.body, stmt, currentScope, scopeParents);
-        countExpr(stmt.condition, currentScope);
-        break;
+      case "RepeatStatement": {
+        registerScope(stmt, currentScope);
+        const repeatBindings = bindings.createChild();
+        countBlock(stmt.body, stmt, repeatBindings);
+        countExpression(stmt.condition, stmt, repeatBindings);
+        return;
+      }
 
-      case "ForNumericStatement":
-        countExpr(stmt.start, currentScope);
-        countExpr(stmt.end, currentScope);
-        if (stmt.step) countExpr(stmt.step, currentScope);
-        processScope(stmt.body, stmt, currentScope, scopeParents);
-        break;
+      case "ForNumericStatement": {
+        countExpression(stmt.start, currentScope, bindings);
+        countExpression(stmt.end, currentScope, bindings);
+        if (stmt.step) countExpression(stmt.step, currentScope, bindings);
+        registerScope(stmt, currentScope);
+        const forBindings = bindings.createChild();
+        forBindings.define(stmt.variable.name);
+        countBlock(stmt.body, stmt, forBindings);
+        return;
+      }
 
-      case "ForGenericStatement":
-        stmt.iterators.forEach((it) => countExpr(it, currentScope));
-        processScope(stmt.body, stmt, currentScope, scopeParents);
-        break;
+      case "ForGenericStatement": {
+        stmt.iterators.forEach((iterator) => countExpression(iterator, currentScope, bindings));
+        registerScope(stmt, currentScope);
+        const forBindings = bindings.createChild();
+        stmt.variables.forEach((variable) => forBindings.define(variable.name));
+        countBlock(stmt.body, stmt, forBindings);
+        return;
+      }
 
-      case "FunctionDeclaration":
-        processScope(stmt.body, stmt, currentScope, scopeParents);
-        break;
+      case "FunctionDeclaration": {
+        if (stmt.isLocal && isIdentifier(stmt.identifier)) {
+          bindings.define(stmt.identifier.name);
+        } else if (stmt.identifier) {
+          countAssignmentTarget(stmt.identifier, currentScope, bindings);
+        }
+        registerScope(stmt, currentScope);
+        const functionBindings = bindings.createChild();
+        stmt.parameters.forEach((parameter) => {
+          if (isIdentifier(parameter)) functionBindings.define(parameter.name);
+        });
+        countBlock(stmt.body, stmt, functionBindings);
+        return;
+      }
 
       case "DoStatement":
-        processScope(stmt.body, stmt, currentScope, scopeParents);
-        break;
+        registerScope(stmt, currentScope);
+        countBlock(stmt.body, stmt, bindings.createChild());
+        return;
+
+      default:
+        return;
     }
   }
 
-  const scopeParents = buildScopeHierarchy(ast, processScope);
+  countBlock(ast.body, ast, new LexicalBindingScope());
   const aliasable = tracker.getAliasableItems(strategy.shouldAlias);
   if (aliasable.length === 0) return ast;
 
@@ -439,84 +487,147 @@ export function runAliasPass(ast: luaparse.Chunk, strategy: AliasStrategy): luap
     info.targetScope = findCommonAncestor(info.scopes, scopeParents, ast);
   });
 
-  const declarationsByScope = new Map<ScopeNode, AliasInfo[]>();
+  const declarationsByScope = new Map<AliasScopeNode, AliasInfo[]>();
   aliasable.forEach((info) => {
     const scope = info.targetScope!;
     if (!declarationsByScope.has(scope)) declarationsByScope.set(scope, []);
     declarationsByScope.get(scope)!.push(info);
   });
 
-  function replaceInStatement(stmt: luaparse.Statement): void {
-    if (!stmt) return;
+  function replaceExpression(node: luaparse.Expression): luaparse.Expression {
+    const key = candidateKeys.get(node);
+    if (key) {
+      const alias = tracker.getAlias(key);
+      if (alias) return { type: "Identifier", name: alias } as luaparse.Identifier;
+    }
 
-    switch (stmt.type) {
-      case "LocalStatement":
-        if (stmt.init) stmt.init = stmt.init.map((expr) => strategy.replaceExpression(expr, tracker));
-        break;
+    switch (node.type) {
+      case "BinaryExpression":
+      case "LogicalExpression":
+        node.left = replaceExpression(node.left);
+        node.right = replaceExpression(node.right);
+        return node;
 
-      case "AssignmentStatement":
-        stmt.variables = stmt.variables.map(
-          (v) =>
-            strategy.replaceExpression(v, tracker) as
-              | luaparse.Identifier
-              | luaparse.MemberExpression
-              | luaparse.IndexExpression,
-        );
-        stmt.init = stmt.init.map((expr) => strategy.replaceExpression(expr, tracker));
-        break;
+      case "UnaryExpression":
+        node.argument = replaceExpression(node.argument);
+        return node;
 
-      case "CallStatement":
-        stmt.expression = strategy.replaceExpression(stmt.expression, tracker) as
-          | luaparse.CallExpression
-          | luaparse.TableCallExpression
-          | luaparse.StringCallExpression;
-        break;
+      case "CallExpression":
+        node.base = replaceExpression(node.base);
+        node.arguments = node.arguments.map(replaceExpression);
+        return node;
 
-      case "ReturnStatement":
-        stmt.arguments = stmt.arguments.map((arg) => strategy.replaceExpression(arg, tracker));
-        break;
+      case "TableCallExpression":
+        node.base = replaceExpression(node.base);
+        node.arguments = replaceExpression(node.arguments);
+        return node;
 
-      case "IfStatement":
-        stmt.clauses.forEach((clause) => {
-          if (clause.type !== "ElseClause" && clause.condition)
-            clause.condition = strategy.replaceExpression(clause.condition, tracker);
-          clause.body.forEach((s) => replaceInStatement(s));
+      case "StringCallExpression":
+        node.base = replaceExpression(node.base);
+        return node;
+
+      case "MemberExpression":
+        node.base = replaceExpression(node.base);
+        return node;
+
+      case "IndexExpression":
+        node.base = replaceExpression(node.base);
+        node.index = replaceExpression(node.index);
+        return node;
+
+      case "TableConstructorExpression":
+        node.fields.forEach((field) => {
+          if (field.type === "TableKey") field.key = replaceExpression(field.key);
+          field.value = replaceExpression(field.value);
         });
-        break;
-
-      case "WhileStatement":
-        stmt.condition = strategy.replaceExpression(stmt.condition, tracker);
-        stmt.body.forEach((s) => replaceInStatement(s));
-        break;
-
-      case "RepeatStatement":
-        stmt.body.forEach((s) => replaceInStatement(s));
-        stmt.condition = strategy.replaceExpression(stmt.condition, tracker);
-        break;
-
-      case "ForNumericStatement":
-        stmt.start = strategy.replaceExpression(stmt.start, tracker);
-        stmt.end = strategy.replaceExpression(stmt.end, tracker);
-        if (stmt.step) stmt.step = strategy.replaceExpression(stmt.step, tracker);
-        stmt.body.forEach((s) => replaceInStatement(s));
-        break;
-
-      case "ForGenericStatement":
-        stmt.iterators = stmt.iterators.map((it) => strategy.replaceExpression(it, tracker));
-        stmt.body.forEach((s) => replaceInStatement(s));
-        break;
+        return node;
 
       case "FunctionDeclaration":
-        stmt.body.forEach((s) => replaceInStatement(s));
-        break;
+        node.body.forEach(replaceStatement);
+        return node;
 
-      case "DoStatement":
-        stmt.body.forEach((s) => replaceInStatement(s));
-        break;
+      default:
+        return node;
     }
   }
 
-  ast.body.forEach((stmt) => replaceInStatement(stmt));
-  insertDeclarationsIntoScopes(ast, declarationsByScope);
+  function replaceAssignmentTarget(
+    node: luaparse.Identifier | luaparse.MemberExpression | luaparse.IndexExpression,
+  ): void {
+    if (node.type === "MemberExpression") {
+      node.base = replaceExpression(node.base);
+    } else if (node.type === "IndexExpression") {
+      node.base = replaceExpression(node.base);
+      node.index = replaceExpression(node.index);
+    }
+  }
+
+  function replaceStatement(stmt: luaparse.Statement): void {
+    switch (stmt.type) {
+      case "LocalStatement":
+        stmt.init = stmt.init.map(replaceExpression);
+        return;
+
+      case "AssignmentStatement":
+        stmt.variables.forEach(replaceAssignmentTarget);
+        stmt.init = stmt.init.map(replaceExpression);
+        return;
+
+      case "CallStatement":
+        stmt.expression = replaceExpression(stmt.expression) as
+          | luaparse.CallExpression
+          | luaparse.TableCallExpression
+          | luaparse.StringCallExpression;
+        return;
+
+      case "ReturnStatement":
+        stmt.arguments = stmt.arguments.map(replaceExpression);
+        return;
+
+      case "IfStatement":
+        stmt.clauses.forEach((clause) => {
+          if (clause.type !== "ElseClause") clause.condition = replaceExpression(clause.condition);
+          clause.body.forEach(replaceStatement);
+        });
+        return;
+
+      case "WhileStatement":
+        stmt.condition = replaceExpression(stmt.condition);
+        stmt.body.forEach(replaceStatement);
+        return;
+
+      case "RepeatStatement":
+        stmt.body.forEach(replaceStatement);
+        stmt.condition = replaceExpression(stmt.condition);
+        return;
+
+      case "ForNumericStatement":
+        stmt.start = replaceExpression(stmt.start);
+        stmt.end = replaceExpression(stmt.end);
+        if (stmt.step) stmt.step = replaceExpression(stmt.step);
+        stmt.body.forEach(replaceStatement);
+        return;
+
+      case "ForGenericStatement":
+        stmt.iterators = stmt.iterators.map(replaceExpression);
+        stmt.body.forEach(replaceStatement);
+        return;
+
+      case "FunctionDeclaration":
+        if (!stmt.isLocal && stmt.identifier) replaceAssignmentTarget(stmt.identifier);
+        stmt.body.forEach(replaceStatement);
+        return;
+
+      case "DoStatement":
+        stmt.body.forEach(replaceStatement);
+        return;
+
+      default:
+        return;
+    }
+  }
+
+  ast.body.forEach(replaceStatement);
+  insertDeclarationsIntoScopes(declarationsByScope);
   return ast;
 }

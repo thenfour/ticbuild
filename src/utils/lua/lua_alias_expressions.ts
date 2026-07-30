@@ -1,5 +1,5 @@
 import * as luaparse from "luaparse";
-import {AliasInfo, runAliasPass} from "./lua_alias_shared";
+import {AliasBindingScope, AliasInfo, runAliasPass} from "./lua_alias_shared";
 import {StringLiteralNode} from "./lua_utils";
 
 // ============================================================================
@@ -18,23 +18,23 @@ const SAFE_GLOBAL_FUNCS = new Set([
 
 //type StringLiteralNode = luaparse.StringLiteral&{value?: string | null};
 
-function baseIsSafeGlobal(expr: luaparse.Expression): boolean {
-   return expr.type === "Identifier" && SAFE_GLOBAL_BASES.has(expr.name);
+function baseIsSafeGlobal(expr: luaparse.Expression, bindings: AliasBindingScope): boolean {
+   return expr.type === "Identifier" && SAFE_GLOBAL_BASES.has(expr.name) && !bindings.isShadowed(expr.name);
 }
 
 // Serialize an expression to a string key for comparison
-function serializeExpression(node: luaparse.Expression|null|undefined): string|null {
+function serializeExpression(node: luaparse.Expression|null|undefined, bindings: AliasBindingScope): string|null {
    if (!node)
       return null;
 
    switch (node.type) {
       case "Identifier":
-         if (!SAFE_GLOBAL_FUNCS.has(node.name))
+         if (!SAFE_GLOBAL_FUNCS.has(node.name) || bindings.isShadowed(node.name))
             return null;
          return `id:${node.name}`;
 
       case "MemberExpression": {
-         if (!baseIsSafeGlobal(node.base))
+         if (!baseIsSafeGlobal(node.base, bindings))
             return null;
          const baseName = (node.base as luaparse.Identifier).name;
          const id = node.identifier;
@@ -44,7 +44,7 @@ function serializeExpression(node: luaparse.Expression|null|undefined): string|n
             if (id.type === "Identifier")
                identifier = id.name;
             else
-               identifier = serializeExpression(id);
+               identifier = serializeExpression(id, bindings);
          }
 
          if (!identifier)
@@ -54,10 +54,10 @@ function serializeExpression(node: luaparse.Expression|null|undefined): string|n
       }
 
       case "IndexExpression": {
-         if (!baseIsSafeGlobal(node.base))
+         if (!baseIsSafeGlobal(node.base, bindings))
             return null;
          const base = (node.base as luaparse.Identifier).name;
-         const index = serializeExpression(node.index);
+         const index = serializeExpression(node.index, bindings);
          if (!base || !index)
             return null;
          return `index:${base}[${index}]`;
@@ -84,21 +84,21 @@ function serializeExpression(node: luaparse.Expression|null|undefined): string|n
 }
 
 // Check if an expression is worth aliasing
-function isAliasableExpression(node: luaparse.Expression|null|undefined): boolean {
+function isAliasableExpression(node: luaparse.Expression|null|undefined, bindings: AliasBindingScope): boolean {
    if (!node)
       return false;
 
    switch (node.type) {
       case "Identifier":
-         return SAFE_GLOBAL_FUNCS.has(node.name);
+         return SAFE_GLOBAL_FUNCS.has(node.name) && !bindings.isShadowed(node.name);
 
       case "MemberExpression":
          // Only alias safe global library member access (e.g., math.cos)
-         return baseIsSafeGlobal(node.base);
+         return baseIsSafeGlobal(node.base, bindings);
 
       case "IndexExpression":
          // Only alias safe global library index access (e.g., math["cos"])
-         return baseIsSafeGlobal(node.base);
+         return baseIsSafeGlobal(node.base, bindings);
 
       // Don't alias literals
       case "StringLiteral":
@@ -168,82 +168,6 @@ function shouldAliasExpression(info: AliasInfo): boolean {
    return aliasTotal < noAliasTotal;
 }
 
-// Recursively replace expressions with aliases
-function replaceExpression(node: luaparse.Expression, tracker: any): luaparse.Expression {
-   if (!node)
-      return node;
-
-   const key = serializeExpression(node);
-   if (key) {
-      const alias = tracker.getAlias(key);
-      if (alias) {
-         return {
-            type: "Identifier",
-            name: alias,
-         } as luaparse.Identifier;
-      }
-   }
-
-   // Recursively replace in child expressions
-   switch (node.type) {
-      case "BinaryExpression":
-      case "LogicalExpression":
-         node.left = replaceExpression(node.left, tracker);
-         node.right = replaceExpression(node.right, tracker);
-         break;
-
-      case "UnaryExpression":
-         node.argument = replaceExpression(node.argument, tracker);
-         break;
-
-      case "CallExpression":
-         node.base = replaceExpression(node.base, tracker);
-         if (node.arguments) {
-            node.arguments = node.arguments.map(arg => replaceExpression(arg, tracker));
-         }
-         break;
-
-      case "TableCallExpression":
-         node.base = replaceExpression(node.base, tracker);
-         node.arguments = replaceExpression(node.arguments, tracker) as luaparse.TableConstructorExpression;
-         break;
-
-      case "StringCallExpression":
-         node.base = replaceExpression(node.base, tracker);
-         break;
-
-      case "MemberExpression":
-         // Don't replace the base if this whole expression is being aliased
-         if (!serializeExpression(node) || !tracker.getAlias(serializeExpression(node)!)) {
-            node.base = replaceExpression(node.base, tracker);
-         }
-         break;
-
-      case "IndexExpression":
-         // Don't replace base/index if this whole expression is being aliased
-         if (!serializeExpression(node) || !tracker.getAlias(serializeExpression(node)!)) {
-            node.base = replaceExpression(node.base, tracker);
-            node.index = replaceExpression(node.index, tracker);
-         }
-         break;
-
-      case "TableConstructorExpression":
-         if (node.fields) {
-            node.fields.forEach((field: luaparse.TableKey|luaparse.TableKeyString|luaparse.TableValue) => {
-               if (field.type === "TableKey") {
-                  if (field.key)
-                     field.key = replaceExpression(field.key, tracker);
-               }
-               if (field.value)
-                  field.value = replaceExpression(field.value, tracker);
-            });
-         }
-         break;
-   }
-
-   return node;
-}
-
 /**
  * Alias repeated expressions in the AST
  * 
@@ -264,15 +188,14 @@ function replaceExpression(node: luaparse.Expression, tracker: any): luaparse.Ex
 export function aliasRepeatedExpressionsInAST(ast: luaparse.Chunk): luaparse.Chunk {
    const strategy = {
       prefix: EXPR_ALIAS_PREFIX,
-      serialize: (node: luaparse.Expression|null|undefined) => {
+      serialize: (node: luaparse.Expression|null|undefined, bindings: AliasBindingScope) => {
          if (!node)
             return null;
-         if (!isAliasableExpression(node))
+         if (!isAliasableExpression(node, bindings))
             return null;
-         return serializeExpression(node);
+         return serializeExpression(node, bindings);
       },
       shouldAlias: shouldAliasExpression,
-      replaceExpression,
    } as const;
 
    return runAliasPass(ast, strategy);

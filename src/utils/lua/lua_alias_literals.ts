@@ -89,80 +89,6 @@ function shouldAliasLiteral(info: AliasInfo): boolean {
   return aliasTotalCost < noAliasTotalCost;
 }
 
-// Recursively replace literals with aliases
-function replaceLiteral(node: luaparse.Expression, tracker: any): luaparse.Expression {
-  if (!node) return node;
-
-  // Check if this literal itself should be replaced
-  const key = serializeLiteral(node);
-  if (key) {
-    const alias = tracker.getAlias(key);
-    //const literalNode = node as LiteralNode;
-    // const displayValue =
-    //    literalNode.type === "StringLiteral" ? (literalNode.raw ?? "<missing raw>") : literalNode.value;
-    if (alias) {
-      // This literal should be replaced with an alias
-      return {
-        type: "Identifier",
-        name: alias,
-      } as luaparse.Identifier;
-    }
-    // This is a literal but shouldn't be aliased, return as-is
-    return node;
-  }
-
-  // Not a literal, recursively replace in child expressions
-  switch (node.type) {
-    case "BinaryExpression":
-    case "LogicalExpression":
-      node.left = replaceLiteral(node.left, tracker);
-      node.right = replaceLiteral(node.right, tracker);
-      break;
-
-    case "UnaryExpression":
-      node.argument = replaceLiteral(node.argument, tracker);
-      break;
-
-    case "CallExpression":
-      node.base = replaceLiteral(node.base, tracker);
-      if (node.arguments) {
-        node.arguments = node.arguments.map((arg) => replaceLiteral(arg, tracker));
-      }
-      break;
-
-    case "TableCallExpression":
-      node.base = replaceLiteral(node.base, tracker);
-      node.arguments = replaceLiteral(node.arguments, tracker) as luaparse.TableConstructorExpression;
-      break;
-
-    case "StringCallExpression":
-      node.base = replaceLiteral(node.base, tracker);
-      break;
-
-    case "MemberExpression":
-      node.base = replaceLiteral(node.base, tracker);
-      break;
-
-    case "IndexExpression":
-      node.base = replaceLiteral(node.base, tracker);
-      node.index = replaceLiteral(node.index, tracker);
-      break;
-
-    case "TableConstructorExpression":
-      if (node.fields) {
-        node.fields.forEach((field: luaparse.TableKey | luaparse.TableKeyString | luaparse.TableValue) => {
-          if (field.type === "TableKey") {
-            if (field.key) field.key = replaceLiteral(field.key, tracker);
-          }
-          if (field.value) field.value = replaceLiteral(field.value, tracker);
-        });
-      }
-      break;
-  }
-
-  return node;
-}
-
 /**
  * Alias repeated literal values in the AST
  *
@@ -185,7 +111,6 @@ export function aliasLiteralsInAST(ast: luaparse.Chunk): luaparse.Chunk {
     prefix: LITERAL_ALIAS_PREFIX,
     serialize: serializeLiteral,
     shouldAlias: shouldAliasLiteral,
-    replaceExpression: replaceLiteral,
   } as const;
 
   return runAliasPass(ast, strategy);
