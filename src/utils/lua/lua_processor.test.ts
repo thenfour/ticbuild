@@ -243,6 +243,49 @@ describe("Lua printer numeric literal formatting with simplifyExpressions", () =
   });
 });
 
+describe("Lua expression simplification", () => {
+  const options: OptimizationRuleOptions = {
+    stripComments: true,
+    maxIndentLevel: 1,
+    lineBehavior: "tight",
+    maxLineLength: 180,
+    renameLocalVariables: false,
+    aliasRepeatedExpressions: false,
+    aliasLiterals: false,
+    packLocalDeclarations: false,
+    simplifyExpressions: true,
+    removeUnusedLocals: false,
+    removeUnusedFunctions: false,
+    functionNamesToKeep: [],
+    renameTableFields: false,
+    tableEntryKeysToRename: [],
+  };
+
+  it("should preserve named table field names while simplifying their values", () => {
+    const input = `
+local key = "close"
+local lines = {}
+lines[#lines + 1] = { key = key, value = key }
+`;
+
+    const output = processLua(input, options);
+
+    expect(output).toContain('lines[#lines+1]={key="close",value="close"}');
+  });
+
+  it("should still simplify computed table keys", () => {
+    const input = `
+local key = "close"
+local value = "line"
+local entry = { [key] = value }
+`;
+
+    const output = processLua(input, options);
+
+    expect(output).toContain('entry={["close"]="line"}');
+  });
+});
+
 describe("Lua printer parenthesis handling", () => {
   const options: OptimizationRuleOptions = {
     stripComments: true,

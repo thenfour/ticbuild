@@ -352,9 +352,12 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
 
       case "TableConstructorExpression": {
          expr.fields.forEach(field => {
-            if (field.type === "TableKey" || field.type === "TableKeyString") {
+            if (field.type === "TableKey") {
                if (field.key)
                   field.key = simplifyExpression(field.key, scope);
+               if (field.value)
+                  field.value = simplifyExpression(field.value, scope);
+            } else if (field.type === "TableKeyString") {
                if (field.value)
                   field.value = simplifyExpression(field.value, scope);
             } else if (field.type === "TableValue" && field.value) {
