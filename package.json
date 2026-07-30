@@ -1,6 +1,6 @@
 {
   "name": "ticbuild",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "A build & watch system for TIC-80",
   "main": "dist/index.js",
   "bin": {

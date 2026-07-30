@@ -1,3 +1,8 @@
+## v1.0.20 (2026-7-30)
+
+- #50 fixing minifier "simplify expressions" rule wrongly replacing `TableKey` tokens.
+- #51 adding `--reporter jsonl` for machine readible build output
+
 ## v1.0.19 (2026-7-4)
 
 - #50 new tic80 build with additional profiling option
