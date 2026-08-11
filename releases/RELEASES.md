@@ -1,3 +1,7 @@
+## v1.0.22 (2026-8-11)
+
+- #59 new tic-80 build with HMR support
+
 ## v1.0.21 (2026-7-31)
 
 - #54 fixed minifier: aliasRepeatedExpressions was clobbering some symbolsbug
