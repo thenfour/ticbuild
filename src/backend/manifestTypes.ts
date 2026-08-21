@@ -13,6 +13,9 @@ export const kImportKind = defineEnum({
   LuaCode: {
     value: "LuaCode",
   },
+  TypeScriptCode: {
+    value: "TypeScriptCode",
+  },
   Tic80Cartridge: {
     value: "Tic80Cartridge",
   },

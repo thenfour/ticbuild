@@ -3,7 +3,7 @@ import { parseLua } from "../utils/lua/lua_processor";
 import { canonicalizePath, fileExists, readTextFileAsync } from "../utils/fileSystem";
 import { getPathRelativeToTemplates } from "../utils/templates";
 import { ResourceManager } from "./ImportedResourceTypes";
-import { LuaCodeResource } from "./importers/LuaCodeImporter";
+import { CodeResource } from "./importers/CodeResource";
 import { TicbuildProjectCore } from "./projectCore";
 import { LuaPreprocessResult, PreprocessorSymbol } from "./luaPreprocessor";
 import { LuaPreprocessorSourceMap, mapPreprocessedOffset, SourceMapBuilder } from "./sourceMap";
@@ -658,7 +658,7 @@ export async function buildProjectSymbolIndex(
         buildSymbolIndexForPreprocessed(builtins, project.projectDir, builder);
     }
     for (const resource of resources.items.values()) {
-        if (!(resource instanceof LuaCodeResource)) {
+        if (!(resource instanceof CodeResource)) {
             continue;
         }
         const preprocess = resource.getPreprocessResult();

@@ -1,7 +1,7 @@
 import { inflateSync } from "node:zlib";
-import { LuaCodeResourceView } from "./LuaCodeImporter";
 import { TicbuildProjectCore } from "../projectCore";
 import { Manifest } from "../manifestTypes";
+import { CodeResourceView } from "./CodeResource";
 
 function makeProject(manifest: Manifest): TicbuildProjectCore {
   return new TicbuildProjectCore({
@@ -11,7 +11,7 @@ function makeProject(manifest: Manifest): TicbuildProjectCore {
   });
 }
 
-describe("LuaCodeResourceView emitGlobals", () => {
+describe("CodeResourceView emitGlobals", () => {
   it("should respect code.emitGlobals=false", async () => {
     const manifest: Manifest = {
       project: {
@@ -34,7 +34,7 @@ describe("LuaCodeResourceView emitGlobals", () => {
     };
 
     const project = makeProject(manifest);
-    const view = new LuaCodeResourceView("print('hello')", "print('hello')");
+    const view = new CodeResourceView("print('hello')", "print('hello')");
 
     const withGlobals = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
     expect(withGlobals).toContain('local PROJECT_NAME = "Demo"');
@@ -73,7 +73,7 @@ describe("LuaCodeResourceView emitGlobals", () => {
     };
 
     const project = makeProject(manifest);
-    const view = new LuaCodeResourceView("print('hello')", "print('hello')");
+    const view = new CodeResourceView("print('hello')", "print('hello')");
 
     const output = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
     expect(output.startsWith(
@@ -104,7 +104,7 @@ describe("LuaCodeResourceView emitGlobals", () => {
     };
 
     const project = makeProject(manifest);
-    const view = new LuaCodeResourceView("-- throwaway\nprint('hello')", "-- throwaway\nprint('hello')");
+    const view = new CodeResourceView("-- throwaway\nprint('hello')", "-- throwaway\nprint('hello')");
 
     const output = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
     expect(output).toContain("-- title:  Demo");
@@ -135,7 +135,7 @@ describe("LuaCodeResourceView emitGlobals", () => {
 
     const project = makeProject(manifest);
     const source = "function Demo_LongName() return 1 end return Demo_LongName()";
-    const view = new LuaCodeResourceView(source, source, ["Demo_LongName"]);
+    const view = new CodeResourceView(source, source, ["Demo_LongName"]);
 
     const output = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
 
@@ -167,7 +167,7 @@ describe("LuaCodeResourceView emitGlobals", () => {
 
     const project = makeProject(manifest);
     const source = "function Demo_LongName() return 1 end return Demo_LongName()";
-    const view = new LuaCodeResourceView(source, source, ["Demo_LongName"]);
+    const view = new CodeResourceView(source, source, ["Demo_LongName"]);
 
     const output = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
 
@@ -198,13 +198,13 @@ describe("LuaCodeResourceView emitGlobals", () => {
     };
 
     const project = makeProject(manifest);
-    const view = new LuaCodeResourceView("print('hello')", "print('hello')");
+    const view = new CodeResourceView("print('hello')", "print('hello')");
 
     expect(() => view.getDataForChunk(project, "CODE")).toThrow("Project metadata desc must be a single line");
   });
 });
 
-describe("LuaCodeResourceView compressionMode", () => {
+describe("CodeResourceView compressionMode", () => {
   function makeLuaProject(): TicbuildProjectCore {
     return makeProject({
       project: {
@@ -235,7 +235,7 @@ describe("LuaCodeResourceView compressionMode", () => {
   it("should emit valid zlib streams for default, zlib-max, and zopfli modes", async () => {
     const project = makeLuaProject();
     const source = makeCompressibleLuaSource();
-    const view = new LuaCodeResourceView(source, source);
+    const view = new CodeResourceView(source, source);
 
     const defaultBytes = await view.getDataForChunk(project, "CODE_COMPRESSED", { compressionMode: "default" });
     const zlibMaxBytes = await view.getDataForChunk(project, "CODE_COMPRESSED", { compressionMode: "zlib-max" });
@@ -250,7 +250,7 @@ describe("LuaCodeResourceView compressionMode", () => {
 
   it("should reject unsupported compression modes", () => {
     const project = makeLuaProject();
-    const view = new LuaCodeResourceView("print('hello')", "print('hello')");
+    const view = new CodeResourceView("print('hello')", "print('hello')");
 
     expect(() =>
       view.getDataForChunk(project, "CODE_COMPRESSED", { compressionMode: "brotli" } as any),

@@ -93,6 +93,25 @@ describe("Manifest Loader", () => {
       expect(result.projectDir).toBeDefined();
     });
 
+    it("should accept TypeScriptCode imports", () => {
+      const typescriptManifest = {
+        ...validManifest,
+        imports: [
+          {
+            name: "maincode",
+            path: "main.ts",
+            kind: "TypeScriptCode",
+          },
+        ],
+      };
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(typescriptManifest));
+
+      const result = loadManifest("/test/manifest.ticbuild.jsonc");
+
+      expect(result.manifest.imports[0].kind).toBe("TypeScriptCode");
+    });
+
     it("should handle JSONC with comments", () => {
       const manifestContent = `{
         // This is a comment

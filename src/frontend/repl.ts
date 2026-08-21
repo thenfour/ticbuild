@@ -1,15 +1,15 @@
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { LuaCodeResourceView } from "../backend/importers/LuaCodeImporter";
+import { CodeResourceView } from "../backend/importers/CodeResource";
 import { preprocessLuaCode } from "../backend/luaPreprocessor";
 import { Manifest } from "../backend/manifestTypes";
 import { TicbuildProject } from "../backend/project";
 import { TicbuildProjectCore } from "../backend/projectCore";
 import * as cons from "../utils/console";
+import { printReplHelp } from "../utils/help";
 import { OptimizationRuleOptions } from "../utils/lua/lua_processor";
 import { CoalesceBool } from "../utils/utils";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
-import { printReplHelp } from "../utils/help";
 
 function deepCloneManifest(manifest: Manifest): Manifest {
     return JSON.parse(JSON.stringify(manifest)) as Manifest;
@@ -190,7 +190,7 @@ async function processInput(
     try {
         const core = createReplCore(baseCore, state);
         const preprocessed = await preprocessLuaCode(core, source, replFilePath);
-        const view = new LuaCodeResourceView(source, preprocessed.code);
+        const view = new CodeResourceView(source, preprocessed.code);
         const artifacts = view.getArtifacts(core);
         process.stdout.write(artifacts.minifiedSource + "\n");
     } catch (error) {

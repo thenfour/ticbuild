@@ -16,6 +16,12 @@ export function deduceImportKindFromPath(path: string | undefined): string | und
   if (path.endsWith(".lua")) {
     return kImportKind.key.LuaCode;
   }
+  // explicitly exclude .d.ts because they don't contain executable code;
+  // they would produce empty lua and always a mistake to include.
+  // TODO: consider adding a warning if a .d.ts is imported.
+  if (path.endsWith(".ts") && !path.endsWith(".d.ts")) {
+    return kImportKind.key.TypeScriptCode;
+  }
   return undefined;
 }
 

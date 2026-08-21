@@ -22,6 +22,7 @@ import {
   splitPipelineSpec,
   resolveImportBytes,
 } from "./luaEncode";
+import { GeneratedLuaSource } from "./ImportedResourceTypes";
 
 export type LuaPreprocessorValue = PreprocessorValue;
 
@@ -31,6 +32,12 @@ export type LuaPreprocessResult = {
   sourceMap: LuaPreprocessorSourceMap;
   preprocessorSymbols: PreprocessorSymbol[];
   minifyAllowedGlobalNames: string[];
+};
+
+export type LuaCodeImportResolver = (importName: string) => Promise<GeneratedLuaSource | undefined>;
+
+export type LuaPreprocessorOptions = {
+  resolveCodeImport?: LuaCodeImportResolver;
 };
 
 export type PreprocessorSymbol = {
@@ -50,6 +57,7 @@ type PreprocessorState = {
   macros: Map<string, MacroDefinition>;
   macroSymbols: PreprocessorSymbol[];
   minifyAllowedGlobalNames: string[];
+  resolveCodeImport?: LuaCodeImportResolver;
 };
 
 type PendingMinifyAllowRename = {
@@ -76,6 +84,7 @@ export async function preprocessLuaCode(
   project: TicbuildProjectCore,
   source: string,
   filePath: string,
+  options: LuaPreprocessorOptions = {},
 ): Promise<LuaPreprocessResult> {
   const manifestDefines = getManifestPreprocessorDefines(project);
   const state: PreprocessorState = {
@@ -86,6 +95,7 @@ export async function preprocessLuaCode(
     macros: new Map<string, MacroDefinition>(),
     macroSymbols: [],
     minifyAllowedGlobalNames: [],
+    resolveCodeImport: options.resolveCodeImport,
   };
 
   const includeKey = makeIncludeKey(filePath, {});
@@ -544,15 +554,29 @@ async function resolveImportInclude(
     throw new Error(formatError("<include>", lineNumber, `Import not found: ${importName}`));
   }
 
-  if (importDef.kind === kImportKind.key.LuaCode) {
-    const resolvedPath = project.resolveImportPath(importDef);
-    const includeKey = makeIncludeKey(resolvedPath, overrides);
+  const generatedLua = await state.resolveCodeImport?.(importName);
+  if (generatedLua) {
+    if (chunkSpec) {
+      throw new Error(
+        formatError(generatedLua.sourcePath, lineNumber, `Code imports do not support a chunk selector`),
+      );
+    }
+    for (const dependency of generatedLua.dependencies ?? []) {
+      state.dependencies.add(dependency.path);
+    }
+    const includeKey = makeIncludeKey(generatedLua.sourcePath, overrides);
     if (state.pragmaOnceKeys.has(includeKey)) {
       return { code: "", map: new SourceMapBuilder() };
     }
-    const source = await readTextFileAsync(resolvedPath);
-    const included = await processSource(project, source, resolvedPath, includeKey, state, overrides);
-    return ensureTrailingNewline(included, resolvedPath);
+    const included = await processSource(
+      project,
+      generatedLua.source,
+      generatedLua.sourcePath,
+      includeKey,
+      state,
+      overrides,
+    );
+    return ensureTrailingNewline(included, generatedLua.sourcePath);
   }
 
   if (importDef.kind === kImportKind.key.Tic80Cartridge) {

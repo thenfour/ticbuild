@@ -1,6 +1,6 @@
 import { AssembleOutputResult, TicbuildProject } from "../backend/project";
 import { buildProjectSymbolIndex } from "../backend/symbolIndex";
-import { LuaCodeResource, LuaCodeSizeStats } from "../backend/importers/LuaCodeImporter";
+import { CodeResource, CodeSizeStats } from "../backend/importers/CodeResource";
 import { Tic80Resource } from "../backend/importers/tic80CartImporter";
 import { AssetReference, CodeAssemblyOptions } from "../backend/manifestTypes";
 import * as cons from "../utils/console";
@@ -211,7 +211,7 @@ async function executeBuildCore(
       importsLines.push(`    - ${dep.path} (${dep.reason})`);
     }
 
-    if (resource instanceof LuaCodeResource) {
+    if (resource instanceof CodeResource) {
       const codeRequests = getLuaCodeAssemblyRequests(project, identifier);
       const stats = resource.getCodeSizeStats(project.resolvedCore);
       const compressedOutputs = await getLuaCompressedCodeOutputs(project, resource, codeRequests);
@@ -603,7 +603,7 @@ function getLuaCodeAssemblyRequests(project: TicbuildProject, identifier: string
 
 async function getLuaCompressedCodeOutputs(
   project: TicbuildProject,
-  resource: LuaCodeResource,
+  resource: CodeResource,
   codeRequests: LuaCodeAssemblyRequest[],
 ): Promise<LuaCompressedCodeOutput[]> {
   const outputs: LuaCompressedCodeOutput[] = [];
@@ -629,7 +629,7 @@ async function getLuaCompressedCodeOutputs(
 function logLuaCodeSize(
   reporter: BuildReporter,
   identifier: string,
-  stats: LuaCodeSizeStats,
+  stats: CodeSizeStats,
   codeRequests: LuaCodeAssemblyRequest[],
   compressedOutputs: LuaCompressedCodeOutput[],
 ): void {
@@ -654,7 +654,7 @@ function logLuaCodeSize(
 
 function buildLuaCodeSizeReport(
   identifier: string,
-  stats: LuaCodeSizeStats,
+  stats: CodeSizeStats,
   codeRequests: LuaCodeAssemblyRequest[],
   compressedOutputs: LuaCompressedCodeOutput[],
 ): { lines: string[]; chunks: LuaCodeSizeEntry[] } | undefined {

@@ -3,6 +3,8 @@
 import { assert } from "../utils/errorHandling";
 import { ImportedResourceBase, ResourceManager } from "./ImportedResourceTypes";
 import { importLuaCode } from "./importers/LuaCodeImporter";
+import { CodeResource } from "./importers/CodeResource";
+import { importTypeScriptCode } from "./importers/TypeScriptCodeImporter";
 import { importBinaryResource } from "./importers/binaryResourceImporter";
 import { importTextResource } from "./importers/textResourceImporter";
 import { importTic80Cart } from "./importers/tic80CartImporter";
@@ -23,14 +25,16 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
     const key = importDef.name;
     switch (importDef.kind) {
       case kImportKind.key.Tic80Cartridge:
-        // invoke tic80 cart importer
         const tic80ImportTask = importTic80Cart(project, importDef);
         tasks.push(tic80ImportTask);
         break;
       case kImportKind.key.LuaCode:
-        // invoke lua code importer
         const luaCodeImportTask = importLuaCode(project, importDef);
         tasks.push(luaCodeImportTask);
+        break;
+      case kImportKind.key.TypeScriptCode:
+        const typeScriptCodeImportTask = importTypeScriptCode(project, importDef);
+        tasks.push(typeScriptCodeImportTask);
         break;
       case kImportKind.key.binary: {
         const binaryImportTask = importBinaryResource(project, importDef);
@@ -55,5 +59,18 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
     items.set(importDef.name, resource);
   }
 
-  return new ResourceManager(items);
+  const resourceManager = new ResourceManager(items);
+
+  // code resources may have a processing step to be done here to generate its lua output.
+  // (e.g. typescript transpilation)
+  const codeResources = Array.from(items.values()).filter(
+    (resource): resource is CodeResource => resource instanceof CodeResource,
+  );
+  await Promise.all(
+    codeResources.map((resource) =>
+      resource.initialize(project, (importName) => resourceManager.getGeneratedLuaSource(project, importName)),
+    ),
+  );
+
+  return resourceManager;
 }
