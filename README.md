@@ -495,6 +495,17 @@ cd my-demo
 npm install
 ```
 
+The generated TypeScript project includes TIC-80 and ticbuild declarations plus
+ESLint rules [recommended by TypeScriptToLua](https://typescripttolua.github.io/docs/caveats).
+
+```bash
+npm run check # to typecheck and lint
+npm run lint  # lint only
+```
+
+Linting remains independent from `ticbuild`.
+The lint toolchain requires Node.js 20.19 or newer.
+
 To add a `.ts` source asset manually:
 
 ```jsonc

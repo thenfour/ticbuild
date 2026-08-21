@@ -16,6 +16,8 @@ function getBuildInfo() {
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
   const version = packageJson.version;
   const typescriptVersion = packageJson.dependencies.typescript;
+  const eslintVersion = packageJson.devDependencies.eslint;
+  const typescriptEslintVersion = packageJson.devDependencies["typescript-eslint"];
 
   const dirtyOutput = safeExec("git status --porcelain");
   const dirty = dirtyOutput == null ? null : dirtyOutput.length > 0;
@@ -27,6 +29,8 @@ function getBuildInfo() {
   return {
     version,
     typescriptVersion,
+    eslintVersion,
+    typescriptEslintVersion,
     dirty,
     buildDate,
     lastCommitDate,

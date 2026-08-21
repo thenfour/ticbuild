@@ -12,6 +12,8 @@ buildInfo.ts
 
 # IDE
 .vscode/
+!templates/typescript/.vscode/
+!templates/typescript/.vscode/extensions.json
 .idea/
 *.swp
 *.swo

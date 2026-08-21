@@ -119,6 +119,8 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
       PROJECT_PACKAGE_NAME: toPackageName(projectName),
       TICBUILD_VERSION: buildInfo.version,
       TYPESCRIPT_VERSION: buildInfo.typescriptVersion,
+      ESLINT_VERSION: buildInfo.eslintVersion,
+      TYPESCRIPT_ESLINT_VERSION: buildInfo.typescriptEslintVersion,
     },
     options?.force === true,
   );

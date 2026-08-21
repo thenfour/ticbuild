@@ -1,14 +1,21 @@
 {
   "name": "{{PROJECT_PACKAGE_NAME}}",
   "private": true,
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
   "scripts": {
     "build": "ticbuild build",
     "watch": "ticbuild watch",
     "run": "ticbuild run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "check": "npm run typecheck && npm run lint"
   },
   "devDependencies": {
+    "eslint": "{{ESLINT_VERSION}}",
     "ticbuild": "^{{TICBUILD_VERSION}}",
-    "typescript": "{{TYPESCRIPT_VERSION}}"
+    "typescript": "{{TYPESCRIPT_VERSION}}",
+    "typescript-eslint": "{{TYPESCRIPT_ESLINT_VERSION}}"
   }
 }
