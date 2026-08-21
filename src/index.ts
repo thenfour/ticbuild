@@ -204,6 +204,7 @@ async function main(): Promise<void> {
     .description("Initialize a new ticbuild project")
     .option("-n, --name <name>", "Project name")
     .option("-t, --template <name>", "Template name (subdir in templates)")
+    .option("--ticbuild-package <spec>", "ticbuild npm package spec used by templates (needed during development/testing)")
     .option("-f, --force", "Overwrite existing files")
     .action(async (dir?: string, options?: InitOptions) => {
       await initCommand(dir, options);

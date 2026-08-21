@@ -6,6 +6,7 @@ import * as ts from "typescript";
 import { buildInfo } from "../buildInfo";
 import * as cons from "../utils/console";
 import { initCommand } from "./init";
+import * as packageInstaller from "./packageInstaller";
 
 describe("ticbuild init", () => {
   let tempDir: string;
@@ -13,6 +14,7 @@ describe("ticbuild init", () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-init-"));
     jest.spyOn(cons, "success").mockImplementation(() => undefined);
+    jest.spyOn(packageInstaller, "installProjectDependencies").mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -62,6 +64,31 @@ describe("ticbuild init", () => {
     expect(JSON.parse(fs.readFileSync(path.join(tempDir, ".vscode", "extensions.json"), "utf-8"))).toEqual({
       recommendations: ["dbaeumer.vscode-eslint"],
     });
+    expect(packageInstaller.installProjectDependencies).toHaveBeenCalledWith(tempDir);
+  });
+
+  it("can install the generated project against a local ticbuild checkout", async () => {
+    await initCommand(tempDir, {
+      name: "typed-game",
+      template: "typescript",
+      ticbuildPackage: "file:../..",
+    });
+
+    const packageJson = JSON.parse(fs.readFileSync(path.join(tempDir, "package.json"), "utf-8"));
+    expect(packageJson.devDependencies.ticbuild).toBe("file:../..");
+    expect(packageInstaller.installProjectDependencies).toHaveBeenCalledWith(tempDir);
+  });
+
+  it("preserves initialized files when automatic dependency installation fails", async () => {
+    jest
+      .mocked(packageInstaller.installProjectDependencies)
+      .mockRejectedValueOnce(new Error("registry unavailable"));
+
+    await expect(initCommand(tempDir, { name: "typed-game", template: "typescript" })).rejects.toThrow(
+      "Project files were initialized, but dependency installation failed: registry unavailable",
+    );
+    expect(fs.existsSync(path.join(tempDir, "project.ticbuild.jsonc"))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, "package.json"))).toBe(true);
   });
 
   it("lints JavaScript-to-Lua semantic hazards without making them build steps", async () => {

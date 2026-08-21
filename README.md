@@ -492,9 +492,9 @@ Start a TypeScript project with:
 ```bash
 ticbuild init my-demo --template typescript
 cd my-demo
-npm install
 ```
 
+`ticbuild init` installs the generated project's npm dependencies automatically.
 The generated TypeScript project includes TIC-80 and ticbuild declarations plus
 ESLint rules [recommended by TypeScriptToLua](https://typescripttolua.github.io/docs/caveats).
 

@@ -13,6 +13,7 @@ Options:
 
   -n, --name <name>    Project name (used in manifest)
   -t, --template <name> Template name, including 'minimal' or 'typescript' (default: minimal)
+  --ticbuild-package <spec> ticbuild npm package spec used by templates (needed during development/testing)
   -f, --force          Overwrite existing files
   -h, --help           Show this help message
 

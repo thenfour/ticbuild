@@ -9,6 +9,7 @@ import { TypeScriptImportConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { createTypeScriptTranspilationOptions } from "./TypeScriptTranspilationOptions";
 import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
+import { assert } from "../../utils/errorHandling";
 
 const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const exportGlobalMarker = "__TICBUILD_EXPORT_GLOBAL__";
@@ -241,8 +242,12 @@ function restoreTicbuildMarkers(luaSource: string, exportedValueNames: readonly 
   const directiveCall = new RegExp(
     `^([ \\t]*)${preprocessorMarker}\\("([A-Za-z0-9+/=]+)"\\)[ \\t]*$`,
   );
+  // must be able to match 
+  // __TICBUILD_EXPORT_GLOBAL__("TIC", ____exports.TIC);
+  // as well as
+  // __TICBUILD_EXPORT_GLOBAL__("TIC", TIC);
   const exportCall = new RegExp(
-    `^([ \\t]*)${exportGlobalMarker}\\("([A-Z]+)",[ \\t]*([A-Z]+)\\)[ \\t]*$`,
+    `^([ \\t]*)${exportGlobalMarker}\\("([A-Z]+)",[ \\t]*(.+)\\)[ \\t]*$`,
   );
 
   const lines = luaSource
@@ -255,11 +260,17 @@ function restoreTicbuildMarkers(luaSource: string, exportedValueNames: readonly 
       }
       const exportMatch = line.match(exportCall);
       if (exportMatch) {
-        const [, indent, globalName, localName] = exportMatch;
-        return `${indent}_G["${globalName}"] = ${localName}`;
+        const [, indent, globalName, valueExpression] = exportMatch;
+        return `${indent}_G["${globalName}"] = ${valueExpression}`;
       }
       return line;
     });
+
+  const leakedMarkerLine = lines.find(
+    (line) => line.includes(`${preprocessorMarker}(`) || line.includes(`${exportGlobalMarker}(`),
+  );
+
+  assert(leakedMarkerLine === undefined, "TypeScript transpilation left an internal ticbuild marker in emitted Lua");
 
   // A ticbuild code resource is composed into a cartridge chunk rather than
   // loaded as a Lua module. Publish the entry module's named value exports as

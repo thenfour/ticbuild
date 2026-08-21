@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "eslint": "{{ESLINT_VERSION}}",
-    "ticbuild": "^{{TICBUILD_VERSION}}",
+    "ticbuild": "{{TICBUILD_PACKAGE_SPEC}}",
     "typescript": "{{TYPESCRIPT_VERSION}}",
     "typescript-eslint": "{{TYPESCRIPT_ESLINT_VERSION}}"
   }

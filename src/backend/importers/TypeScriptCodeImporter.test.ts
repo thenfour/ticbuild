@@ -92,6 +92,31 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
+  it("exposes an exported TIC callback without leaking its internal marker", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-exported-tic-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      "export function TIC(): void { cls(0); }\n",
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const resource = getTypeScriptResource(resources, "main");
+      const artifacts = resource.getCodeArtifacts(project);
+
+      expect(artifacts.inputSource).toContain('_G["TIC"] = ____exports.TIC');
+      expect(artifacts.inputSource).toContain('_G["TIC"] = ____entry["TIC"]');
+      expect(artifacts.inputSource).not.toContain("__TICBUILD_EXPORT_GLOBAL__");
+      expect(artifacts.preprocessedSource).not.toContain("__TICBUILD_EXPORT_GLOBAL__");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("lets generated TypeScript Lua include a Lua code asset", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-include-"));
     fs.writeFileSync(

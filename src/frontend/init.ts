@@ -13,11 +13,13 @@ import {
   getPathRelativeToTemplates,
   resolveTemplateDir,
 } from "../utils/templates";
+import { installProjectDependencies } from "./packageInstaller";
 
 export type InitOptions = {
   name?: string;
   force?: boolean;
   template?: string; // one of the subdirs in "templates"
+  ticbuildPackage?: string;
 };
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -118,6 +120,7 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
       PROJECT_NAME: projectName,
       PROJECT_PACKAGE_NAME: toPackageName(projectName),
       TICBUILD_VERSION: buildInfo.version,
+      TICBUILD_PACKAGE_SPEC: options?.ticbuildPackage?.trim() || `^${buildInfo.version}`,
       TYPESCRIPT_VERSION: buildInfo.typescriptVersion,
       ESLINT_VERSION: buildInfo.eslintVersion,
       TYPESCRIPT_ESLINT_VERSION: buildInfo.typescriptEslintVersion,
@@ -142,4 +145,13 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
   copyFile(launchSourcePath, launchTargetPath, options?.force === true);
 
   cons.success(`Initialized ticbuild project in ${resolvedDir}`);
+
+  if (fileExists(path.join(resolvedDir, "package.json"))) {
+    try {
+      await installProjectDependencies(resolvedDir);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Project files were initialized, but dependency installation failed: ${message}`);
+    }
+  }
 }
