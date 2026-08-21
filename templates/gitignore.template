@@ -12,6 +12,9 @@
 # generated
 build/
 
+# ephemeral remoting discovery
+.ticbuild/remoting/sessions
+
 # OS
 .DS_Store
 Thumbs.db

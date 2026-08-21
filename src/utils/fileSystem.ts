@@ -78,6 +78,11 @@ export function canonicalizePath(p: string): string {
   return path.normalize(p);
 }
 
+export function toAbsoluteCanonicalPath(fileName: string, baseDir: string): string {
+  return canonicalizePath(path.isAbsolute(fileName) ? fileName : path.resolve(baseDir, fileName));
+}
+
+
 // Resolves a file path by searching in a base directory and additional search directories.
 // Returns the first matching file found, or null if not found.
 //

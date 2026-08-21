@@ -10,18 +10,28 @@
         ],
         "binDir": "./build/$(buildConfiguration)-bin",
         "objDir": "./build/$(buildConfiguration)-obj",
-        "outputCartName": "$(project.name).tic"
+        "outputCartName": "$(project.name).tic",
+    },
+    "variables": {
+        "gPI": "3.14159"
     },
     "imports": [
         {
-            "name": "maincode",
-            "path": "src/main.ts"
+            "name": "TypescriptMain",
+            "path": "src/tsMain.ts"
+        },
+        {
+            "name": "LuaMain",
+            "path": "src/luaMain.lua"
         }
     ],
     "assembly": {
+        "lua": {
+            "minify": false
+        },
         "blocks": [
             {
-                "asset": "maincode"
+                "asset": "LuaMain"
             }
         ]
     }

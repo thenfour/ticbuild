@@ -4,6 +4,7 @@
 A build & watch system for TIC-80 cart development.
 
 * Multi-file Lua dev system
+* TypeScript transpiling natively supported (yes, write TIC-80 carts in a typed language)
 * Watch system: live-update a running tic80 when dependent files are updated.
 * Sprites, music, map data import from existing carts
 * Lua preprocessing (`#include`, `#macro`, `#if`, et al)
@@ -483,6 +484,50 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
 When running `ticbuild watch`, ticbuild always watches the manifest file and the dependencies discovered during build and preprocessing. Use `project.additionalWatchGlobs` to add extra glob-based watch targets, relative to the manifest directory unless you provide an absolute pattern. These extra globs can trigger rebuilds on file changes, file additions, and file removals.
 
 `additionalWatchGlobs` is an array value, so build configurations replace the whole array when overriding it.
+
+# TypeScript code
+
+Include `.ts` source files seamlessly in your project:
+
+```jsonc
+{
+  "name": "maincode",
+  "path": "src/main.ts",
+  "kind": "TypeScriptCode"
+}
+```
+
+ticbuild uses [TypeScriptToLua](https://github.com/TypeScriptToLua/TypeScriptToLua) to
+provide native transpiling to Lua. So yes the output cart is in Lua.
+
+- See the [TypeScriptToLua documentation](https://typescripttolua.github.io/) for how the system works.
+- See especially [the caveats section](https://typescripttolua.github.io/docs/caveats) to understand
+  how to avoid problems when doing so.
+
+Preprocessor function calls can be written directly in TypeScript. Standalone comment directives use TypeScript
+comment syntax and are preserved into the generated Lua:
+
+```ts
+import { drawScene } from "./drawScene";
+
+const TIC = () => {
+  //#ifdef DEBUG
+  trace(__EXPAND("$(project.name) debug build"));
+  //#endif
+  drawScene();
+};
+```
+
+`//--#include "import:luaHelper"` is also accepted, allowing inclusion of Lua code from
+TypeScript land.
+
+Lua code can also include TypeScript code with `--#include "import:typescriptAsset"`.
+Exports (value) from the TypeScript entry are published as Lua globals, so
+`export function myTypeScriptFn()` can be called as `myTypeScriptFn()` by the
+including Lua code.
+A filesystem include (`--#include "main.ts"`) does not invoke the TypeScript
+compiler - it will pass through to the later Lua pipeline. Thats example would
+include `main.ts` verbatim and probably fail because it's not Lua.
 
 # Lua preprocessor
 

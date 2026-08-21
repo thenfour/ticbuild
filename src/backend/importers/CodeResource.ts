@@ -288,6 +288,7 @@ export abstract class CodeResource extends ImportedResourceBase {
   readonly filePath: string;
   readonly sourceText: string;
   dependencies: string[] = [];
+  private dependencyReasons = new Map<string, string>();
   private codeView: CodeResourceView | undefined;
   private preprocessResult: LuaPreprocessResult | undefined;
   private generatedLuaPromise: Promise<GeneratedLuaSource> | undefined;
@@ -323,7 +324,7 @@ export abstract class CodeResource extends ImportedResourceBase {
       ...(generated.dependencies?.map((dependency) => dependency.path) ?? []),
       ...preprocessResult.dependencies,
     ];
-    this.setPreprocessResult(generated.source, dependencyPaths, preprocessResult);
+    this.setPreprocessResult(generated.source, dependencyPaths, preprocessResult, generated.dependencies);
   }
 
   get view(): CodeResourceView {
@@ -359,7 +360,10 @@ export abstract class CodeResource extends ImportedResourceBase {
     const uniqueDeps = Array.from(new Set(this.dependencies));
     return uniqueDeps.map((dependencyPath) => ({
       path: dependencyPath,
-      reason: dependencyPath === this.filePath ? this.getInputDependencyReason() : "Lua preprocessor dependency",
+      reason:
+        dependencyPath === this.filePath
+          ? this.getInputDependencyReason()
+          : (this.dependencyReasons.get(dependencyPath) ?? "Lua preprocessor dependency"),
     }));
   }
 
@@ -370,12 +374,18 @@ export abstract class CodeResource extends ImportedResourceBase {
     return this.preprocessResult;
   }
 
+  supportsLuaSymbolIndex(): boolean {
+    return true;
+  }
+
   private setPreprocessResult(
     generatedLuaSource: string,
     dependencies: string[],
     preprocessResult: LuaPreprocessResult,
+    dependencyReasons: ExternalDependency[] = [],
   ): void {
     this.dependencies = dependencies;
+    this.dependencyReasons = new Map(dependencyReasons.map((dependency) => [dependency.path, dependency.reason]));
     this.preprocessResult = preprocessResult;
     this.codeView = new CodeResourceView(
       generatedLuaSource,

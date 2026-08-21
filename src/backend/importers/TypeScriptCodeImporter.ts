@@ -3,20 +3,24 @@ import { GeneratedLuaSource } from "../ImportedResourceTypes";
 import { ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { CodeResource } from "./CodeResource";
+import { transpileTypeScriptToLua } from "./TypeScriptTranspiler";
 
 export class TypeScriptCodeResource extends CodeResource {
   constructor(filePath: string, sourceText: string) {
     super(filePath, sourceText);
   }
 
-  protected async generateLuaSource(): Promise<GeneratedLuaSource> {
-    throw new Error(
-      `TypeScript transpilation WIP`,
-    );
+  protected async generateLuaSource(project: TicbuildProjectCore): Promise<GeneratedLuaSource> {
+    return transpileTypeScriptToLua(project, this.filePath, this.sourceText);
   }
 
   protected getInputDependencyReason(): string {
     return "Imported TypeScript code file";
+  }
+
+  // todo: typescripttolua source map support so we can map Lua lines -> ts
+  supportsLuaSymbolIndex(): boolean {
+    return false;
   }
 }
 
