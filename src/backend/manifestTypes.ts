@@ -42,6 +42,10 @@ export interface ProjectConfig {
   autoUpdateManifestSchema?: boolean;
 }
 
+export interface TypeScriptImportConfig {
+  tsconfig: string;
+}
+
 export interface ImportDefinition {
   name: string;
   path?: string;
@@ -49,6 +53,7 @@ export interface ImportDefinition {
   chunks?: Tic80CartChunkTypeKey[];
   sourceEncoding?: SourceEncodingKey;
   value?: string;
+  typescript?: TypeScriptImportConfig;
 }
 
 // specifies a view of an imported resource; containing possibly a subset of its supported chunks.

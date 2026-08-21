@@ -140,6 +140,20 @@
             ],
             "description": "Type of import"
           },
+          "typescript": {
+            "type": "object",
+            "required": [
+              "tsconfig"
+            ],
+            "properties": {
+              "tsconfig": {
+                "type": "string",
+                "description": "Project-relative path to the tsconfig.json used by this TypeScript code asset"
+              }
+            },
+            "additionalProperties": false,
+            "description": "TypeScript compiler configuration for TypeScriptCode imports"
+          },
           "sourceEncoding": {
             "type": "string",
             "enum": [

@@ -19,6 +19,10 @@ export function getPathRelativeToTemplates(more: string): string {
   return fullpath;
 }
 
+export function getPathRelativeToPackageRoot(more: string): string {
+  return path.resolve(__dirname, "..", "..", more);
+}
+
 export function getTemplatesRootDir(): string {
   return path.resolve(__dirname, "..", "..", "templates");
 }

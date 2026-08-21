@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as cons from "../../utils/console";
 import { ResourceManager } from "../ImportedResourceTypes";
 import { loadAllImports } from "../importResources";
 import { Manifest } from "../manifestTypes";
@@ -198,6 +199,185 @@ describe("TypeScriptCodeResource", () => {
       await expect(loadAllImports(project)).rejects.toThrow(
         /TypeScript transpilation failed:[\s\S]*main\.ts:1:7[\s\S]*not assignable to type 'number'/,
       );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("loads extended tsconfig paths and ambient declarations as watched dependencies", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-config-"));
+    const sourceDir = path.join(projectDir, "src");
+    const helperDir = path.join(sourceDir, "helpers");
+    fs.mkdirSync(helperDir, { recursive: true });
+    const entryPath = path.join(sourceDir, "main.ts");
+    const helperPath = path.join(helperDir, "helper.ts");
+    const declarationsPath = path.join(sourceDir, "globals.d.ts");
+    const baseConfigPath = path.join(projectDir, "tsconfig.base.json");
+    const configPath = path.join(projectDir, "tsconfig.json");
+    fs.writeFileSync(
+      baseConfigPath,
+      JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: { "@helpers/*": ["src/helpers/*"] },
+          strict: true,
+          types: [],
+        },
+      }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ extends: "./tsconfig.base.json", include: ["src/**/*.d.ts"] }),
+      "utf-8",
+    );
+    fs.writeFileSync(declarationsPath, "declare const PROJECT_LABEL: string;\n", "utf-8");
+    fs.writeFileSync(helperPath, 'export const helper = "configured";\n', "utf-8");
+    fs.writeFileSync(
+      entryPath,
+      [
+        'import { helper } from "@helpers/helper";',
+        "export function configuredTick() { print(PROJECT_LABEL + helper); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      {
+        name: "main",
+        path: "src/main.ts",
+        kind: "TypeScriptCode",
+        typescript: { tsconfig: "tsconfig.json" },
+      },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const resource = getTypeScriptResource(resources, "main");
+      const preprocessedSource = resource.getCodeArtifacts(project).preprocessedSource;
+      expect(preprocessedSource).toContain('_G["configuredTick"] = ____entry["configuredTick"]');
+      expect(preprocessedSource).toContain('helper = "configured"');
+      expect(resource.getDependencyList()).toEqual(
+        expect.arrayContaining([
+          { path: entryPath, reason: "Imported TypeScript code file" },
+          { path: helperPath, reason: "TypeScript compiler dependency" },
+          { path: declarationsPath, reason: "TypeScript compiler dependency" },
+          { path: configPath, reason: "TypeScript project configuration" },
+          { path: baseConfigPath, reason: "TypeScript project configuration" },
+        ]),
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores tsconfig emission settings owned by ticbuild", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-config-owned-"));
+    fs.writeFileSync(
+      path.join(projectDir, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES5",
+          noEmit: true,
+          declaration: true,
+          outDir: "dist",
+          types: [],
+        },
+        tstl: {
+          luaTarget: "5.1",
+          noHeader: false,
+        },
+      }),
+      "utf-8",
+    );
+    fs.writeFileSync(path.join(projectDir, "main.ts"), "export function tick() {}\n", "utf-8");
+    const project = createProject(projectDir, [
+      {
+        name: "main",
+        path: "main.ts",
+        kind: "TypeScriptCode",
+        typescript: { tsconfig: "tsconfig.json" },
+      },
+    ]);
+    const warningSpy = jest.spyOn(cons, "warning").mockImplementation(() => undefined);
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+      expect(source).toContain('_G["tick"] = ____entry["tick"]');
+      expect(source).not.toContain("TypeScriptToLua");
+      expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining("compilerOptions.noEmit"));
+      expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining("tstl.luaTarget"));
+    } finally {
+      warningSpy.mockRestore();
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports malformed tsconfig diagnostics with their source location", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-config-error-"));
+    fs.writeFileSync(path.join(projectDir, "tsconfig.json"), '{ "compilerOptions": { "strict": tru } }', "utf-8");
+    fs.writeFileSync(path.join(projectDir, "main.ts"), "export function tick() {}\n", "utf-8");
+    const project = createProject(projectDir, [
+      {
+        name: "main",
+        path: "main.ts",
+        kind: "TypeScriptCode",
+        typescript: { tsconfig: "tsconfig.json" },
+      },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(
+        /TypeScript configuration failed:[\s\S]*tsconfig\.json:1:/,
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects tsconfig project references before transpilation", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-config-reference-"));
+    fs.writeFileSync(
+      path.join(projectDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { types: [] }, references: [{ path: "./library" }] }),
+      "utf-8",
+    );
+    fs.writeFileSync(path.join(projectDir, "main.ts"), "export function tick() {}\n", "utf-8");
+    const project = createProject(projectDir, [
+      {
+        name: "main",
+        path: "main.ts",
+        kind: "TypeScriptCode",
+        typescript: { tsconfig: "tsconfig.json" },
+      },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow("TypeScript project references are not supported yet");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects TypeScriptToLua plugins before they can execute", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-config-plugin-"));
+    fs.writeFileSync(
+      path.join(projectDir, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { types: [] }, tstl: { luaPlugins: [{ name: "not-installed" }] } }),
+      "utf-8",
+    );
+    fs.writeFileSync(path.join(projectDir, "main.ts"), "export function tick() {}\n", "utf-8");
+    const project = createProject(projectDir, [
+      {
+        name: "main",
+        path: "main.ts",
+        kind: "TypeScriptCode",
+        typescript: { tsconfig: "tsconfig.json" },
+      },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow("TypeScriptToLua plugins are not supported yet");
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }

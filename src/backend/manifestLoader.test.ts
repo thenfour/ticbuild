@@ -101,6 +101,9 @@ describe("Manifest Loader", () => {
             name: "maincode",
             path: "main.ts",
             kind: "TypeScriptCode",
+            typescript: {
+              tsconfig: "tsconfig.json",
+            },
           },
         ],
       };
@@ -110,6 +113,7 @@ describe("Manifest Loader", () => {
       const result = loadManifest("/test/manifest.ticbuild.jsonc");
 
       expect(result.manifest.imports[0].kind).toBe("TypeScriptCode");
+      expect(result.manifest.imports[0].typescript?.tsconfig).toBe("tsconfig.json");
     });
 
     it("should handle JSONC with comments", () => {

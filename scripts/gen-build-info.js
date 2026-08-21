@@ -15,6 +15,7 @@ function getBuildInfo() {
   const packageJsonPath = path.resolve(__dirname, "..", "package.json");
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
   const version = packageJson.version;
+  const typescriptVersion = packageJson.dependencies.typescript;
 
   const dirtyOutput = safeExec("git status --porcelain");
   const dirty = dirtyOutput == null ? null : dirtyOutput.length > 0;
@@ -25,6 +26,7 @@ function getBuildInfo() {
 
   return {
     version,
+    typescriptVersion,
     dirty,
     buildDate,
     lastCommitDate,

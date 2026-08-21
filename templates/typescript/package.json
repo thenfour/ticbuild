@@ -1,0 +1,14 @@
+{
+  "name": "{{PROJECT_PACKAGE_NAME}}",
+  "private": true,
+  "scripts": {
+    "build": "ticbuild build",
+    "watch": "ticbuild watch",
+    "run": "ticbuild run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "ticbuild": "^{{TICBUILD_VERSION}}",
+    "typescript": "{{TYPESCRIPT_VERSION}}"
+  }
+}

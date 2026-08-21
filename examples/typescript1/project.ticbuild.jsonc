@@ -18,7 +18,10 @@
     "imports": [
         {
             "name": "TypescriptMain",
-            "path": "src/tsMain.ts"
+            "path": "src/tsMain.ts",
+            "typescript": {
+                "tsconfig": "./tsconfig.json"
+            }
         },
         {
             "name": "LuaMain",

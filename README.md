@@ -487,15 +487,29 @@ When running `ticbuild watch`, ticbuild always watches the manifest file and the
 
 # TypeScript code
 
-Include `.ts` source files seamlessly in your project:
+Start a TypeScript project with:
+
+```bash
+ticbuild init my-demo --template typescript
+cd my-demo
+npm install
+```
+
+To add a `.ts` source asset manually:
 
 ```jsonc
 {
   "name": "maincode",
   "path": "src/main.ts",
-  "kind": "TypeScriptCode"
+  "kind": "TypeScriptCode",
+  "typescript": { // optional
+    "tsconfig": "./tsconfig.json"
+  }
 }
 ```
+
+Compiler plugins, TypeScriptToLua plugins, project references,
+and `noResolvePaths` are not supported yet.
 
 ticbuild uses [TypeScriptToLua](https://github.com/TypeScriptToLua/TypeScriptToLua) to
 provide native transpiling to Lua. So yes the output cart is in Lua.

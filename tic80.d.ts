@@ -1,7 +1,7 @@
 /** @noSelfInFile */
 /// <reference types="@typescript-to-lua/language-extensions" />
 
-// TIC-80 runtime globals made available to TypeScriptCode resources.
+// TIC-80 runtime globals made available to ticbuild TypeScript projects.
 // The callback names (TIC, BOOT, BDR, SCN, OVR, MENU) are deliberately not
 // declared here so user declarations retain their inferred types.
 

@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { buildInfo } from "../buildInfo";
 import * as cons from "../utils/console";
 import { copyFile, ensureDir, fileExists, isDirectory, isDirectoryEmpty } from "../utils/fileSystem";
 import {
@@ -67,8 +68,19 @@ function copyTemplateDir(
 /////////////////////////////////////////////////////////////////////////////////
 function isTemplateTextFile(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
-  const templateExtensions = new Set([".jsonc", ".json", ".lua", ".md", ".txt"]);
+  const templateExtensions = new Set([".jsonc", ".json", ".lua", ".ts", ".md", ".txt"]);
   return templateExtensions.has(ext);
+}
+
+/////////////////////////////////////////////////////////////////////////////////
+function toPackageName(projectName: string): string {
+  const normalized = projectName
+    .toLowerCase()
+    .replace(/[^a-z0-9._~-]+/g, "-") // replace invalid chars with dash
+    .replace(/^[-._]+|[-._]+$/g, "") // trim leading/trailing dashes, dots, underscores
+    .slice(0, 214) // max len
+    .replace(/[-._]+$/g, ""); // trim trailing badness again, after truncation
+  return normalized || "ticbuild-project";
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -99,7 +111,17 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
   const projectName = options?.name?.trim() || path.basename(resolvedDir);
   const templateDir = resolveAndValidateTemplateDir(options?.template || "minimal");
 
-  copyTemplateDir(templateDir, resolvedDir, { PROJECT_NAME: projectName }, options?.force === true);
+  copyTemplateDir(
+    templateDir,
+    resolvedDir,
+    {
+      PROJECT_NAME: projectName,
+      PROJECT_PACKAGE_NAME: toPackageName(projectName),
+      TICBUILD_VERSION: buildInfo.version,
+      TYPESCRIPT_VERSION: buildInfo.typescriptVersion,
+    },
+    options?.force === true,
+  );
 
   const schemaSourcePath = path.resolve(__dirname, "..", "..", "ticbuild.schema.json");
   const schemaTargetPath = path.join(resolvedDir, ".ticbuild/ticbuild.schema.json");

@@ -2,19 +2,18 @@ import * as path from "node:path";
 import * as ts from "typescript";
 import * as tstl from "typescript-to-lua";
 import { canonicalizePath, toAbsoluteCanonicalPath } from "../../utils/fileSystem";
-import { getPathRelativeToTemplates } from "../../utils/templates";
+import { getPathRelativeToPackageRoot } from "../../utils/templates";
 import * as cons from "../../utils/console";
 import { ExternalDependency, GeneratedLuaSource } from "../ImportedResourceTypes";
+import { TypeScriptImportConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
+import { createTypeScriptTranspilationOptions } from "./TypeScriptTranspilationOptions";
+import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
 
 const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const exportGlobalMarker = "__TICBUILD_EXPORT_GLOBAL__";
 const bundleFileName = "__ticbuild_typescript_bundle.lua";
 const tic80CallbackNames = new Set(["TIC", "BOOT", "BDR", "SCN", "OVR", "MENU"]);
-// const preprocessorDirectivePattern =
-//   /^([ \t]*)\/\/[ \t]*(?:--)?#(pragma|define|undef|include|if|ifdef|ifndef|else|endif|warning|error|macro|endmacro|minify)\b(.*)$/;
-
-
 const preprocessorDirectivePattern =
   /^([ \t]*)\/\/(?:--)?#(pragma|define|undef|include|if|ifdef|ifndef|else|endif|warning|error|macro|endmacro|minify)\b(.*)$/;
 
@@ -41,38 +40,26 @@ function isTypeScriptImplementationFile(fileName: string): boolean {
 function isNodeModulesPath(fileName: string): boolean {
   return canonicalizePath(fileName).split(path.sep).some((part) => part.toLowerCase() === "node_modules");
 }
-
-
-
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 export function transpileTypeScriptToLua(
   project: TicbuildProjectCore,
   entryFilePath: string,
   entrySource: string,
+  typescriptConfig?: TypeScriptImportConfig,
 ): GeneratedLuaSource {
-  const builtinsPath = canonicalizePath(getPathRelativeToTemplates("builtins/tic80.d.ts"));
-  const options: tstl.CompilerOptions = {
-    target: ts.ScriptTarget.ESNext,
-    lib: ["lib.esnext.d.ts"],
-    moduleResolution: ts.ModuleResolutionKind.Node10,
-    strict: true,
-    skipLibCheck: true,
-    // Top-level TypeScript functions become ordinary Lua functions. Object and
-    // class methods still retain their normal self parameter.
-    noImplicitSelf: true,
-    noEmitOnError: false,
-    noHeader: true,
-    luaTarget: tstl.LuaTarget.Lua53,
-    luaLibImport: tstl.LuaLibImportKind.RequireMinimal,
-    luaBundle: bundleFileName,
-    luaBundleEntry: entryFilePath,
-    sourceMap: false,
-    declaration: false,
-  };
+  const builtinsPath = canonicalizePath(getPathRelativeToPackageRoot("tic80.d.ts"));
+  const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
+  const options = createTypeScriptTranspilationOptions(configuredProject.options, {
+    entryFilePath,
+    bundleFileName,
+  });
 
   const compilerHost = createCompilerHost(options, entryFilePath, entrySource);
-  const program = ts.createProgram([entryFilePath, builtinsPath], options, compilerHost);
+  const program = ts.createProgram(
+    distinctTSPaths([entryFilePath, builtinsPath, ...configuredProject.declarationRootPaths]),
+    options,
+    compilerHost,
+  );
   const exportedValueNames = getEntryExportedValueNames(program, entryFilePath);
   const emitReadDependencies = new Set<string>();
   const emitHost: tstl.EmitHost = {
@@ -122,12 +109,32 @@ export function transpileTypeScriptToLua(
     builtinsPath,
     emitReadDependencies,
     project.projectDir,
+    configuredProject.configDependencies,
   );
   return {
     source: luaSource,
     sourcePath: entryFilePath,
     dependencies,
   };
+}
+
+// uses typescript path options
+function distinctTSPaths(paths: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return paths.filter((filePath) => {
+    const key = getCanonicalTSPathKey(filePath);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+// uses typescript path options
+function getCanonicalTSPathKey(filePath: string): string {
+  const canonicalPath = canonicalizePath(filePath);
+  return ts.sys.useCaseSensitiveFileNames ? canonicalPath : canonicalPath.toLowerCase();
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -138,10 +145,10 @@ function createCompilerHost(
 ): ts.CompilerHost {
   const host = ts.createCompilerHost(options);
   const originalGetSourceFile = host.getSourceFile.bind(host);
-  const canonicalEntryPath = canonicalizePath(entryFilePath).toLowerCase();
+  const canonicalEntryPath = getCanonicalTSPathKey(entryFilePath);
 
   host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
-    const isEntry = canonicalizePath(fileName).toLowerCase() === canonicalEntryPath;
+    const isEntry = getCanonicalTSPathKey(fileName) === canonicalEntryPath;
     if (isEntry) {
       const transformed = preserveTicbuildDirectives(entrySource, fileName, true);
       return ts.createSourceFile(fileName, transformed, languageVersion, true, ts.ScriptKind.TS);
@@ -283,25 +290,31 @@ function collectDependencies(
   builtinsPath: string,
   emitReadDependencies: Set<string>,
   projectDir: string,
+  configDependencies: readonly string[],
 ): ExternalDependency[] {
-  const paths = new Set<string>();
+  const dependencies = new Map<string, string>();
+  const canonicalBuiltinsPath = getCanonicalTSPathKey(builtinsPath);
   for (const sourceFile of program.getSourceFiles()) {
     if (!program.isSourceFileDefaultLibrary(sourceFile)) {
-      paths.add(toAbsoluteCanonicalPath(sourceFile.fileName, projectDir));
+      const dependencyPath = toAbsoluteCanonicalPath(sourceFile.fileName, projectDir);
+      if (getCanonicalTSPathKey(dependencyPath) !== canonicalBuiltinsPath && !isNodeModulesPath(dependencyPath)) {
+        dependencies.set(dependencyPath, "TypeScript compiler dependency");
+      }
     }
   }
   for (const dependencyPath of emitReadDependencies) {
-    paths.add(dependencyPath);
+    if (!isNodeModulesPath(dependencyPath)) {
+      dependencies.set(dependencyPath, "TypeScript compiler dependency");
+    }
   }
 
-  const canonicalBuiltinsPath = builtinsPath.toLowerCase();
-  return Array.from(paths)
-    .filter((dependencyPath) => dependencyPath.toLowerCase() !== canonicalBuiltinsPath)
-    .filter((dependencyPath) => !isNodeModulesPath(dependencyPath))
-    .map((dependencyPath) => ({
-      path: dependencyPath,
-      reason: "TypeScript compiler dependency",
-    }));
+  for (const dependencyPath of configDependencies) {
+    dependencies.set(dependencyPath, "TypeScript project configuration");
+  }
+  return Array.from(dependencies, ([dependencyPath, reason]) => ({
+    path: dependencyPath,
+    reason,
+  }));
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

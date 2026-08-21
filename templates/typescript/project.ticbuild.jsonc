@@ -1,0 +1,27 @@
+{
+  "$schema": "./.ticbuild/ticbuild.schema.json",
+  "project": {
+    "name": "{{PROJECT_NAME}}",
+    "importDirs": ["assets"],
+    "includeDirs": ["src"],
+    "binDir": "./build/$(buildConfiguration)-bin",
+    "objDir": "./build/$(buildConfiguration)-obj",
+    "outputCartName": "$(project.name).tic"
+  },
+  "imports": [
+    {
+      "name": "maincode",
+      "path": "src/main.ts",
+      "typescript": {
+        "tsconfig": "./tsconfig.json"
+      }
+    }
+  ],
+  "assembly": {
+    "blocks": [
+      {
+        "asset": "maincode"
+      }
+    ]
+  }
+}

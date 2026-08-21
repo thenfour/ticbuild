@@ -12,7 +12,7 @@ Arguments:
 Options:
 
   -n, --name <name>    Project name (used in manifest)
-  -t, --template <name> Template name: 'minimal' or 'example' (default: example)
+  -t, --template <name> Template name, including 'minimal' or 'typescript' (default: minimal)
   -f, --force          Overwrite existing files
   -h, --help           Show this help message
 
@@ -20,4 +20,5 @@ Examples:
 
   ticbuild init
   ticbuild init ./myproject --name "My demo"
+  ticbuild init ./my-ts-game --template typescript
   ticbuild init . --template minimal --force
