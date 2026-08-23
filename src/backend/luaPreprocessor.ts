@@ -12,6 +12,10 @@ import { parseLua } from "../utils/lua/lua_processor";
 import { collectDocCommentAbove } from "../utils/lua/lua_doc";
 import * as cons from "../utils/console";
 import {
+  assertSourceMapMatchesSource,
+  createIdentitySourceMap,
+  mapPreprocessedOffset,
+  mapPreprocessedOffsetToLineColumn,
   SourceMapBuilder,
   LuaPreprocessorSourceMap,
 } from "./sourceMap";
@@ -38,6 +42,7 @@ export type LuaCodeImportResolver = (importName: string) => Promise<GeneratedLua
 
 export type LuaPreprocessorOptions = {
   resolveCodeImport?: LuaCodeImportResolver;
+  sourceMap?: LuaPreprocessorSourceMap;
 };
 
 export type PreprocessorSymbol = {
@@ -99,7 +104,9 @@ export async function preprocessLuaCode(
   };
 
   const includeKey = makeIncludeKey(filePath, {});
-  const rawResult = await processSource(project, source, filePath, includeKey, state, {});
+  const inputSourceMap = options.sourceMap ?? createIdentitySourceMap(source, filePath);
+  assertSourceMapMatchesSource(inputSourceMap, source);
+  const rawResult = await processSource(project, source, inputSourceMap, filePath, includeKey, state, {});
   const expandedResult = expandMacros(project, rawResult, state.macros, filePath);
   const finalResult = await expandPreprocessorCalls(project, expandedResult, filePath, state);
 
@@ -133,6 +140,7 @@ type ProcessResult = {
 async function processSource(
   project: TicbuildProjectCore,
   source: string,
+  inputSourceMap: LuaPreprocessorSourceMap,
   filePath: string,
   includeKey: string,
   state: PreprocessorState,
@@ -180,6 +188,9 @@ async function processSource(
     const lineInfo = lines[i];
     const line = lineInfo.text;
     const lineNumber = i + 1;
+    const authoredLineLocation = mapPreprocessedOffsetToLineColumn(inputSourceMap, lineInfo.startOffset, "right");
+    const authoredFilePath = authoredLineLocation?.file ?? filePath;
+    const authoredLineNumber = authoredLineLocation?.line ?? lineNumber;
 
     const directiveMatch = line.match(/^\s*--#\s*(\w+)\s*(.*)$/);
     if (!directiveMatch) {
@@ -198,12 +209,12 @@ async function processSource(
         }
         if (output.length > 0) {
           output += "\n";
-          const newlineOrigin = lastEmittedOrigin ?? { file: filePath, offset: lineInfo.startOffset };
-          builder.appendOriginal("\n", newlineOrigin.file, newlineOrigin.offset);
+          const newlineOrigin = lastEmittedOrigin ?? mapPreprocessedOffset(inputSourceMap, lineInfo.startOffset, "right");
+          builder.appendGenerated("\n", newlineOrigin);
         }
         output += line;
-        builder.appendOriginal(line, filePath, lineInfo.startOffset);
-        lastEmittedOrigin = { file: filePath, offset: lineInfo.endOffset };
+        builder.appendMappedSlice(line, inputSourceMap, lineInfo.startOffset);
+        lastEmittedOrigin = mapPreprocessedOffset(inputSourceMap, lineInfo.endOffset, "left");
       }
       continue;
     }
@@ -213,8 +224,9 @@ async function processSource(
 
     switch (directive) {
       case "macro": {
-        const macroHeader = parseMacroHeader(rest, filePath, lineNumber);
+        const macroHeader = parseMacroHeader(rest, authoredFilePath, authoredLineNumber);
         const nameOffset = findMacroNameOffset(line, lineInfo.startOffset, macroHeader.name);
+        const nameOrigin = mapPreprocessedOffset(inputSourceMap, nameOffset, "right");
         const docLines = collectDocCommentAbove(lineTexts, i);
         if (macroHeader.inlineBody !== undefined) {
           if (isActive()) {
@@ -222,14 +234,14 @@ async function processSource(
               name: macroHeader.name,
               params: macroHeader.params,
               body: macroHeader.inlineBody,
-              sourceFile: filePath,
-              lineNumber,
+              sourceFile: authoredFilePath,
+              lineNumber: authoredLineNumber,
             });
             state.macroSymbols.push({
               name: macroHeader.name,
               kind: "macro",
-              sourceFile: filePath,
-              offset: nameOffset,
+              sourceFile: nameOrigin?.file ?? authoredFilePath,
+              offset: nameOrigin?.offset ?? nameOffset,
               params: macroHeader.params,
               docLines,
             });
@@ -237,7 +249,7 @@ async function processSource(
           break;
         }
 
-        const bodyResult = readMacroBody(lineTexts, i + 1, filePath, lineNumber);
+        const bodyResult = readMacroBody(lineTexts, i + 1, authoredFilePath, authoredLineNumber);
         i = bodyResult.endIndex;
         if (isActive()) {
           const strippedBody = stripLuaCommentsPreserveNewlines(bodyResult.body);
@@ -245,14 +257,14 @@ async function processSource(
             name: macroHeader.name,
             params: macroHeader.params,
             body: strippedBody,
-            sourceFile: filePath,
-            lineNumber,
+            sourceFile: authoredFilePath,
+            lineNumber: authoredLineNumber,
           });
           state.macroSymbols.push({
             name: macroHeader.name,
             kind: "macro",
-            sourceFile: filePath,
-            offset: nameOffset,
+            sourceFile: nameOrigin?.file ?? authoredFilePath,
+            offset: nameOrigin?.offset ?? nameOffset,
             params: macroHeader.params,
             docLines,
           });
@@ -260,7 +272,7 @@ async function processSource(
         break;
       }
       case "endmacro": {
-        throw new Error(formatError(filePath, lineNumber, `--#endmacro without matching --#macro`));
+        throw new Error(formatError(authoredFilePath, authoredLineNumber, `--#endmacro without matching --#macro`));
       }
       case "minify": {
         if (!isActive()) {
@@ -268,16 +280,16 @@ async function processSource(
         }
         const minifyOption = stripTrailingLineComment(rest).trim();
         if (minifyOption !== "allow_rename") {
-          throw new Error(formatError(filePath, lineNumber, `Unsupported --#minify option: ${minifyOption}`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `Unsupported --#minify option: ${minifyOption}`));
         }
         if (pendingMinifyAllowRename) {
           throw new Error(formatError(
-            filePath,
-            lineNumber,
+            authoredFilePath,
+            authoredLineNumber,
             `--#minify allow_rename cannot be repeated before a target declaration`,
           ));
         }
-        pendingMinifyAllowRename = { filePath, lineNumber };
+        pendingMinifyAllowRename = { filePath: authoredFilePath, lineNumber: authoredLineNumber };
         break;
       }
       case "define": {
@@ -286,7 +298,7 @@ async function processSource(
         }
         const defineMatch = rest.match(/^([A-Za-z_][A-Za-z0-9_]*)(?:\s+(.*))?$/);
         if (!defineMatch) {
-          throw new Error(formatError(filePath, lineNumber, `Invalid --#define syntax: ${line}`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `Invalid --#define syntax: ${line}`));
         }
         const name = defineMatch[1];
         const expr = defineMatch[2];
@@ -294,10 +306,10 @@ async function processSource(
           localDefines.set(name, true);
         } else {
           const value = evaluateExpression(
-            parseExpression(expr, filePath, lineNumber),
+            parseExpression(expr, authoredFilePath, authoredLineNumber),
             localDefines,
-            filePath,
-            lineNumber,
+            authoredFilePath,
+            authoredLineNumber,
           );
           localDefines.set(name, value);
         }
@@ -309,7 +321,7 @@ async function processSource(
         }
         const undefMatch = rest.match(/^([A-Za-z_][A-Za-z0-9_]*)$/);
         if (!undefMatch) {
-          throw new Error(formatError(filePath, lineNumber, `Invalid --#undef syntax: ${line}`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `Invalid --#undef syntax: ${line}`));
         }
         localDefines.delete(undefMatch[1]);
         break;
@@ -319,13 +331,13 @@ async function processSource(
         let conditionMet = false;
         if (parentActive) {
           if (!rest || rest.trim() === "") {
-            throw new Error(formatError(filePath, lineNumber, `Missing expression in --#if`));
+            throw new Error(formatError(authoredFilePath, authoredLineNumber, `Missing expression in --#if`));
           }
           const exprValue = evaluateExpression(
-            parseExpression(rest, filePath, lineNumber),
+            parseExpression(rest, authoredFilePath, authoredLineNumber),
             localDefines,
-            filePath,
-            lineNumber,
+            authoredFilePath,
+            authoredLineNumber,
           );
           conditionMet = isTruthy(exprValue);
         }
@@ -343,7 +355,7 @@ async function processSource(
         if (parentActive) {
           const ifdefMatch = rest.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)$/);
           if (!ifdefMatch) {
-            throw new Error(formatError(filePath, lineNumber, `Invalid --#ifdef syntax: ${line}`));
+            throw new Error(formatError(authoredFilePath, authoredLineNumber, `Invalid --#ifdef syntax: ${line}`));
           }
           conditionMet = localDefines.has(ifdefMatch[1]);
         }
@@ -361,7 +373,7 @@ async function processSource(
         if (parentActive) {
           const ifndefMatch = rest.trim().match(/^([A-Za-z_][A-Za-z0-9_]*)$/);
           if (!ifndefMatch) {
-            throw new Error(formatError(filePath, lineNumber, `Invalid --#ifndef syntax: ${line}`));
+            throw new Error(formatError(authoredFilePath, authoredLineNumber, `Invalid --#ifndef syntax: ${line}`));
           }
           conditionMet = !localDefines.has(ifndefMatch[1]);
         }
@@ -375,11 +387,11 @@ async function processSource(
       }
       case "else": {
         if (conditionalStack.length === 0) {
-          throw new Error(formatError(filePath, lineNumber, `--#else without matching --#if`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `--#else without matching --#if`));
         }
         const top = conditionalStack[conditionalStack.length - 1];
         if (top.hasElse) {
-          throw new Error(formatError(filePath, lineNumber, `Duplicate --#else for same --#if`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `Duplicate --#else for same --#if`));
         }
         top.hasElse = true;
         top.active = top.parentActive && !top.conditionMet;
@@ -387,7 +399,7 @@ async function processSource(
       }
       case "endif": {
         if (conditionalStack.length === 0) {
-          throw new Error(formatError(filePath, lineNumber, `--#endif without matching --#if`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `--#endif without matching --#if`));
         }
         conditionalStack.pop();
         break;
@@ -398,12 +410,12 @@ async function processSource(
         }
         const pragmaMatch = rest.trim().match(/^(\w+)$/);
         if (!pragmaMatch) {
-          throw new Error(formatError(filePath, lineNumber, `Invalid --#pragma syntax: ${line}`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `Invalid --#pragma syntax: ${line}`));
         }
         if (pragmaMatch[1] === "once") {
           state.pragmaOnceKeys.add(includeKey);
         } else {
-          throw new Error(formatError(filePath, lineNumber, `Unknown pragma: ${pragmaMatch[1]}`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `Unknown pragma: ${pragmaMatch[1]}`));
         }
         break;
       }
@@ -413,18 +425,25 @@ async function processSource(
         }
         const includeMatch = rest.trim().match(/^"([^"]+)"(.*)$/);
         if (!includeMatch) {
-          throw new Error(formatError(filePath, lineNumber, `Invalid --#include syntax: ${line}`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `Invalid --#include syntax: ${line}`));
         }
         const includeTarget = includeMatch[1];
         const remainder = includeMatch[2] || "";
-        const overrides = parseWithOverrides(remainder, localDefines, filePath, lineNumber);
+        const overrides = parseWithOverrides(remainder, localDefines, authoredFilePath, authoredLineNumber);
 
-        const included = await resolveInclude(project, includeTarget, filePath, overrides, state, lineNumber);
+        const included = await resolveInclude(
+          project,
+          includeTarget,
+          authoredFilePath,
+          overrides,
+          state,
+          authoredLineNumber,
+        );
         if (included.code) {
           if (output.length > 0) {
             output += "\n";
-            const newlineOrigin = lastEmittedOrigin ?? { file: filePath, offset: 0 };
-            builder.appendOriginal("\n", newlineOrigin.file, newlineOrigin.offset);
+            const newlineOrigin = lastEmittedOrigin ?? { file: authoredFilePath, offset: authoredLineLocation?.offset ?? 0 };
+            builder.appendGenerated("\n", newlineOrigin);
           }
           output += included.code;
           builder.appendMap(included.map);
@@ -441,9 +460,9 @@ async function processSource(
         }
         const message = rest.trim();
         if (!message) {
-          throw new Error(formatError(filePath, lineNumber, `--#error encountered`));
+          throw new Error(formatError(authoredFilePath, authoredLineNumber, `--#error encountered`));
         }
-        throw new Error(formatError(filePath, lineNumber, message));
+        throw new Error(formatError(authoredFilePath, authoredLineNumber, message));
       }
       case "warning": {
         if (!isActive()) {
@@ -451,14 +470,14 @@ async function processSource(
         }
         const message = rest.trim();
         if (!message) {
-          cons.warning(formatError(filePath, lineNumber, `--#warning encountered`));
+          cons.warning(formatError(authoredFilePath, authoredLineNumber, `--#warning encountered`));
           break;
         }
-        cons.warning(formatError(filePath, lineNumber, message));
+        cons.warning(formatError(authoredFilePath, authoredLineNumber, message));
         break;
       }
       default:
-        throw new Error(formatError(filePath, lineNumber, `Unknown directive: --#${directive}`));
+        throw new Error(formatError(authoredFilePath, authoredLineNumber, `Unknown directive: --#${directive}`));
     }
   }
 
@@ -534,7 +553,15 @@ async function resolveInclude(
   }
 
   const source = await readTextFileAsync(resolvedPath);
-  const included = await processSource(project, source, resolvedPath, includeKey, state, overrides);
+  const included = await processSource(
+    project,
+    source,
+    createIdentitySourceMap(source, resolvedPath),
+    resolvedPath,
+    includeKey,
+    state,
+    overrides,
+  );
   return ensureTrailingNewline(included, resolvedPath);
 }
 
@@ -571,6 +598,7 @@ async function resolveImportInclude(
     const included = await processSource(
       project,
       generatedLua.source,
+      generatedLua.sourceMap,
       generatedLua.sourcePath,
       includeKey,
       state,
@@ -634,6 +662,7 @@ async function resolveImportInclude(
     const included = await processSource(
       project,
       source,
+      createIdentitySourceMap(source, `${includeTarget}:${selectedChunk}`),
       `${includeTarget}:${selectedChunk}`,
       includeKey,
       state,
@@ -1400,7 +1429,7 @@ function applyReplacementsWithMap(
   let out = result.code;
   for (const rep of replacements) {
     out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
-    const origin = result.map.mapOffset(rep.start) ?? { file: filePath, offset: 0 };
+    const origin = result.map.mapOffset(rep.start, "right") ?? { file: filePath, offset: 0 };
     result.map.spliceRange(rep.start, rep.end, rep.text.length, origin);
   }
   return { code: out, map: result.map };

@@ -1,6 +1,7 @@
 import { GeneratedLuaSource, ImportedResourceBase, ResourceManager } from "../ImportedResourceTypes";
 import { Manifest } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
+import { createIdentitySourceMap } from "../sourceMap";
 import { CodeResource } from "./CodeResource";
 import { LuaCodeResource } from "./LuaCodeImporter";
 
@@ -18,6 +19,7 @@ class FakeTranspiledCodeResource extends CodeResource {
     return {
       source: this.generatedLua,
       sourcePath: this.filePath,
+      sourceMap: createIdentitySourceMap(this.generatedLua, this.filePath),
       dependencies: this.sourceDependencies.map((dependencyPath) => ({
         path: dependencyPath,
         reason: "Fake source-language input",

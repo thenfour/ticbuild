@@ -22,7 +22,6 @@ export class TypeScriptCodeResource extends CodeResource {
     return "Imported TypeScript code file";
   }
 
-  // todo: typescripttolua source map support so we can map Lua lines -> ts
   supportsLuaSymbolIndex(): boolean {
     return false;
   }

@@ -28,7 +28,8 @@ export function createTypeScriptTranspilationOptions(
     luaLibImport: tstl.LuaLibImportKind.RequireMinimal,
     luaBundle: output.bundleFileName,
     luaBundleEntry: output.entryFilePath,
-    sourceMap: false,
+    // ticbuild uses this to map Lua stack traces back to TypeScript source code.
+    sourceMap: true,
     inlineSourceMap: false,
     inlineSources: false,
     declaration: false,

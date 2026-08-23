@@ -3,6 +3,7 @@
 import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { AssetReference, CodeAssemblyOptions } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
+import { LuaPreprocessorSourceMap } from "./sourceMap";
 
 export type ExternalDependency = {
   path: string;
@@ -16,6 +17,7 @@ export type ChunkDataResult = Uint8Array | Promise<Uint8Array>;
 export type GeneratedLuaSource = {
   source: string;
   sourcePath: string;
+  sourceMap: LuaPreprocessorSourceMap;
   dependencies?: ExternalDependency[];
 };
 

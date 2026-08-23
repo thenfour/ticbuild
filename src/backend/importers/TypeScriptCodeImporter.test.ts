@@ -6,6 +6,7 @@ import { ResourceManager } from "../ImportedResourceTypes";
 import { loadAllImports } from "../importResources";
 import { Manifest } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
+import { mapPreprocessedOffsetToLineColumn } from "../sourceMap";
 import { LuaCodeResource } from "./LuaCodeImporter";
 import { TypeScriptCodeResource } from "./TypeScriptCodeImporter";
 
@@ -81,12 +82,109 @@ describe("TypeScriptCodeResource", () => {
       expect(artifacts.preprocessedSource).not.toContain('"disabled"');
       expect(artifacts.preprocessedSource).toContain('_G["TIC"] = TIC');
       expect(artifacts.preprocessedSource).not.toContain("return ____entry");
+      const helperLocation = mapPreprocessedOffsetToLineColumn(
+        artifacts.preprocessedSourceMap,
+        artifacts.preprocessedSource.indexOf('" helper"'),
+        "right",
+      );
+      expect(helperLocation?.file).toBe(helperPath);
+      expect(helperLocation?.line).toBe(2);
+
+      const expandedLocation = mapPreprocessedOffsetToLineColumn(
+        artifacts.preprocessedSourceMap,
+        artifacts.preprocessedSource.indexOf('"typescript-test"'),
+        "right",
+      );
+      expect(expandedLocation?.file).toBe(mainPath);
+      expect(expandedLocation?.line).toBe(4);
       expect(resource.getDependencyList()).toEqual(
         expect.arrayContaining([
           { path: mainPath, reason: "Imported TypeScript code file" },
           { path: helperPath, reason: "TypeScript compiler dependency" },
         ]),
       );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves relative Lua includes from the TypeScript module that authored the directive", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-relative-include-"));
+    const featureDir = path.join(projectDir, "feature");
+    fs.mkdirSync(featureDir);
+    const mainPath = path.join(projectDir, "main.ts");
+    const helperPath = path.join(featureDir, "helper.ts");
+    const localLuaPath = path.join(featureDir, "local.lua");
+    fs.writeFileSync(
+      mainPath,
+      ['import "./feature/helper";', "export function TIC(): void { cls(0); }"].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      helperPath,
+      ['//--#include "./local.lua"', 'export const helper = "loaded";'].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(localLuaPath, 'trace("nested Lua include")\n', "utf-8");
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
+      const includedOffset = artifacts.preprocessedSource.indexOf('trace("nested Lua include")');
+      expect(includedOffset).toBeGreaterThanOrEqual(0);
+      const includedLocation = mapPreprocessedOffsetToLineColumn(
+        artifacts.preprocessedSourceMap,
+        includedOffset,
+        "right",
+      );
+      expect(includedLocation).toMatchObject({ file: localLuaPath, line: 1, column: 0 });
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("distinguishes source files with the same basename", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-duplicate-basename-"));
+    const leftDir = path.join(projectDir, "left");
+    const rightDir = path.join(projectDir, "right");
+    fs.mkdirSync(leftDir);
+    fs.mkdirSync(rightDir);
+    const mainPath = path.join(projectDir, "main.ts");
+    const leftPath = path.join(leftDir, "shared.ts");
+    const rightPath = path.join(rightDir, "shared.ts");
+    fs.writeFileSync(leftPath, 'export const left = "left source";\n', "utf-8");
+    fs.writeFileSync(rightPath, 'export const right = "right source";\n', "utf-8");
+    fs.writeFileSync(
+      mainPath,
+      [
+        'import { left } from "./left/shared";',
+        'import { right } from "./right/shared";',
+        "export function TIC(): void { print(left + right); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
+      const leftLocation = mapPreprocessedOffsetToLineColumn(
+        artifacts.preprocessedSourceMap,
+        artifacts.preprocessedSource.indexOf('"left source"'),
+        "right",
+      );
+      const rightLocation = mapPreprocessedOffsetToLineColumn(
+        artifacts.preprocessedSourceMap,
+        artifacts.preprocessedSource.indexOf('"right source"'),
+        "right",
+      );
+      expect(leftLocation?.file).toBe(leftPath);
+      expect(rightLocation?.file).toBe(rightPath);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }

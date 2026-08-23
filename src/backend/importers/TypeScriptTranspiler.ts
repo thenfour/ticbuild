@@ -10,6 +10,8 @@ import { TicbuildProjectCore } from "../projectCore";
 import { createTypeScriptTranspilationOptions } from "./TypeScriptTranspilationOptions";
 import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
 import { assert } from "../../utils/errorHandling";
+import { LuaPreprocessorSourceMap, SourceMapBuilder } from "../sourceMap";
+import { importSourceMapV3, KnownSourceFile } from "../sourceMapV3";
 
 const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const exportGlobalMarker = "__TICBUILD_EXPORT_GLOBAL__";
@@ -78,11 +80,15 @@ export function transpileTypeScriptToLua(
   };
 
   const emittedLua = new Map<string, string>();
+  const emittedSourceMaps = new Map<string, string>();
   const emitResult = new tstl.Transpiler({ emitHost }).emit({
     program,
+    plugins: [createSourceMapPathPlugin(project.projectDir)],
     writeFile(fileName, data) {
       if (fileName.toLowerCase().endsWith(".lua")) {
         emittedLua.set(canonicalizePath(fileName), data);
+      } else if (fileName.toLowerCase().endsWith(".lua.map")) {
+        emittedSourceMaps.set(canonicalizePath(fileName), data);
       }
     },
   });
@@ -103,8 +109,20 @@ export function transpileTypeScriptToLua(
       `TypeScript transpilation for ${entryFilePath} produced ${emittedLua.size} Lua files; expected one bundled output.`,
     );
   }
+  if (emittedSourceMaps.size !== 1) {
+    throw new Error(
+      `TypeScript transpilation for ${entryFilePath} produced ${emittedSourceMaps.size} Lua source maps; expected one bundled output map.`,
+    );
+  }
 
-  const luaSource = restoreTicbuildMarkers(Array.from(emittedLua.values())[0], exportedValueNames);
+  const emittedLuaSource = Array.from(emittedLua.values())[0];
+  const emittedMap = importSourceMapV3(
+    emittedLuaSource,
+    Array.from(emittedSourceMaps.values())[0],
+    collectKnownSourceFiles(program, entryFilePath, entrySource),
+    project.projectDir,
+  );
+  const restored = restoreTicbuildMarkers(emittedLuaSource, emittedMap, exportedValueNames);
   const dependencies = collectDependencies(
     program,
     builtinsPath,
@@ -113,10 +131,74 @@ export function transpileTypeScriptToLua(
     configuredProject.configDependencies,
   );
   return {
-    source: luaSource,
+    source: restored.source,
     sourcePath: entryFilePath,
+    sourceMap: restored.sourceMap,
     dependencies,
   };
+}
+
+type MutableSourceNode = {
+  source?: string | null;
+  children?: Array<string | MutableSourceNode>;
+};
+
+function rewriteSourceNodePath(node: MutableSourceNode, sourcePath: string): void {
+  if (node.source !== null && node.source !== undefined) {
+    node.source = sourcePath;
+  }
+  for (const child of node.children ?? []) {
+    if (typeof child !== "string") {
+      rewriteSourceNodePath(child, sourcePath);
+    }
+  }
+}
+
+// TSTL records source path relative to each emitted Lua module. Once
+// those modules are bundled, two sources such as left/shared.ts and
+// right/shared.ts both become shared.ts and cannot be distinguished.
+// rewrite to absolute canonical paths to avoid collisions and allow source map lookups to succeed.
+function createSourceMapPathPlugin(projectDir: string): tstl.Plugin {
+  return {
+    afterPrint(_program, _options, _emitHost, files) {
+      for (const file of files) {
+        if (!file.sourceMapNode) {
+          continue;
+        }
+        const implementationSources = (file.sourceFiles ?? []).filter(
+          (sourceFile) => isTypeScriptImplementationFile(sourceFile.fileName),
+        );
+        if (implementationSources.length !== 1) {
+          continue;
+        }
+        rewriteSourceNodePath(
+          file.sourceMapNode as unknown as MutableSourceNode,
+          toAbsoluteCanonicalPath(implementationSources[0].fileName, projectDir),
+        );
+      }
+    },
+  };
+}
+
+function collectKnownSourceFiles(
+  program: ts.Program,
+  entryFilePath: string,
+  entrySource: string,
+): KnownSourceFile[] {
+  const canonicalEntryPath = getCanonicalTSPathKey(entryFilePath);
+  const sources: KnownSourceFile[] = [];
+  for (const sourceFile of program.getSourceFiles()) {
+    if (sourceFile.isDeclarationFile || !isTypeScriptImplementationFile(sourceFile.fileName)) {
+      continue;
+    }
+    const content = getCanonicalTSPathKey(sourceFile.fileName) === canonicalEntryPath
+      ? entrySource
+      : ts.sys.readFile(sourceFile.fileName);
+    if (content !== undefined) {
+      sources.push({ filePath: sourceFile.fileName, content });
+    }
+  }
+  return sources;
 }
 
 // uses typescript path options
@@ -169,6 +251,11 @@ function createCompilerHost(
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 function preserveTicbuildDirectives(source: string, fileName: string, isEntry: boolean): string {
+  // convert preprocessor directive lines to a marker with the directive payload base64-encoded.
+  // e.g.,
+  // //#include "foo.lua"
+  // becomes
+  // __TICBUILD_PREPROCESSOR_DIRECTIVE__("IyNpbmNsdWRlICJmb28ubHVhIg==");
   const transformed = source
     .split(/\r?\n/)
     .map((line) => {
@@ -186,6 +273,7 @@ function preserveTicbuildDirectives(source: string, fileName: string, isEntry: b
     return transformed;
   }
 
+  // make callbacks globals.
   const callbacks = findDeclaredCallbacks(source, fileName);
   if (callbacks.length === 0) {
     return transformed;
@@ -238,7 +326,45 @@ function getEntryExportedValueNames(program: ts.Program, entryFilePath: string):
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-function restoreTicbuildMarkers(luaSource: string, exportedValueNames: readonly string[]): string {
+type TextReplacement = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+function splitLinesWithOffsets(source: string): Array<{ text: string; start: number; end: number }> {
+  const lines: Array<{ text: string; start: number; end: number }> = [];
+  let offset = 0;
+  for (const text of source.split(/\r\n|\n|\r/)) {
+    lines.push({ text, start: offset, end: offset + text.length });
+    offset += text.length;
+    if (offset < source.length) {
+      offset += source.startsWith("\r\n", offset) ? 2 : 1;
+    }
+  }
+  return lines;
+}
+
+function applyMappedReplacements(
+  source: string,
+  sourceMap: LuaPreprocessorSourceMap,
+  replacements: readonly TextReplacement[],
+): { source: string; sourceMap: LuaPreprocessorSourceMap } {
+  let output = source;
+  const builder = SourceMapBuilder.fromSourceMap(sourceMap);
+  for (const replacement of [...replacements].sort((a, b) => b.start - a.start)) {
+    const origin = builder.mapOffset(replacement.start, "right");
+    output = output.slice(0, replacement.start) + replacement.text + output.slice(replacement.end);
+    builder.spliceRange(replacement.start, replacement.end, replacement.text.length, origin);
+  }
+  return { source: output, sourceMap: builder.toSourceMap(output) };
+}
+
+function restoreTicbuildMarkers(
+  luaSource: string,
+  sourceMap: LuaPreprocessorSourceMap,
+  exportedValueNames: readonly string[],
+): { source: string; sourceMap: LuaPreprocessorSourceMap } {
   const directiveCall = new RegExp(
     `^([ \\t]*)${preprocessorMarker}\\("([A-Za-z0-9+/=]+)"\\)[ \\t]*$`,
   );
@@ -250,49 +376,56 @@ function restoreTicbuildMarkers(luaSource: string, exportedValueNames: readonly 
     `^([ \\t]*)${exportGlobalMarker}\\("([A-Z]+)",[ \\t]*(.+)\\)[ \\t]*$`,
   );
 
-  const lines = luaSource
-    .split(/\r?\n/)
-    .map((line) => {
-      const directiveMatch = line.match(directiveCall);
-      if (directiveMatch) {
-        const [, indent, payload] = directiveMatch;
-        return `${indent}--${Buffer.from(payload, "base64").toString("utf8")}`;
-      }
-      const exportMatch = line.match(exportCall);
-      if (exportMatch) {
-        const [, indent, globalName, valueExpression] = exportMatch;
-        return `${indent}_G["${globalName}"] = ${valueExpression}`;
-      }
-      return line;
-    });
-
-  const leakedMarkerLine = lines.find(
-    (line) => line.includes(`${preprocessorMarker}(`) || line.includes(`${exportGlobalMarker}(`),
-  );
-
-  assert(leakedMarkerLine === undefined, "TypeScript transpilation left an internal ticbuild marker in emitted Lua");
+  const lines = splitLinesWithOffsets(luaSource);
+  const replacements: TextReplacement[] = [];
+  for (const line of lines) {
+    const directiveMatch = line.text.match(directiveCall);
+    if (directiveMatch) {
+      const [, indent, payload] = directiveMatch;
+      replacements.push({
+        start: line.start,
+        end: line.end,
+        text: `${indent}--${Buffer.from(payload, "base64").toString("utf8")}`,
+      });
+      continue;
+    }
+    const exportMatch = line.text.match(exportCall);
+    if (exportMatch) {
+      const [, indent, globalName, valueExpression] = exportMatch;
+      replacements.push({
+        start: line.start,
+        end: line.end,
+        text: `${indent}_G["${globalName}"] = ${valueExpression}`,
+      });
+    }
+  }
 
   // A ticbuild code resource is composed into a cartridge chunk rather than
   // loaded as a Lua module. Publish the entry module's named value exports as
   // Lua globals, then remove TSTL's final return so Lua may follow this include.
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].trim().length === 0) {
+    if (lines[i].text.trim().length === 0) {
       continue;
     }
-    if (lines[i].trim() === "return ____entry") {
-      const indent = lines[i].match(/^[ \t]*/)?.[0] ?? "";
-      lines.splice(
-        i,
-        1,
-        ...exportedValueNames.map((name) => {
+    if (lines[i].text.trim() === "return ____entry") {
+      const indent = lines[i].text.match(/^[ \t]*/)?.[0] ?? "";
+      replacements.push({
+        start: lines[i].start,
+        end: lines[i].end,
+        text: exportedValueNames.map((name) => {
           const luaName = JSON.stringify(name);
           return `${indent}_G[${luaName}] = ____entry[${luaName}]`;
-        }),
-      );
+        }).join("\n"),
+      });
     }
     break;
   }
-  return lines.join("\n");
+  const restored = applyMappedReplacements(luaSource, sourceMap, replacements);
+  assert(
+    !restored.source.includes(`${preprocessorMarker}(`) && !restored.source.includes(`${exportGlobalMarker}(`),
+    "TypeScript transpilation left an internal ticbuild marker in emitted Lua",
+  );
+  return restored;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

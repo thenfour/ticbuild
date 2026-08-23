@@ -5,6 +5,7 @@ import { GeneratedLuaSource } from "../ImportedResourceTypes";
 import { LuaPreprocessResult } from "../luaPreprocessor";
 import { ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
+import { createIdentitySourceMap } from "../sourceMap";
 import {
   CodeResource,
 } from "./CodeResource";
@@ -23,6 +24,7 @@ export class LuaCodeResource extends CodeResource {
       preprocessedSource !== undefined && dependencies && preprocessResult
         ? {
           generatedLuaSource: inputSource,
+          generatedLuaSourceMap: createIdentitySourceMap(inputSource, filePath),
           dependencies,
           preprocessResult,
         }
@@ -34,6 +36,7 @@ export class LuaCodeResource extends CodeResource {
     return {
       source: this.sourceText,
       sourcePath: this.filePath,
+      sourceMap: createIdentitySourceMap(this.sourceText, this.filePath),
       dependencies: [{ path: this.filePath, reason: this.getInputDependencyReason() }],
     };
   }

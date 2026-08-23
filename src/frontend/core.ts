@@ -3,6 +3,7 @@ import { buildProjectSymbolIndex } from "../backend/symbolIndex";
 import { CodeResource, CodeSizeStats } from "../backend/importers/CodeResource";
 import { Tic80Resource } from "../backend/importers/tic80CartImporter";
 import { AssetReference, CodeAssemblyOptions } from "../backend/manifestTypes";
+import { serializeSourceMapV3 } from "../backend/sourceMapV3";
 import * as cons from "../utils/console";
 import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
 import { canonicalizePath } from "../utils/fileSystem";
@@ -227,13 +228,35 @@ async function executeBuildCore(
 
       const artifacts = resource.getCodeArtifacts(project.resolvedCore);
       reportLuaMinification(reporter, identifier, artifacts.minificationReport);
+      const generatedPath = project.resolvedCore.resolveObjPath(`${identifier}.00.generated.lua`);
+      const generatedMapPath = `${generatedPath}.map`;
       const preprocessedPath = project.resolvedCore.resolveObjPath(`${identifier}.01.preprocessed.lua`);
+      const preprocessedMapPath = `${preprocessedPath}.map`;
       const minifiedPath = project.resolvedCore.resolveObjPath(`${identifier}.02.minified.lua`);
 
+      await writeTextFile(generatedPath, artifacts.inputSource, "utf-8");
+      await writeTextFile(
+        generatedMapPath,
+        serializeSourceMapV3(artifacts.inputSourceMap, artifacts.inputSource, generatedPath, generatedMapPath),
+        "utf-8",
+      );
       await writeTextFile(preprocessedPath, artifacts.preprocessedSource, "utf-8");
+      await writeTextFile(
+        preprocessedMapPath,
+        serializeSourceMapV3(
+          artifacts.preprocessedSourceMap,
+          artifacts.preprocessedSource,
+          preprocessedPath,
+          preprocessedMapPath,
+        ),
+        "utf-8",
+      );
       await writeTextFile(minifiedPath, artifacts.minifiedSource, "utf-8");
 
+      importsLines.push(`    Wrote: ${generatedPath}`);
+      importsLines.push(`    Wrote: ${generatedMapPath}`);
       importsLines.push(`    Wrote: ${preprocessedPath}`);
+      importsLines.push(`    Wrote: ${preprocessedMapPath}`);
       importsLines.push(`    Wrote: ${minifiedPath}`);
       appendLuaMinificationLog(importsLines, artifacts.minificationReport);
       if (compressedOutputs.length > 0) {

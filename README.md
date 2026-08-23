@@ -551,8 +551,19 @@ Exports (value) from the TypeScript entry are published as Lua globals, so
 `export function myTypeScriptFn()` can be called as `myTypeScriptFn()` by the
 including Lua code.
 A filesystem include (`--#include "main.ts"`) does not invoke the TypeScript
-compiler - it will pass through to the later Lua pipeline. Thats example would
-include `main.ts` verbatim and probably fail because it's not Lua.
+compiler - it will pass through to the later Lua pipeline. That example would
+include `main.ts` verbatim and fail because it's not Lua.
+
+ticbuild emits Source Map v3 files for generated and preprocessed Lua:
+
+```text
+build/release-obj/maincode.00.generated.lua.map
+build/release-obj/maincode.01.preprocessed.lua.map
+```
+
+These maps lead all the way back to the source origin (TypeScript or Lua).
+
+**Mapping through Lua minification and runtime stack traces is not supported yet.**
 
 # Lua preprocessor
 
@@ -1059,21 +1070,38 @@ internally the structure is effectively a bunch of segments and define where the
 
 ```jsonc
 {
-  "preprocessedFile": { "byteLength": 12345, "hash": "sha1:..." },
+  "preprocessedFile": { "charLength": 12345, "hash": "..." },
   "segments": [
-    { "ppBegin": 0, "ppEnd": 53, "originalFile": "src/utils.lua", "originalOffset": 0 },
-    { "ppBegin": 53, "ppEnd": 150, "originalFile": "src/math.lua", "originalOffset": 24 },
-    { "ppBegin": 150, "ppEnd": 200, "originalFile": "src/main.lua", "originalOffset": 18 }
+    {
+      "ppBegin": 0,
+      "ppEnd": 53,
+      "originalFile": "src/utils.lua",
+      "originalOffset": 0,
+      "kind": "identity"
+    },
+    {
+      "ppBegin": 53,
+      "ppEnd": 150,
+      "originalFile": "src/main.ts",
+      "originalOffset": 24,
+      "kind": "anchor"
+    }
   ]
 }
 ```
+
+Identity segments represent copied text. Anchor segments associate generated
+text with one authored location without pretending their character offsets are
+equivalent. Internal offsets are UTF-16 code-unit offsets, matching TypeScript
+and JavaScript string offsets. Public sidecars use standard line/column source
+map mappings and retain the exact segments under `x_ticbuild`.
 
 The map functional interface is effectively just
 
 ```ts
 interface ISourceMap {
-  preprocessedOffsetToOriginal(expandedByteOffset)
-    : { file, fileByteOffset } | null;
+  preprocessedOffsetToOriginal(expandedCharacterOffset)
+    : { file, fileCharacterOffset } | null;
 }
 ```
 

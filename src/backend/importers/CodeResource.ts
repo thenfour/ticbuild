@@ -19,6 +19,7 @@ import {
 } from "../luaPreprocessor";
 import { CodeAssemblyOptions, LuaCompressionMode, LuaMinificationConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
+import { createIdentitySourceMap, LuaPreprocessorSourceMap } from "../sourceMap";
 
 const releaseOptions: OptimizationRuleOptions = {
   stripComments: true,
@@ -52,7 +53,9 @@ const zopfliMaxOptions: ZopfliOptions = {
 // resource it is the source file; for future languages it is generated Lua.
 export type CodeArtifacts = {
   inputSource: string;
+  inputSourceMap: LuaPreprocessorSourceMap;
   preprocessedSource: string;
+  preprocessedSourceMap: LuaPreprocessorSourceMap;
   minifiedSource: string;
   minificationReport: AliasPassReport;
 };
@@ -65,7 +68,9 @@ export type CodeSizeStats = {
 
 export class CodeResourceView extends ResourceViewBase {
   inputSource: string;
+  inputSourceMap: LuaPreprocessorSourceMap;
   preprocessedSource: string;
+  preprocessedSourceMap: LuaPreprocessorSourceMap;
   minifyAllowedGlobalNames: string[];
   private cachedMinifiedSource: string | null = null;
   private cachedMinificationReport: AliasPassReport | null = null;
@@ -74,10 +79,18 @@ export class CodeResourceView extends ResourceViewBase {
   private cachedCompressionMode: LuaCompressionMode | null = null;
   private cachedMinifyEnabled: boolean | null = null;
 
-  constructor(inputSource: string, preprocessedSource: string, minifyAllowedGlobalNames: string[] = []) {
+  constructor(
+    inputSource: string,
+    preprocessedSource: string,
+    minifyAllowedGlobalNames: string[] = [],
+    inputSourceMap: LuaPreprocessorSourceMap = createIdentitySourceMap(inputSource, "<generated>"),
+    preprocessedSourceMap: LuaPreprocessorSourceMap = createIdentitySourceMap(preprocessedSource, "<generated>"),
+  ) {
     super();
     this.inputSource = inputSource;
+    this.inputSourceMap = inputSourceMap;
     this.preprocessedSource = preprocessedSource;
+    this.preprocessedSourceMap = preprocessedSourceMap;
     this.minifyAllowedGlobalNames = minifyAllowedGlobalNames;
   }
 
@@ -119,7 +132,9 @@ export class CodeResourceView extends ResourceViewBase {
     const minified = this.getMinifiedResult(project, minifyEnabled, true);
     return {
       inputSource: this.inputSource,
+      inputSourceMap: this.inputSourceMap,
       preprocessedSource: this.preprocessedSource,
+      preprocessedSourceMap: this.preprocessedSourceMap,
       minifiedSource: minified.source,
       minificationReport: minified.report,
     };
@@ -280,6 +295,7 @@ function normalizeCompressionMode(mode: LuaCompressionMode | undefined): LuaComp
 
 export type InitializedCodeResource = {
   generatedLuaSource: string;
+  generatedLuaSourceMap: LuaPreprocessorSourceMap;
   dependencies: string[];
   preprocessResult: LuaPreprocessResult;
 };
@@ -298,7 +314,12 @@ export abstract class CodeResource extends ImportedResourceBase {
     this.filePath = filePath;
     this.sourceText = sourceText;
     if (initialized) {
-      this.setPreprocessResult(initialized.generatedLuaSource, initialized.dependencies, initialized.preprocessResult);
+      this.setPreprocessResult(
+        initialized.generatedLuaSource,
+        initialized.generatedLuaSourceMap,
+        initialized.dependencies,
+        initialized.preprocessResult,
+      );
     }
   }
 
@@ -319,12 +340,19 @@ export abstract class CodeResource extends ImportedResourceBase {
     const generated = await this.getGeneratedLuaSource(project);
     const preprocessResult = await preprocessLuaCode(project, generated.source, generated.sourcePath, {
       resolveCodeImport,
+      sourceMap: generated.sourceMap,
     });
     const dependencyPaths = [
       ...(generated.dependencies?.map((dependency) => dependency.path) ?? []),
       ...preprocessResult.dependencies,
     ];
-    this.setPreprocessResult(generated.source, dependencyPaths, preprocessResult, generated.dependencies);
+    this.setPreprocessResult(
+      generated.source,
+      generated.sourceMap,
+      dependencyPaths,
+      preprocessResult,
+      generated.dependencies,
+    );
   }
 
   get view(): CodeResourceView {
@@ -380,6 +408,7 @@ export abstract class CodeResource extends ImportedResourceBase {
 
   private setPreprocessResult(
     generatedLuaSource: string,
+    generatedLuaSourceMap: LuaPreprocessorSourceMap,
     dependencies: string[],
     preprocessResult: LuaPreprocessResult,
     dependencyReasons: ExternalDependency[] = [],
@@ -391,6 +420,8 @@ export abstract class CodeResource extends ImportedResourceBase {
       generatedLuaSource,
       preprocessResult.code,
       preprocessResult.minifyAllowedGlobalNames,
+      generatedLuaSourceMap,
+      preprocessResult.sourceMap,
     );
   }
 }
