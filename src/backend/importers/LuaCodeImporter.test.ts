@@ -2,6 +2,7 @@ import { inflateSync } from "node:zlib";
 import { TicbuildProjectCore } from "../projectCore";
 import { Manifest } from "../manifestTypes";
 import { CodeResourceView } from "./CodeResource";
+import { createIdentitySourceMap, mapPreprocessedOffset } from "../sourceMap";
 
 function makeProject(manifest: Manifest): TicbuildProjectCore {
   return new TicbuildProjectCore({
@@ -142,6 +143,51 @@ describe("CodeResourceView emitGlobals", () => {
     expect(output).toContain("function a()");
     expect(output).toContain("return a()");
     expect(output).not.toContain("Demo_LongName");
+  });
+
+  it("maps renamed identifiers in minified Lua to their authored symbol", () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      imports: [],
+      assembly: {
+        lua: {
+          minify: true,
+          minification: {
+            renameLocalVariables: false,
+            removeUnusedLocals: false,
+          },
+        },
+        blocks: [],
+      },
+    };
+    const project = makeProject(manifest);
+    const sourcePath = "C:/test/main.lua";
+    const repeatedCalls = Array.from({ length: 8 }, (_, index) => `local value${index}=time()`).join("\n");
+    const source = `function Demo_LongName() return 1 end\n${repeatedCalls}\nreturn Demo_LongName()`;
+    const sourceMap = createIdentitySourceMap(source, sourcePath);
+    const view = new CodeResourceView(source, source, ["Demo_LongName"], sourceMap, sourceMap);
+
+    const artifacts = view.getArtifacts(project);
+    const generatedNameOffset = artifacts.minifiedSource.indexOf("function a") + "function ".length;
+    expect(generatedNameOffset).toBeGreaterThanOrEqual("function ".length);
+    expect(mapPreprocessedOffset(artifacts.minifiedSourceMap, generatedNameOffset, "right")).toEqual({
+      file: sourcePath,
+      offset: source.indexOf("Demo_LongName"),
+      name: "Demo_LongName",
+    });
+    const generatedAliasOffset = artifacts.minifiedSource.indexOf("_a");
+    expect(generatedAliasOffset).toBeGreaterThanOrEqual(0);
+    expect(mapPreprocessedOffset(
+      artifacts.minifiedSourceMap,
+      generatedAliasOffset,
+      "right",
+    )?.name).toBeUndefined();
   });
 
   it("should respect renameSpecifiedGlobalSymbols=false for preprocessor-collected globals", async () => {

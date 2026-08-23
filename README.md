@@ -554,16 +554,16 @@ A filesystem include (`--#include "main.ts"`) does not invoke the TypeScript
 compiler - it will pass through to the later Lua pipeline. That example would
 include `main.ts` verbatim and fail because it's not Lua.
 
-ticbuild emits Source Map v3 files for generated and preprocessed Lua:
+ticbuild emits Source Map v3 files for generated, preprocessed, and minified Lua:
 
 ```text
 build/release-obj/maincode.00.generated.lua.map
 build/release-obj/maincode.01.preprocessed.lua.map
+build/release-obj/maincode.02.minified.lua.map
 ```
 
 These maps lead all the way back to the source origin (TypeScript or Lua).
 
-**Mapping through Lua minification and runtime stack traces is not supported yet.**
 
 # Lua preprocessor
 

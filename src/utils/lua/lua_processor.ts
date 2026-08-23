@@ -16,6 +16,12 @@ import { renameTableFieldsInAST } from "./lua_rename_table_fields";
 import { renameAllowedTableKeysInAST } from "./lua_rename_allowed_table_keys";
 import { renameAllowedGlobalsInAST } from "./lua_rename_allowed_globals";
 import { extractLuaBlocks, replaceLuaBlock, toLuaStringLiteral } from "./lua_fundamentals";
+import { annotateLuaAstOrigins } from "./lua_ast_provenance";
+import { createLuaPrintTransformMap } from "./lua_print_trace";
+import {
+  LuaTransformMap,
+  LuaTransformMapBuilder,
+} from "./lua_transform_map";
 
 export type OptimizationRuleOptions = {
   stripComments: boolean; //
@@ -1325,6 +1331,7 @@ export function parseLua(code: string): luaparse.Chunk | null {
 export type LuaProcessResult = {
   code: string;
   report: AliasPassReport;
+  transformMap: LuaTransformMap;
 };
 
 export function processLuaWithReport(code: string, ruleOptions: OptimizationRuleOptions): LuaProcessResult {
@@ -1333,7 +1340,8 @@ export function processLuaWithReport(code: string, ruleOptions: OptimizationRule
 
   // Strip debug blocks and lines before parsing (line-based string matching)
   let processedCode = code;
-  processedCode = disambiguateNumericConcat(processedCode);
+  const preparationMap = LuaTransformMapBuilder.identity(code.length);
+  processedCode = disambiguateNumericConcat(processedCode, preparationMap);
   // if (ruleOptions.stripDebugBlocks) {
   //    // Strip debug blocks
   //    processedCode = replaceLuaBlock(processedCode, "-- BEGIN_DEBUG_ONLY", "-- END_DEBUG_ONLY", "");
@@ -1354,13 +1362,32 @@ export function processLuaWithReport(code: string, ruleOptions: OptimizationRule
     (i) => `__SOMATIC_DISABLED_MINIFICATION_BLOCK_${i}__()`,
     { strict: false },
   );
+  const disabledBlockOrigins = new Map(disableMinify.blocks.map((block) => [
+    block.placeholder,
+    preparationMap.mapOffset(block.sourceContentBegin, "right")?.offset ?? 0,
+  ]));
+  for (const block of [...disableMinify.blocks].sort((a, b) => b.sourceBegin - a.sourceBegin)) {
+    const origin = preparationMap.mapOffset(block.sourceBegin, "right");
+    preparationMap.spliceRange(
+      block.sourceBegin,
+      block.sourceEnd,
+      block.replacementLength,
+      origin,
+      "anchor",
+    );
+  }
   processedCode = disableMinify.code;
 
   let ast = parseLua(processedCode);
   if (!ast) {
     console.error("Failed to parse Lua code; returning original code.");
-    return { code, report: createEmptyAliasPassReport() };
+    return {
+      code,
+      report: createEmptyAliasPassReport(),
+      transformMap: LuaTransformMapBuilder.identity(code.length).toMap(),
+    };
   }
+  annotateLuaAstOrigins(ast, preparationMap.toMap(), code);
   //console.log("Parsed Lua AST:", ast);
 
   if (ruleOptions.stripComments) {
@@ -1415,9 +1442,24 @@ export function processLuaWithReport(code: string, ruleOptions: OptimizationRule
   }
 
   const minified = unparseLua(ast, ruleOptions);
+  const emittedAst = parseLua(minified);
+  if (!emittedAst) {
+    throw new Error("Lua printer produced output that could not be parsed for source mapping");
+  }
+  const printedMap = createLuaPrintTransformMap(ast, emittedAst, code, minified);
+  const restored = reinsertDisableMinificationBlocksWithMap(
+    minified,
+    printedMap,
+    disableMinify.blocks.map((block) => ({
+      placeholder: block.placeholder,
+      content: block.content,
+      inputContentBegin: disabledBlockOrigins.get(block.placeholder) ?? 0,
+    })),
+  );
   return {
-    code: reinsertDisableMinificationBlocks(minified, disableMinify.blocks),
+    code: restored.code,
     report: aliasResult.report,
+    transformMap: restored.transformMap,
   };
 }
 
@@ -1425,15 +1467,27 @@ export function processLua(code: string, ruleOptions: OptimizationRuleOptions): 
   return processLuaWithReport(code, ruleOptions).code;
 }
 
-function disambiguateNumericConcat(code: string): string {
+function disambiguateNumericConcat(code: string, transformMap: LuaTransformMapBuilder): string {
   // Insert a space before concatenation when a numeric literal is immediately followed by `..`.
   // Examples: `15.."x"` -> `15 .."x"`, `.15.."x"` -> `.15 .."x"`
-  return code.replace(/(\d(?:\.\d+)?|\.\d+)\.\./g, "$1 ..");
+  const insertions: number[] = [];
+  const pattern = /(\d(?:\.\d+)?|\.\d+)\.\./g;
+  for (const match of code.matchAll(pattern)) {
+    insertions.push((match.index ?? 0) + match[1].length);
+  }
+  let output = code;
+  for (const offset of insertions.sort((a, b) => b - a)) {
+    const origin = transformMap.mapOffset(offset, "right");
+    output = output.slice(0, offset) + " " + output.slice(offset);
+    transformMap.spliceRange(offset, offset, 1, origin, "anchor");
+  }
+  return output;
 }
 
 type DisabledMinificationBlock = {
   placeholder: string; //
   content: string;
+  inputContentBegin: number;
 };
 
 // Escape special characters in a string for use in a RegExp
@@ -1441,18 +1495,65 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function reinsertDisableMinificationBlocks(src: string, blocks: DisabledMinificationBlock[]): string {
-  if (blocks.length === 0) return src;
-
-  let out = src;
-  for (const b of blocks) {
-    // normalize line endings and trim trailing newlines from the block content
-    const normalized = b.content.replace(/\r?\n/g, "\n").replace(/\n+$/g, "");
-    const replacement = `\n${normalized}\n`;
-
-    // remove surrounding whitespace introduced by tight packing.
-    const re = new RegExp(`[\\t ]*${escapeRegExp(b.placeholder)}[\\t ]*`, "g");
-    out = out.replace(re, replacement);
+function appendNormalizedBlock(
+  builder: LuaTransformMapBuilder,
+  content: string,
+  inputContentBegin: number,
+): string {
+  const normalized = content.replace(/\r?\n/g, "\n").replace(/\n+$/g, "");
+  builder.appendAnchor(1, inputContentBegin);
+  let sourceOffset = 0;
+  const lines = normalized.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    builder.appendIdentity(line.length, inputContentBegin + sourceOffset);
+    sourceOffset += line.length;
+    if (i < lines.length - 1) {
+      builder.appendAnchor(1, inputContentBegin + sourceOffset);
+      if (content.startsWith("\r\n", sourceOffset)) {
+        sourceOffset += 2;
+      } else if (content[sourceOffset] === "\n" || content[sourceOffset] === "\r") {
+        sourceOffset++;
+      }
+    }
   }
-  return out;
+  builder.appendAnchor(1, inputContentBegin + sourceOffset);
+  return `\n${normalized}\n`;
+}
+
+function reinsertDisableMinificationBlocksWithMap(
+  source: string,
+  transformMap: LuaTransformMap,
+  blocks: DisabledMinificationBlock[],
+): { code: string; transformMap: LuaTransformMap } {
+  if (blocks.length === 0) {
+    return { code: source, transformMap };
+  }
+
+  const replacements = blocks.flatMap((block) => {
+    const pattern = new RegExp(`[\\t ]*${escapeRegExp(block.placeholder)}[\\t ]*`, "g");
+    const match = pattern.exec(source);
+    return match
+      ? [{ start: match.index, end: match.index + match[0].length, block }]
+      : [];
+  }).sort((a, b) => a.start - b.start);
+
+  const builder = new LuaTransformMapBuilder(transformMap.inputLength);
+  let output = "";
+  let cursor = 0;
+  for (const replacement of replacements) {
+    const prefix = source.slice(cursor, replacement.start);
+    output += prefix;
+    builder.appendMappedSlice(prefix.length, transformMap, cursor);
+    output += appendNormalizedBlock(
+      builder,
+      replacement.block.content,
+      replacement.block.inputContentBegin,
+    );
+    cursor = replacement.end;
+  }
+  const suffix = source.slice(cursor);
+  output += suffix;
+  builder.appendMappedSlice(suffix.length, transformMap, cursor);
+  return { code: output, transformMap: builder.toMap() };
 }

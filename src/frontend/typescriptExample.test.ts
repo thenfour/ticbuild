@@ -41,9 +41,16 @@ describe("TypeScript project template", () => {
       "release-obj",
       "maincode.01.preprocessed.lua.map",
     );
+    const minifiedMapPath = path.join(
+      exampleDir,
+      "build",
+      "release-obj",
+      "maincode.02.minified.lua.map",
+    );
     expect(fs.existsSync(generatedPath)).toBe(true);
     expect(fs.existsSync(generatedMapPath)).toBe(true);
     expect(fs.existsSync(preprocessedMapPath)).toBe(true);
+    expect(fs.existsSync(minifiedMapPath)).toBe(true);
     const preprocessedMap = JSON.parse(fs.readFileSync(preprocessedMapPath, "utf-8"));
     expect(preprocessedMap.version).toBe(3);
     expect(preprocessedMap.file).toBe("maincode.01.preprocessed.lua");
@@ -51,6 +58,11 @@ describe("TypeScript project template", () => {
     expect(preprocessedMap.sourcesContent).toContainEqual(expect.stringContaining("export function TIC"));
     expect(preprocessedMap.x_ticbuild).toMatchObject({ version: 1, offsetEncoding: "utf-16" });
     expect(preprocessedMap.x_ticbuild.segments.length).toBeGreaterThan(0);
+    const minifiedMap = JSON.parse(fs.readFileSync(minifiedMapPath, "utf-8"));
+    expect(minifiedMap.version).toBe(3);
+    expect(minifiedMap.file).toBe("maincode.02.minified.lua");
+    expect(minifiedMap.sources.some((source: string) => source.endsWith("src/main.ts"))).toBe(true);
+    expect(minifiedMap.names).toContain("TIC");
     expect(fs.existsSync(path.join(exampleDir, "build", "release-bin", "typescript1.tic"))).toBe(true);
   });
 });

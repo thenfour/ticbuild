@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { SourceMapGenerator } from "source-map";
-import { createIdentitySourceMap, mapPreprocessedOffset } from "./sourceMap";
+import { createIdentitySourceMap, mapPreprocessedOffset, SourceMapBuilder } from "./sourceMap";
 import { importSourceMapV3, serializeSourceMapV3 } from "./sourceMapV3";
 
 describe("Source Map v3 adapter", () => {
@@ -46,6 +46,7 @@ describe("Source Map v3 adapter", () => {
       generated: { line: 2, column: 4 },
       original: { line: 2, column: 6 },
       source: "src/main.ts",
+      name: "value",
     });
     generator.setSourceContent("src/main.ts", source);
 
@@ -58,7 +59,36 @@ describe("Source Map v3 adapter", () => {
     expect(mapPreprocessedOffset(map, generated.indexOf("value"), "right")).toEqual({
       file: sourcePath,
       offset: source.indexOf("value"),
+      name: "value",
     });
     expect(mapPreprocessedOffset(map, generated.indexOf("header"), "right")).toBeNull();
+  });
+
+  it("round-trips original symbol names through Source Map v3", () => {
+    const projectDir = path.resolve("C:/project");
+    const sourcePath = path.join(projectDir, "src", "main.lua");
+    const source = "local playerPosition = 1\n";
+    const generated = "local a=1\n";
+    const builder = new SourceMapBuilder();
+    builder.registerSource(sourcePath, source);
+    builder.appendGenerated("local ", null);
+    builder.appendGenerated("a", {
+      file: sourcePath,
+      offset: source.indexOf("playerPosition"),
+      name: "playerPosition",
+    });
+    builder.appendGenerated("=1\n", null);
+    const generatedPath = path.join(projectDir, "build", "main.02.minified.lua");
+    const parsed = JSON.parse(serializeSourceMapV3(
+      builder.toSourceMap(generated),
+      generated,
+      generatedPath,
+      `${generatedPath}.map`,
+    ));
+
+    expect(parsed.names).toContain("playerPosition");
+    expect(parsed.x_ticbuild.segments).toContainEqual(expect.objectContaining({
+      originalName: "playerPosition",
+    }));
   });
 });

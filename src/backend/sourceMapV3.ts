@@ -28,6 +28,7 @@ type OffsetMapping = {
   generatedLine: number;
   source: ResolvedSource;
   originalOffset: number;
+  originalName?: string;
 };
 
 function getLineStarts(content: string): number[] {
@@ -154,6 +155,7 @@ export function importSourceMapV3(
       generatedLine: mapping.generatedLine,
       source,
       originalOffset,
+      originalName: mapping.name || undefined,
     });
   }, undefined, SourceMapConsumer.GENERATED_ORDER);
 
@@ -180,6 +182,7 @@ export function importSourceMapV3(
       originalFile: mapping.source.canonicalPath,
       originalOffset: mapping.originalOffset,
       kind: "anchor",
+      originalName: mapping.originalName,
     });
   }
 
@@ -221,6 +224,7 @@ function addMappingAtOffset(
     generated: { line: generated.line, column: generated.column },
     original: { line: original.line, column: original.column },
     source: toPortableSourcePath(segment.originalFile, mapFilePath),
+    name: segment.originalName,
   });
 }
 

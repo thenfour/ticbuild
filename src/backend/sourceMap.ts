@@ -11,6 +11,7 @@ export type SourceMapSegment = {
   originalOffset: number;
   // not present in older serialized maps, where segments were always identity mappings.
   kind?: SourceMapSegmentKind;
+  originalName?: string;
 };
 
 export type SourceMapSource = {
@@ -31,6 +32,7 @@ export type LuaPreprocessorSourceMap = {
 export type SourceMapLocation = {
   file: string;
   offset: number;
+  name?: string;
 };
 
 export type SourceMapLineColumn = SourceMapLocation & {
@@ -45,13 +47,17 @@ function segmentKind(segment: SourceMapSegment): SourceMapSegmentKind {
 }
 
 function locationWithinSegment(segment: SourceMapSegment, offset: number): SourceMapLocation {
-  return {
+  const location: SourceMapLocation = {
     file: segment.originalFile,
     offset:
       segmentKind(segment) === "identity"
         ? segment.originalOffset + (offset - segment.ppBegin)
         : segment.originalOffset,
   };
+  if (segment.originalName !== undefined) {
+    location.name = segment.originalName;
+  }
+  return location;
 }
 
 // Maps a generated/preprocessed file offset back to the authored source file and offset if possible.
@@ -205,6 +211,7 @@ export class SourceMapBuilder {
         originalFile: origin.file,
         originalOffset: origin.offset,
         kind: "anchor",
+        originalName: origin.name,
       });
     }
     this.length = end;
@@ -255,6 +262,7 @@ export class SourceMapBuilder {
             ? segment.originalOffset + (intersectionStart - segment.ppBegin)
             : segment.originalOffset,
         kind,
+        originalName: segment.originalName,
       });
     }
     this.length += text.length;

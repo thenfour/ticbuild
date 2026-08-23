@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
 import { isIdentifier, LUA_RESERVED_WORDS, walkAST } from "./lua_ast";
+import { inheritLuaNodeOrigin } from "./lua_ast_provenance";
 
 // ============================================================================
 // Shared aliasing utilities
@@ -85,7 +86,7 @@ export function cloneExpression<T extends luaparse.Expression>(node: T): T {
       throw new Error(`cloneExpression received unsupported node type: ${node.type}`);
   }
 
-  return baseClone as T;
+  return inheritLuaNodeOrigin(baseClone as T, node);
 }
 
 // Shared info about an aliasable item (expression or literal)
@@ -240,16 +241,18 @@ export function insertDeclarationsIntoScopes(
   generatedDeclarations?: WeakSet<luaparse.LocalStatement>,
 ): void {
   declarationsByScope.forEach((declarations, scope) => {
-    const aliasDeclarations: luaparse.LocalStatement[] = declarations.map((info) => ({
-      type: "LocalStatement",
-      variables: [
-        {
-          type: "Identifier",
-          name: info.aliasName!,
-        },
-      ],
-      init: [info.node],
-    }));
+    const aliasDeclarations: luaparse.LocalStatement[] = declarations.map((info) => {
+      const identifier = inheritLuaNodeOrigin(
+        { type: "Identifier", name: info.aliasName! } as luaparse.Identifier,
+        info.node,
+        null,
+      );
+      return inheritLuaNodeOrigin({
+        type: "LocalStatement",
+        variables: [identifier],
+        init: [info.node],
+      } as luaparse.LocalStatement, info.node);
+    });
     aliasDeclarations.forEach((declaration) => generatedDeclarations?.add(declaration));
     scope.body.unshift(...aliasDeclarations);
   });
@@ -971,7 +974,11 @@ export function runAliasPasses(ast: luaparse.Chunk, strategies: AliasStrategy[])
   function replaceExpression(node: luaparse.Expression): luaparse.Expression {
     const selected = candidatesByNode.get(node)?.find((candidate) => candidate.selected);
     if (selected?.aliasName) {
-      return { type: "Identifier", name: selected.aliasName } as luaparse.Identifier;
+      return inheritLuaNodeOrigin(
+        { type: "Identifier", name: selected.aliasName } as luaparse.Identifier,
+        node,
+        null,
+      );
     }
 
     switch (node.type) {

@@ -1,4 +1,5 @@
 import * as luaparse from "luaparse";
+import { inheritLuaNodeOrigin } from "./lua_ast_provenance";
 import {LiteralNode, StringLiteralNode, stringValue} from "./lua_utils";
 
 
@@ -84,37 +85,43 @@ function freshScope(): PropScope {
    return {env: new Map(), locals: new Set()};
 }
 
-function makeNumericLiteral(value: number): luaparse.NumericLiteral {
-   return {type: "NumericLiteral", value, raw: String(value)};
+function makeNumericLiteral(value: number, source: luaparse.Node): luaparse.NumericLiteral {
+   return inheritLuaNodeOrigin({type: "NumericLiteral", value, raw: String(value)}, source);
 }
 
-function makeBooleanLiteral(value: boolean): luaparse.BooleanLiteral {
-   return {type: "BooleanLiteral", value, raw: value ? "true" : "false"};
+function makeBooleanLiteral(value: boolean, source: luaparse.Node): luaparse.BooleanLiteral {
+   return inheritLuaNodeOrigin({type: "BooleanLiteral", value, raw: value ? "true" : "false"}, source);
 }
 
-function makeStringLiteral(value: string): StringLiteralNode {
-   return {type: "StringLiteral", value, raw: JSON.stringify(value)};
+function makeStringLiteral(value: string, source: luaparse.Node): StringLiteralNode {
+   return inheritLuaNodeOrigin({type: "StringLiteral", value, raw: JSON.stringify(value)}, source) as StringLiteralNode;
 }
 
-function makeNilLiteral(): luaparse.NilLiteral {
-   return {type: "NilLiteral", value: null, raw: "nil"};
+function makeNilLiteral(source: luaparse.Node): luaparse.NilLiteral {
+   return inheritLuaNodeOrigin({type: "NilLiteral", value: null, raw: "nil"}, source);
 }
 
-function cloneLiteral(lit: LiteralNode): LiteralNode {
+function cloneLiteral(lit: LiteralNode, source: luaparse.Node = lit): LiteralNode {
+   let clone: LiteralNode;
    switch (lit.type) {
       case "NumericLiteral":
-         return {...lit};
+         clone = {...lit};
+         break;
       case "BooleanLiteral":
-         return {...lit};
+         clone = {...lit};
+         break;
       case "NilLiteral":
-         return {...lit};
+         clone = {...lit};
+         break;
       case "StringLiteral": {
          const str = lit as StringLiteralNode;
-         return {type: "StringLiteral", value: str.value, raw: str.raw};
+         clone = {type: "StringLiteral", value: str.value, raw: str.raw};
+         break;
       }
       default:
          return lit;
    }
+   return inheritLuaNodeOrigin(clone, source) as LiteralNode;
 }
 
 function isLiteral(expr: luaparse.Expression|null|undefined): expr is LiteralNode {
@@ -167,56 +174,61 @@ function toStringLiteral(expr: LiteralNode): StringLiteralNode|null {
    return expr.type === "StringLiteral" ? (expr as StringLiteralNode) : null;
 }
 
-function foldBinary(operator: string, left: LiteralNode, right: LiteralNode): LiteralNode|null {
+function foldBinary(
+   operator: string,
+   left: LiteralNode,
+   right: LiteralNode,
+   source: luaparse.Node,
+): LiteralNode|null {
    switch (operator) {
       case "+": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeNumericLiteral(a + b);
+         return makeNumericLiteral(a + b, source);
       }
       case "-": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeNumericLiteral(a - b);
+         return makeNumericLiteral(a - b, source);
       }
       case "*": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeNumericLiteral(a * b);
+         return makeNumericLiteral(a * b, source);
       }
       case "/": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeNumericLiteral(a / b);
+         return makeNumericLiteral(a / b, source);
       }
       case "//": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeNumericLiteral(Math.floor(a / b));
+         return makeNumericLiteral(Math.floor(a / b), source);
       }
       case "%": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeNumericLiteral(a - Math.floor(a / b) * b);
+         return makeNumericLiteral(a - Math.floor(a / b) * b, source);
       }
       case "^": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeNumericLiteral(Math.pow(a, b));
+         return makeNumericLiteral(Math.pow(a, b), source);
       }
       case "..": {
          const s1 = toStringLiteral(left);
@@ -227,39 +239,39 @@ function foldBinary(operator: string, left: LiteralNode, right: LiteralNode): Li
          const v2 = stringValue(s2);
          if (v1 == null || v2 == null)
             return null;
-         return makeStringLiteral(v1 + v2);
+         return makeStringLiteral(v1 + v2, source);
       }
       case "==":
-         return makeBooleanLiteral(literalEquals(left, right));
+         return makeBooleanLiteral(literalEquals(left, right), source);
       case "~=":
-         return makeBooleanLiteral(!literalEquals(left, right));
+         return makeBooleanLiteral(!literalEquals(left, right), source);
       case "<": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeBooleanLiteral(a < b);
+         return makeBooleanLiteral(a < b, source);
       }
       case "<=": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeBooleanLiteral(a <= b);
+         return makeBooleanLiteral(a <= b, source);
       }
       case ">": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeBooleanLiteral(a > b);
+         return makeBooleanLiteral(a > b, source);
       }
       case ">=": {
          const a = toNumber(left);
          const b = toNumber(right);
          if (a == null || b == null)
             return null;
-         return makeBooleanLiteral(a >= b);
+         return makeBooleanLiteral(a >= b, source);
       }
       default:
          return null;
@@ -270,7 +282,7 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
    switch (expr.type) {
       case "Identifier": {
          const replacement = scope.env.get(expr.name);
-         return replacement ? cloneLiteral(replacement) : expr;
+         return replacement ? cloneLiteral(replacement, expr) : expr;
       }
 
       case "UnaryExpression": {
@@ -279,9 +291,9 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
             if (expr.operator === "-") {
                const n = toNumber(expr.argument);
                if (n != null)
-                  return makeNumericLiteral(-n);
+                  return makeNumericLiteral(-n, expr);
             } else if (expr.operator === "not") {
-               return makeBooleanLiteral(!isTruthy(expr.argument));
+               return makeBooleanLiteral(!isTruthy(expr.argument), expr);
             }
          }
          return expr;
@@ -291,7 +303,7 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
          expr.left = simplifyExpression(expr.left, scope);
          expr.right = simplifyExpression(expr.right, scope);
          if (isLiteral(expr.left) && isLiteral(expr.right)) {
-            const folded = foldBinary(expr.operator, expr.left, expr.right);
+            const folded = foldBinary(expr.operator, expr.left, expr.right, expr);
             if (folded)
                return folded;
          }
@@ -303,12 +315,12 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
          if (isLiteral(expr.left)) {
             if (expr.operator === "and") {
                if (!isTruthy(expr.left))
-                  return cloneLiteral(expr.left);
+                  return cloneLiteral(expr.left, expr);
                expr.right = simplifyExpression(expr.right, scope);
                return expr.right;
             } else if (expr.operator === "or") {
                if (isTruthy(expr.left))
-                  return cloneLiteral(expr.left);
+                  return cloneLiteral(expr.left, expr);
                expr.right = simplifyExpression(expr.right, scope);
                return expr.right;
             }
@@ -317,7 +329,7 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
          if (isLiteral(expr.left) && isLiteral(expr.right)) {
             const result = expr.operator === "and" ? (isTruthy(expr.left) ? expr.right : expr.left) :
                                                      (isTruthy(expr.left) ? expr.left : expr.right);
-            return isLiteral(result) ? cloneLiteral(result) : result;
+            return isLiteral(result) ? cloneLiteral(result, expr) : result;
          }
          return expr;
       }
@@ -431,7 +443,8 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
             scope.locals.add(variable.name);
             const initExpr = simplifiedInit ? simplifiedInit[idx] : undefined;
             const literal =
-               initExpr ? (isLiteral(initExpr) ? initExpr : null) : (defaultMissingToNil ? makeNilLiteral() : null);
+               initExpr ? (isLiteral(initExpr) ? initExpr : null) :
+                          (defaultMissingToNil ? makeNilLiteral(variable) : null);
             if (literal)
                scope.env.set(variable.name, literal as LiteralNode);
             else
@@ -468,7 +481,7 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
             // If RHS references the LHS (self-update) or is non-literal, drop from env.
             const rhsUsesLhs = originalInit[idx] && referencesIdentifier(originalInit[idx], variable.name);
             const literal = !rhsUsesLhs && initExpr ? (isLiteral(initExpr) ? initExpr : null) :
-                                                      (!initExpr && defaultMissingToNil ? makeNilLiteral() : null);
+                                                      (!initExpr && defaultMissingToNil ? makeNilLiteral(variable) : null);
 
             if (literal)
                scope.env.set(variable.name, literal as LiteralNode);

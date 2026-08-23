@@ -233,6 +233,7 @@ async function executeBuildCore(
       const preprocessedPath = project.resolvedCore.resolveObjPath(`${identifier}.01.preprocessed.lua`);
       const preprocessedMapPath = `${preprocessedPath}.map`;
       const minifiedPath = project.resolvedCore.resolveObjPath(`${identifier}.02.minified.lua`);
+      const minifiedMapPath = `${minifiedPath}.map`;
 
       await writeTextFile(generatedPath, artifacts.inputSource, "utf-8");
       await writeTextFile(
@@ -252,12 +253,23 @@ async function executeBuildCore(
         "utf-8",
       );
       await writeTextFile(minifiedPath, artifacts.minifiedSource, "utf-8");
+      await writeTextFile(
+        minifiedMapPath,
+        serializeSourceMapV3(
+          artifacts.minifiedSourceMap,
+          artifacts.minifiedSource,
+          minifiedPath,
+          minifiedMapPath,
+        ),
+        "utf-8",
+      );
 
       importsLines.push(`    Wrote: ${generatedPath}`);
       importsLines.push(`    Wrote: ${generatedMapPath}`);
       importsLines.push(`    Wrote: ${preprocessedPath}`);
       importsLines.push(`    Wrote: ${preprocessedMapPath}`);
       importsLines.push(`    Wrote: ${minifiedPath}`);
+      importsLines.push(`    Wrote: ${minifiedMapPath}`);
       appendLuaMinificationLog(importsLines, artifacts.minificationReport);
       if (compressedOutputs.length > 0) {
         const compressedPath = project.resolvedCore.resolveObjPath(`${identifier}.03.compressed.bin`);

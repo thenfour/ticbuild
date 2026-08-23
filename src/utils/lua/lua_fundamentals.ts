@@ -83,6 +83,10 @@ export function replaceLuaBlock(src: string, beginMarker: string, endMarker: str
 export type ExtractedLuaBlock = {
   placeholder: string;
   content: string;
+  sourceBegin: number;
+  sourceEnd: number;
+  sourceContentBegin: number;
+  replacementLength: number;
 };
 
 // Extract blocks delimited by begin/end markers and replace them with placeholders.
@@ -100,6 +104,7 @@ export function extractLuaBlocks(
   let out = src;
   let searchFrom = 0;
   let i = 0;
+  let sourceOffsetDelta = 0;
 
   while (true) {
     const span = findNextLuaBlockSpan(out, beginMarker, endMarker, searchFrom, strict);
@@ -109,7 +114,15 @@ export function extractLuaBlocks(
     const placeholder = placeholderFactory(i);
     const replacement = placeholder + span.eol;
 
-    blocks.push({ placeholder, content });
+    blocks.push({
+      placeholder,
+      content,
+      sourceBegin: span.beginLineStart0 + sourceOffsetDelta,
+      sourceEnd: span.blockEnd + sourceOffsetDelta,
+      sourceContentBegin: span.innerStart + sourceOffsetDelta,
+      replacementLength: replacement.length,
+    });
+    sourceOffsetDelta += (span.blockEnd - span.beginLineStart0) - replacement.length;
     out = out.slice(0, span.beginLineStart0) + replacement + out.slice(span.blockEnd);
     searchFrom = span.beginLineStart0 + replacement.length;
     i++;

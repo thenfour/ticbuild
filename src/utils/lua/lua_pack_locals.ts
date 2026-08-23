@@ -1,4 +1,5 @@
 import * as luaparse from "luaparse";
+import { inheritCombinedLuaNodeOrigin, inheritLuaNodeOrigin } from "./lua_ast_provenance";
 import {StringLiteralNode} from "./lua_utils";
 
 // // Optional string literal value helper (luaparse may omit value)
@@ -125,8 +126,8 @@ function isPackableLocal(stmt: luaparse.LocalStatement): boolean {
    return stmt.variables.length === 1 && stmt.variables.every(v => v.type === "Identifier");
 }
 
-function nilLiteral(): luaparse.NilLiteral {
-   return {type: "NilLiteral", value: null, raw: "nil"};
+function nilLiteral(source: luaparse.Node): luaparse.NilLiteral {
+   return inheritLuaNodeOrigin({type: "NilLiteral", value: null, raw: "nil"}, source);
 }
 
 function processBlock(body: luaparse.Statement[]): luaparse.Statement[] {
@@ -195,16 +196,16 @@ function processBlock(body: luaparse.Statement[]): luaparse.Statement[] {
                if (idx < inits.length) {
                   mergedInits.push(inits[idx]);
                } else {
-                  mergedInits.push(nilLiteral());
+                  mergedInits.push(nilLiteral(v));
                }
             });
          });
 
-         const packed: luaparse.LocalStatement = {
+         const packed = inheritCombinedLuaNodeOrigin({
             type: "LocalStatement",
             variables: mergedVars,
             init: mergedInits,
-         };
+         } as luaparse.LocalStatement, group);
 
          result.push(packed);
          i = j;

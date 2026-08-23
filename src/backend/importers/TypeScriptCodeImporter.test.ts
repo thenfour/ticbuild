@@ -97,6 +97,7 @@ describe("TypeScriptCodeResource", () => {
       );
       expect(expandedLocation?.file).toBe(mainPath);
       expect(expandedLocation?.line).toBe(4);
+      expect(artifacts.minifiedSourceMap.segments.map((segment) => segment.originalName)).toContain("helper");
       expect(resource.getDependencyList()).toEqual(
         expect.arrayContaining([
           { path: mainPath, reason: "Imported TypeScript code file" },

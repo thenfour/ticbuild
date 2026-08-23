@@ -3,6 +3,7 @@ import { zlibAsync as zopfliZlibAsync, ZopfliOptions } from "@gfx/zopfli";
 import { toLuaStringLiteral } from "../../utils/lua/lua_fundamentals";
 import { AliasPassReport, createEmptyAliasPassReport } from "../../utils/lua/lua_alias_shared";
 import { OptimizationRuleOptions, processLuaWithReport } from "../../utils/lua/lua_processor";
+import { LuaTransformMap } from "../../utils/lua/lua_transform_map";
 import { Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
 import { CoalesceBool } from "../../utils/utils";
 import {
@@ -19,7 +20,12 @@ import {
 } from "../luaPreprocessor";
 import { CodeAssemblyOptions, LuaCompressionMode, LuaMinificationConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
-import { createIdentitySourceMap, LuaPreprocessorSourceMap } from "../sourceMap";
+import {
+  createIdentitySourceMap,
+  LuaPreprocessorSourceMap,
+  mapPreprocessedOffset,
+  SourceMapBuilder,
+} from "../sourceMap";
 
 const releaseOptions: OptimizationRuleOptions = {
   stripComments: true,
@@ -57,6 +63,7 @@ export type CodeArtifacts = {
   preprocessedSource: string;
   preprocessedSourceMap: LuaPreprocessorSourceMap;
   minifiedSource: string;
+  minifiedSourceMap: LuaPreprocessorSourceMap;
   minificationReport: AliasPassReport;
 };
 
@@ -73,6 +80,7 @@ export class CodeResourceView extends ResourceViewBase {
   preprocessedSourceMap: LuaPreprocessorSourceMap;
   minifyAllowedGlobalNames: string[];
   private cachedMinifiedSource: string | null = null;
+  private cachedMinifiedSourceMap: LuaPreprocessorSourceMap | null = null;
   private cachedMinificationReport: AliasPassReport | null = null;
   private cachedCompressedBytes: ChunkDataResult | null = null;
   private cachedCompressedSource: string | null = null;
@@ -136,6 +144,7 @@ export class CodeResourceView extends ResourceViewBase {
       preprocessedSource: this.preprocessedSource,
       preprocessedSourceMap: this.preprocessedSourceMap,
       minifiedSource: minified.source,
+      minifiedSourceMap: minified.sourceMap,
       minificationReport: minified.report,
     };
   }
@@ -154,17 +163,24 @@ export class CodeResourceView extends ResourceViewBase {
     project: TicbuildProjectCore,
     minifyEnabled: boolean,
     emitGlobals: boolean,
-  ): { source: string; report: AliasPassReport } {
+  ): { source: string; sourceMap: LuaPreprocessorSourceMap; report: AliasPassReport } {
     if (
       this.cachedMinifyEnabled === minifyEnabled &&
       this.cachedMinifiedSource !== null &&
+      this.cachedMinifiedSourceMap !== null &&
       this.cachedMinificationReport !== null &&
       emitGlobals
     ) {
-      return { source: this.cachedMinifiedSource, report: this.cachedMinificationReport };
+      return {
+        source: this.cachedMinifiedSource,
+        sourceMap: this.cachedMinifiedSourceMap,
+        report: this.cachedMinificationReport,
+      };
     }
 
-    let code = emitGlobals ? this.injectGlobals(project, this.preprocessedSource) : this.preprocessedSource;
+    const globalsHeader = emitGlobals ? this.createGlobalsHeader(project) : "";
+    let code = globalsHeader + this.preprocessedSource;
+    let sourceMap = prependGeneratedText(globalsHeader, this.preprocessedSource, this.preprocessedSourceMap);
     let report = createEmptyAliasPassReport();
     if (minifyEnabled) {
       const options = buildMinificationOptions(
@@ -173,19 +189,23 @@ export class CodeResourceView extends ResourceViewBase {
       );
       const processed = processLuaWithReport(code, options);
       code = processed.code;
+      sourceMap = composeLuaTransformSourceMap(processed.transformMap, code, sourceMap);
       report = processed.report;
     }
-    code = this.injectMetadata(project, code);
+    const metadataHeader = this.createMetadataHeader(project);
+    sourceMap = prependGeneratedText(metadataHeader, code, sourceMap);
+    code = metadataHeader + code;
 
     if (emitGlobals) {
       this.cachedMinifyEnabled = minifyEnabled;
       this.cachedMinifiedSource = code;
+      this.cachedMinifiedSourceMap = sourceMap;
       this.cachedMinificationReport = report;
       this.cachedCompressedBytes = null;
       this.cachedCompressedSource = null;
       this.cachedCompressionMode = null;
     }
-    return { source: code, report };
+    return { source: code, sourceMap, report };
   }
 
   private getCompressedBytes(minifiedSource: string, compressionMode: "default" | "zlib-max"): Uint8Array;
@@ -219,7 +239,7 @@ export class CodeResourceView extends ResourceViewBase {
     return this.cachedCompressedBytes;
   }
 
-  private injectGlobals(project: TicbuildProjectCore, source: string): string {
+  private createGlobalsHeader(project: TicbuildProjectCore): string {
     let header = "";
     if (project.manifest.assembly.lua?.globals) {
       const globals = project.manifest.assembly.lua.globals;
@@ -240,18 +260,18 @@ export class CodeResourceView extends ResourceViewBase {
         header += "\n";
       }
     }
-    return header + source;
+    return header;
   }
 
-  private injectMetadata(project: TicbuildProjectCore, source: string): string {
+  private createMetadataHeader(project: TicbuildProjectCore): string {
     const metadata = project.manifest.project.metadata;
     if (!metadata) {
-      return source;
+      return "";
     }
 
     const entries = Object.entries(metadata);
     if (entries.length === 0) {
-      return source;
+      return "";
     }
 
     const maxKeyLength = entries.reduce((longest, [key]) => Math.max(longest, key.length), 0);
@@ -264,8 +284,54 @@ export class CodeResourceView extends ResourceViewBase {
       return `-- ${key}:${spacing}${substitutedValue}`;
     });
 
-    return `${lines.join("\n")}\n\n${source}`;
+    return `${lines.join("\n")}\n\n`;
   }
+}
+
+function prependGeneratedText(
+  prefix: string,
+  source: string,
+  sourceMap: LuaPreprocessorSourceMap,
+): LuaPreprocessorSourceMap {
+  if (!prefix) {
+    return sourceMap;
+  }
+  const builder = new SourceMapBuilder(0, [], sourceMap.sources ?? {});
+  builder.appendGenerated(prefix, null);
+  builder.appendMappedSlice(source, sourceMap, 0);
+  return builder.toSourceMap(prefix + source);
+}
+
+function composeLuaTransformSourceMap(
+  transform: LuaTransformMap,
+  output: string,
+  inputMap: LuaPreprocessorSourceMap,
+): LuaPreprocessorSourceMap {
+  if (transform.inputLength !== inputMap.preprocessedFile.charLength || transform.outputLength !== output.length) {
+    throw new Error("Lua minifier source map does not match its input or output source");
+  }
+  const builder = new SourceMapBuilder(0, [], inputMap.sources ?? {});
+  let cursor = 0;
+  for (const segment of transform.segments) {
+    if (segment.outputBegin > cursor) {
+      builder.appendGenerated(output.slice(cursor, segment.outputBegin), null);
+    }
+    const inputOrigin = mapPreprocessedOffset(inputMap, segment.inputOffset, "right");
+    const authoredName = segment.originalName === undefined
+      ? undefined
+      : inputOrigin?.name ?? segment.originalName;
+    builder.appendGenerated(
+      output.slice(segment.outputBegin, segment.outputEnd),
+      inputOrigin
+        ? { file: inputOrigin.file, offset: inputOrigin.offset, name: authoredName }
+        : null,
+    );
+    cursor = segment.outputEnd;
+  }
+  if (cursor < output.length) {
+    builder.appendGenerated(output.slice(cursor), null);
+  }
+  return builder.toSourceMap(output);
 }
 
 function buildMinificationOptions(
