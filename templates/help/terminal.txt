@@ -11,8 +11,10 @@ If host:port is omitted:
   - with 1 discovered running session, connects automatically
   - with multiple sessions, shows a list and prompts for selection
 
-In terminal mode, you type commands one line at a time. Each line should begin with
-the request ID. Example:
+In terminal mode, you type commands one line at a time. Request IDs are optional.
+Example:
 
-> 1 hello
+> 0 hello
+0 OK "TIC-80 remoting v1"
+> hello
 1 OK "TIC-80 remoting v1"

@@ -10,9 +10,9 @@ rebuilt and TIC-80 is relaunched with the updated cart.
 
 With the bundled TIC-80, watch also attaches an interactive
 terminal. Pushed events such as trace and script_error are printed as they
-arrive, and remoting commands can be entered using the normal request format:
+arrive, and remoting commands can be entered directly. Request IDs are optional:
 
-  > 1 ping
+  > ping
 
 Additional watch globs can be configured via project.additionalWatchGlobs
 in the manifest.

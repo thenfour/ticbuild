@@ -78,8 +78,9 @@ describe("terminal remoting session", () => {
                         const id = line.split(/\s+/, 1)[0];
                         socket.write(`${id} OK\n`);
                         socket.write('-1 trace "hello from tic80"\n');
-                    } else if (line === "1 ping") {
-                        socket.write("1 OK PONG\n");
+                    } else if (line.endsWith(" ping")) {
+                        const id = line.split(/\s+/, 1)[0];
+                        socket.write(`${id} OK PONG\n`);
                     }
                     newlineIndex = buffer.indexOf("\n");
                 }
@@ -100,15 +101,19 @@ describe("terminal remoting session", () => {
 
         try {
             await waitFor(() => rendered.includes('-1 trace "hello from tic80"'));
-            input.write("1 ping\n");
+            input.write("ping\n");
             await waitFor(() => rendered.includes("1 OK PONG"));
+            input.write("42 ping\n");
+            await waitFor(() => rendered.includes("42 OK PONG"));
 
             expect(receivedLines).toEqual([
                 '2147483647 event_subscribe "trace|cart_run|lua_profiler_stopped|script_error" 1',
                 "1 ping",
+                "42 ping",
             ]);
             expect(rendered).toContain('-1 trace "hello from tic80"\n');
             expect(rendered).toContain("1 OK PONG\n");
+            expect(rendered).toContain("42 OK PONG\n");
             expect(rendered).not.toContain("2147483647 OK");
         } finally {
             input.end();

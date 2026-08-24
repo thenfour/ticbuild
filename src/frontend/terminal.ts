@@ -31,6 +31,10 @@ const terminalEventTypes = ["trace", "cart_run", "lua_profiler_stopped", "script
 const terminalSubscriptionRequestId = 2147483647;
 const terminalSubscriptionTimeoutMs = 5000;
 
+function hasTerminalRequestId(line: string): boolean {
+    return /^-?\d+(?:\s|$)/.test(line);
+}
+
 function readLine(rl: readline.Interface, prompt: string): Promise<string | null> {
     return new Promise((resolve) => {
         const onLine = (input: string) => {
@@ -448,13 +452,20 @@ async function runTerminalClientCore(
             throw new Error("Disconnected from TIC-80 remoting server");
         }
 
-        cons.info(`Connected to ${host}:${port}. Type lines like: 1 ping  (Ctrl+C to quit)`);
+        cons.info(`Connected to ${host}:${port}. Type remoting commands like: ping  (Ctrl+C to quit)`);
 
         if (!inputHasClosed) {
+            let nextRequestId = 1;
             rl.on("line", (line) => {
                 terminalOutput.acceptInputLine();
-                if (line.trim().length > 0 && !disconnected) {
-                    socket.write(`${line}\n`, "ascii");
+                const commandLine = line.trim();
+                if (commandLine.length > 0 && !disconnected) {
+                    if (hasTerminalRequestId(commandLine)) {
+                        socket.write(`${commandLine}\n`, "ascii");
+                    } else {
+                        socket.write(`${nextRequestId} ${commandLine}\n`, "ascii");
+                        nextRequestId = nextRequestId === terminalSubscriptionRequestId - 1 ? 1 : nextRequestId + 1;
+                    }
                 }
                 terminalOutput.showPrompt();
             });
