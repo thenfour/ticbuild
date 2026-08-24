@@ -1,5 +1,12 @@
 // common interface.
 // encapsulates TIC-80 process control (args, launch/kill/reload for run/watch/launch)
+export interface Tic80RemotingTarget {
+  host: string;
+  port: number;
+}
+
+export type Tic80RemotingReadyHandler = (target: Tic80RemotingTarget) => void | Promise<void>;
+
 export interface ITic80Controller {
   // launch a TIC-80 instance with optional cart path (process should be totally detached from current
   // and survive after parent exits)
@@ -24,4 +31,8 @@ export interface ITic80Controller {
   // register a callback for when the TIC-80 process exits on its own.
   // callbacks may be invoked multiple times if the process is restarted.
   onExit(handler: () => void): void;
+
+  // Remote-capable controllers invoke this after the remoting server is connected
+  // and before each controlled cart load.
+  onRemotingReady?(handler: Tic80RemotingReadyHandler): void;
 }

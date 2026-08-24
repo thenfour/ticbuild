@@ -104,7 +104,7 @@ ticbuild build
 # build and launch in a tic80
 ticbuild run
 
-# build and live-update with changes in a tic80
+# build, live-update, and attach an interactive TIC-80 terminal
 ticbuild watch
 
 # interactive Lua preprocessing/minification REPL
@@ -485,7 +485,14 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
 };
 ```
 
-When running `ticbuild watch`, ticbuild always watches the manifest file and the dependencies discovered during build and preprocessing. Use `project.additionalWatchGlobs` to add extra glob-based watch targets, relative to the manifest directory unless you provide an absolute pattern. These extra globs can trigger rebuilds on file changes, file additions, and file removals.
+When running `ticbuild watch`, ticbuild watches the manifest file and
+project dependencies discovered during build. With the bundled TIC-80, it
+also displays events such as `trace` and `script_error` in
+real time and accepts remoting commands such as `1 ping`.
+
+Use `project.additionalWatchGlobs` to add extra glob-based watch targets,
+relative to the manifest directory unless you provide an absolute pattern.
+These extra globs can trigger rebuilds on file changes, file additions, and file removals.
 
 `additionalWatchGlobs` is an array value, so build configurations replace the whole array when overriding it.
 

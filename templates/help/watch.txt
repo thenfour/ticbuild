@@ -8,6 +8,12 @@ Build a TIC-80 cart, launch it, and watch for changes
 When source files or the manifest change, the cart is automatically
 rebuilt and TIC-80 is relaunched with the updated cart.
 
+With the bundled TIC-80, watch also attaches an interactive
+terminal. Pushed events such as trace and script_error are printed as they
+arrive, and remoting commands can be entered using the normal request format:
+
+  > 1 ping
+
 Additional watch globs can be configured via project.additionalWatchGlobs
 in the manifest.
 

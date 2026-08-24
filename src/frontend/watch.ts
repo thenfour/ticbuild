@@ -5,8 +5,9 @@ import { createTic80Controller } from "../backend/tic80Resolver";
 import * as cons from "../utils/console";
 import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
-import { ITic80Controller } from "../backend/tic80Controller/tic80Controller";
+import { ITic80Controller, Tic80RemotingTarget } from "../backend/tic80Controller/tic80Controller";
 import { mergeTic80Args } from "../utils/tic80/args";
+import { RunningTerminalClient, startTerminalClient } from "./terminal";
 
 export function resolveAdditionalWatchGlob(projectDir: string, glob: string): string {
   const trimmed = glob.trim();
@@ -51,6 +52,86 @@ export async function watchCommand(
   let watcher: chokidar.FSWatcher | undefined;
   let currentWatchTargets: string[] = [];
   let isShuttingDown = false;
+  let terminalSession: RunningTerminalClient | undefined;
+  let terminalStarting: Promise<void> | undefined;
+
+  const cleanup = async (reason?: string) => {
+    if (isShuttingDown) {
+      return;
+    }
+    isShuttingDown = true;
+    cons.info("\nShutting down...");
+    if (reason) {
+      cons.info(`  ${reason}`);
+    }
+    if (tic80Controller) {
+      await tic80Controller.stop();
+    }
+    if (watcher) {
+      watcher.close();
+    }
+    process.exit(0);
+  };
+
+  const ensureWatchTerminal = async (target: Tic80RemotingTarget): Promise<void> => {
+    if (terminalSession) {
+      return;
+    }
+    if (terminalStarting) {
+      await terminalStarting;
+      return;
+    }
+
+    terminalStarting = (async () => {
+      try {
+        const session = await startTerminalClient(target, {
+          captureConsoleOutput: true,
+          keepOpenOnInputClose: true,
+          startupAttempts: 3,
+          startupRetryDelayMs: 100,
+          onStartupRetry: (error, failedAttempt, totalAttempts) => {
+            cons.dim(
+              `[remoting] Terminal attach failed (attempt ${failedAttempt}/${totalAttempts}): ${error.message}; retrying...`,
+            );
+          },
+          onInterrupt: () => {
+            void cleanup();
+          },
+        });
+        terminalSession = session;
+        void session.closed.then(
+          () => {
+            if (terminalSession === session) {
+              terminalSession = undefined;
+            }
+            if (!isShuttingDown) {
+              cons.warning("TIC-80 terminal disconnected");
+            }
+          },
+          (error) => {
+            if (terminalSession === session) {
+              terminalSession = undefined;
+            }
+            if (!isShuttingDown) {
+              cons.warning(`TIC-80 terminal disconnected: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          },
+        );
+      } catch (error) {
+        if (!isShuttingDown) {
+          cons.warning(`Unable to attach TIC-80 terminal: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } finally {
+        terminalStarting = undefined;
+      }
+    })();
+
+    await terminalStarting;
+  };
+
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
+  process.on("SIGQUIT", cleanup);
 
   // Function to update the watched file list
   const updateWatchList = async () => {
@@ -143,6 +224,7 @@ export async function watchCommand(
         tic80Controller.onExit(() => {
           cleanup("TIC-80 process closed");
         });
+        tic80Controller.onRemotingReady?.(ensureWatchTerminal);
       }
 
       // Launch/reload TIC-80 with the built cartridge
@@ -211,29 +293,6 @@ export async function watchCommand(
   watcher.on("error", (error: Error) => {
     cons.error(`Watcher error: ${error}`);
   });
-
-  // Handle process exit to clean up
-  const cleanup = async (reason?: string) => {
-    if (isShuttingDown) {
-      return;
-    }
-    isShuttingDown = true;
-    cons.info("\nShutting down...");
-    if (reason) {
-      cons.info(`  ${reason}`);
-    }
-    if (tic80Controller) {
-      await tic80Controller.stop();
-    }
-    if (watcher) {
-      watcher.close();
-    }
-    process.exit(0);
-  };
-
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
-  process.on("SIGQUIT", cleanup);
 
   // Keep the process alive
   await new Promise(() => { });

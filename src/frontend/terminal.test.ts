@@ -1,6 +1,7 @@
 import net from "node:net";
 import { PassThrough } from "node:stream";
-import { parseHostPort, runTerminalClient } from "./terminal";
+import * as cons from "../utils/console";
+import { parseHostPort, runTerminalClient, startTerminalClient } from "./terminal";
 
 function listen(server: net.Server): Promise<number> {
     return new Promise((resolve, reject) => {
@@ -167,5 +168,135 @@ describe("terminal remoting session", () => {
             await terminalPromise;
             await closeServer(server);
         }
+    });
+
+    it("routes surrounding console output through the interactive writer while embedded", async () => {
+        const server = net.createServer((socket) => {
+            socket.once("data", (chunk) => {
+                const line = chunk.toString("ascii").trim();
+                const id = line.split(/\s+/, 1)[0];
+                socket.write(`${id} OK\n`);
+            });
+        });
+        const port = await listen(server);
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let rendered = "";
+        output.on("data", (chunk) => {
+            rendered += chunk.toString("utf8");
+        });
+        const previousSink = cons.getConsoleMessageSink();
+
+        const terminal = await startTerminalClient(
+            { host: "127.0.0.1", port },
+            { input, output, terminal: false, captureConsoleOutput: true },
+        );
+
+        try {
+            cons.warning("watch build warning");
+            await waitFor(() => rendered.includes("WARNING: watch build warning"));
+        } finally {
+            input.end();
+            await terminal.closed;
+            await closeServer(server);
+        }
+
+        expect(cons.getConsoleMessageSink()).toBe(previousSink);
+    });
+
+    it("keeps streaming events after embedded stdin closes", async () => {
+        let connectedSocket: net.Socket | undefined;
+        const server = net.createServer((socket) => {
+            connectedSocket = socket;
+            socket.once("data", (chunk) => {
+                const line = chunk.toString("ascii").trim();
+                const id = line.split(/\s+/, 1)[0];
+                socket.write(`${id} OK\n`);
+            });
+        });
+        const port = await listen(server);
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let rendered = "";
+        output.on("data", (chunk) => {
+            rendered += chunk.toString("utf8");
+        });
+
+        const terminal = await startTerminalClient(
+            { host: "127.0.0.1", port },
+            { input, output, terminal: false, keepOpenOnInputClose: true },
+        );
+
+        input.end();
+        connectedSocket!.write('-1 trace "after eof"\n');
+        await waitFor(() => rendered.includes('-1 trace "after eof"'));
+        connectedSocket!.end();
+        await terminal.closed;
+        await closeServer(server);
+    });
+
+    it("retries a transient reset while subscribing and reports the socket error", async () => {
+        let connectionCount = 0;
+        const server = net.createServer((socket) => {
+            connectionCount += 1;
+            socket.once("data", (chunk) => {
+                if (connectionCount === 1) {
+                    socket.resetAndDestroy();
+                    return;
+                }
+                const line = chunk.toString("ascii").trim();
+                const id = line.split(/\s+/, 1)[0];
+                socket.write(`${id} OK\n`);
+            });
+        });
+        const port = await listen(server);
+        const input = new PassThrough();
+        const output = new PassThrough();
+        const retryErrors: Error[] = [];
+
+        const terminal = await startTerminalClient(
+            { host: "127.0.0.1", port },
+            {
+                input,
+                output,
+                terminal: false,
+                startupAttempts: 2,
+                startupRetryDelayMs: 0,
+                onStartupRetry: (error) => retryErrors.push(error),
+            },
+        );
+
+        expect(connectionCount).toBe(2);
+        expect(retryErrors).toHaveLength(1);
+        expect(retryErrors[0].message).toContain("Disconnected while subscribing");
+        expect(retryErrors[0].message).toContain("ECONNRESET");
+
+        input.end();
+        await terminal.closed;
+        await closeServer(server);
+    });
+
+    it("reports a socket reset after the terminal is ready", async () => {
+        let connectedSocket: net.Socket | undefined;
+        const server = net.createServer((socket) => {
+            connectedSocket = socket;
+            socket.once("data", (chunk) => {
+                const line = chunk.toString("ascii").trim();
+                const id = line.split(/\s+/, 1)[0];
+                socket.write(`${id} OK\n`);
+            });
+        });
+        const port = await listen(server);
+        const input = new PassThrough();
+        const output = new PassThrough();
+
+        const terminal = await startTerminalClient(
+            { host: "127.0.0.1", port },
+            { input, output, terminal: false },
+        );
+
+        connectedSocket!.resetAndDestroy();
+        await expect(terminal.closed).rejects.toThrow("ECONNRESET");
+        await closeServer(server);
     });
 });

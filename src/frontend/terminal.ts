@@ -15,6 +15,16 @@ export interface TerminalClientOptions {
     input?: NodeJS.ReadableStream;
     output?: NodeJS.WritableStream;
     terminal?: boolean;
+    captureConsoleOutput?: boolean;
+    keepOpenOnInputClose?: boolean;
+    onInterrupt?: () => void;
+    startupAttempts?: number;
+    startupRetryDelayMs?: number;
+    onStartupRetry?: (error: Error, failedAttempt: number, totalAttempts: number) => void;
+}
+
+export interface RunningTerminalClient {
+    closed: Promise<void>;
 }
 
 const terminalEventTypes = ["trace", "cart_run", "lua_profiler_stopped", "script_error"] as const;
@@ -49,16 +59,24 @@ function formatSessionSummary(session: DiscoveredTic80Session, index?: number): 
     return `${prefix}${session.host}:${session.port} pid=${session.pid} started=${started} version=${session.remotingVersion} source=${session.source}`;
 }
 
-function createSocketLinePump(socket: net.Socket, onLine: (line: string) => void, onClosed: () => void): { close: () => void } {
+function asError(error: unknown): Error {
+    return error instanceof Error ? error : new Error(String(error));
+}
+
+function createSocketLinePump(
+    socket: net.Socket,
+    onLine: (line: string) => void,
+    onClosed: (error?: Error) => void,
+): { close: () => void } {
     let buffer = "";
     let closed = false;
 
-    const resolveClosed = () => {
+    const resolveClosed = (error?: Error) => {
         if (closed) {
             return;
         }
         closed = true;
-        onClosed();
+        onClosed(error);
     };
 
     const onData = (chunk: Buffer) => {
@@ -80,15 +98,19 @@ function createSocketLinePump(socket: net.Socket, onLine: (line: string) => void
         resolveClosed();
     };
 
+    const onError = (error: Error) => {
+        resolveClosed(asError(error));
+    };
+
     socket.on("data", onData);
     socket.once("close", onClose);
-    socket.once("error", onClose);
+    socket.once("error", onError);
 
     return {
         close: () => {
             socket.removeListener("data", onData);
             socket.removeListener("close", onClose);
-            socket.removeListener("error", onClose);
+            socket.removeListener("error", onError);
             resolveClosed();
         },
     };
@@ -158,7 +180,7 @@ class InteractiveTerminalOutput {
 function subscribeToTerminalEvents(
     socket: net.Socket,
     registerResponseHandler: (handler: (line: string) => boolean) => () => void,
-    registerCloseHandler: (handler: () => void) => () => void,
+    registerCloseHandler: (handler: (error?: Error) => void) => () => void,
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         let settled = false;
@@ -189,8 +211,9 @@ function subscribeToTerminalEvents(
             }
             return true;
         });
-        unregisterCloseHandler = registerCloseHandler(() => {
-            settle(() => reject(new Error("Disconnected while subscribing to TIC-80 remoting events")));
+        unregisterCloseHandler = registerCloseHandler((error) => {
+            const detail = error ? `: ${error.message}` : "";
+            settle(() => reject(new Error(`Disconnected while subscribing to TIC-80 remoting events${detail}`)));
         });
 
         timeout = setTimeout(() => {
@@ -327,7 +350,11 @@ function connectSocket(host: string, port: number, timeoutMs: number): Promise<n
     });
 }
 
-export async function runTerminalClient(target: TerminalTarget, options: TerminalClientOptions = {}): Promise<void> {
+async function runTerminalClientCore(
+    target: TerminalTarget,
+    options: TerminalClientOptions,
+    notifyReady: () => void,
+): Promise<void> {
     const { host, port } = target;
     const socket = await connectSocket(host, port, 5000);
 
@@ -337,8 +364,6 @@ export async function runTerminalClient(target: TerminalTarget, options: Termina
         (input as NodeJS.ReadStream).isTTY && (output as NodeJS.WriteStream).isTTY,
     );
 
-    cons.info(`Connected to ${host}:${port}. Type lines like: 1 ping  (Ctrl+C to quit)`);
-
     const rl = readline.createInterface({
         input,
         output,
@@ -346,10 +371,33 @@ export async function runTerminalClient(target: TerminalTarget, options: Termina
     });
 
     const terminalOutput = new InteractiveTerminalOutput(rl, output, terminal);
+    let inputHasClosed = false;
+    let resolveInputClosed!: () => void;
+    const inputClosed = new Promise<void>((resolve) => {
+        resolveInputClosed = resolve;
+    });
+    rl.once("close", () => {
+        inputHasClosed = true;
+        terminalOutput.close();
+        resolveInputClosed();
+    });
+
+    const previousConsoleMessageSink = cons.getConsoleMessageSink();
+    const terminalConsoleMessageSink: cons.ConsoleMessageSink | undefined = options.captureConsoleOutput
+        ? (_level, message, renderedMessage) => terminalOutput.writeLine(renderedMessage ?? message)
+        : undefined;
+    if (terminalConsoleMessageSink) {
+        cons.setConsoleMessageSink(terminalConsoleMessageSink);
+    }
 
     let disconnected = false;
+    let terminalSocketError: Error | undefined;
+    let resolveSocketClosed!: (error?: Error) => void;
+    const socketClosed = new Promise<Error | undefined>((resolve) => {
+        resolveSocketClosed = resolve;
+    });
     const responseHandlers = new Set<(line: string) => boolean>();
-    const closeHandlers = new Set<() => void>();
+    const closeHandlers = new Set<(error?: Error) => void>();
     const socketPump = createSocketLinePump(
         socket,
         (line) => {
@@ -360,17 +408,23 @@ export async function runTerminalClient(target: TerminalTarget, options: Termina
             }
             terminalOutput.writeLine(line);
         },
-        () => {
+        (error) => {
             disconnected = true;
+            terminalSocketError = error;
+            resolveSocketClosed(error);
             for (const handler of closeHandlers) {
-                handler();
+                handler(error);
             }
             rl.close();
         },
     );
 
     rl.on("SIGINT", () => {
-        rl.close();
+        if (options.onInterrupt) {
+            options.onInterrupt();
+        } else {
+            rl.close();
+        }
     });
 
     try {
@@ -394,7 +448,9 @@ export async function runTerminalClient(target: TerminalTarget, options: Termina
             throw new Error("Disconnected from TIC-80 remoting server");
         }
 
-        await new Promise<void>((resolve) => {
+        cons.info(`Connected to ${host}:${port}. Type lines like: 1 ping  (Ctrl+C to quit)`);
+
+        if (!inputHasClosed) {
             rl.on("line", (line) => {
                 terminalOutput.acceptInputLine();
                 if (line.trim().length > 0 && !disconnected) {
@@ -402,9 +458,21 @@ export async function runTerminalClient(target: TerminalTarget, options: Termina
                 }
                 terminalOutput.showPrompt();
             });
-            rl.once("close", resolve);
             terminalOutput.showPrompt();
-        });
+        }
+        notifyReady();
+
+        if (options.keepOpenOnInputClose) {
+            const socketError = await socketClosed;
+            if (socketError) {
+                throw socketError;
+            }
+        } else {
+            await inputClosed;
+            if (terminalSocketError) {
+                throw terminalSocketError;
+            }
+        }
     } finally {
         responseHandlers.clear();
         closeHandlers.clear();
@@ -415,7 +483,66 @@ export async function runTerminalClient(target: TerminalTarget, options: Termina
             socket.end();
             socket.destroy();
         }
+        if (terminalConsoleMessageSink && cons.getConsoleMessageSink() === terminalConsoleMessageSink) {
+            cons.setConsoleMessageSink(previousConsoleMessageSink);
+        }
     }
+}
+
+async function startTerminalClientAttempt(
+    target: TerminalTarget,
+    options: TerminalClientOptions,
+): Promise<RunningTerminalClient> {
+    let ready = false;
+    let resolveReady!: () => void;
+    let rejectReady!: (error: unknown) => void;
+    const readyPromise = new Promise<void>((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+    });
+
+    const closed = runTerminalClientCore(target, options, () => {
+        ready = true;
+        resolveReady();
+    });
+    void closed.catch((error) => {
+        if (!ready) {
+            rejectReady(error);
+        }
+    });
+
+    await readyPromise;
+    return { closed };
+}
+
+export async function startTerminalClient(
+    target: TerminalTarget,
+    options: TerminalClientOptions = {},
+): Promise<RunningTerminalClient> {
+    const startupAttempts = Math.max(1, Math.trunc(options.startupAttempts ?? 1));
+    const startupRetryDelayMs = Math.max(0, options.startupRetryDelayMs ?? 100);
+
+    // can't guarantee the remoting server is ready to accept connections immediately
+    // so use a retry mechanism.
+    for (let attempt = 1; attempt <= startupAttempts; attempt += 1) {
+        try {
+            return await startTerminalClientAttempt(target, options);
+        } catch (error) {
+            const terminalError = asError(error);
+            if (attempt >= startupAttempts) {
+                throw terminalError;
+            }
+            options.onStartupRetry?.(terminalError, attempt, startupAttempts);
+            await sleep(startupRetryDelayMs);
+        }
+    }
+
+    throw new Error("Unable to start TIC-80 terminal");
+}
+
+export async function runTerminalClient(target: TerminalTarget, options: TerminalClientOptions = {}): Promise<void> {
+    const terminal = await startTerminalClient(target, options);
+    await terminal.closed;
 }
 
 export async function discoCommand(): Promise<void> {

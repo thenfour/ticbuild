@@ -5,7 +5,7 @@ let logFilePath: string | null = null;
 
 // A sink replaces normal console rendering; an observer sees messages without replacing it.
 export type ConsoleMessageLevel = "success" | "error" | "warning" | "info" | "debug";
-export type ConsoleMessageSink = (level: ConsoleMessageLevel, message: string) => void;
+export type ConsoleMessageSink = (level: ConsoleMessageLevel, message: string, renderedMessage?: string) => void;
 export type ConsoleMessageObserver = (level: ConsoleMessageLevel, message: string) => void;
 
 let consoleMessageSink: ConsoleMessageSink | null = null;
@@ -15,10 +15,10 @@ function isTestEnv(): boolean {
   return process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
 }
 
-function consoleLogExceptInTestEnv(level: ConsoleMessageLevel, plainMessage: string, decoratedMessage: any): void {
+function consoleLogExceptInTestEnv(level: ConsoleMessageLevel, plainMessage: string, decoratedMessage: string): void {
   consoleMessageObserver?.(level, plainMessage);
   if (consoleMessageSink) {
-    consoleMessageSink(level, plainMessage);
+    consoleMessageSink(level, plainMessage, decoratedMessage);
     return;
   }
   if (!isTestEnv()) {
