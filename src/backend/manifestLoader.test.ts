@@ -9,6 +9,7 @@ const mockFs = fs as jest.Mocked<typeof fs>;
 describe("Manifest Loader", () => {
   const validManifest = {
     $schema: "./.ticbuild/ticbuild.schema.json",
+    buildConfiguration: "release",
     project: {
       name: "test-project",
       binDir: "./bin",
@@ -173,9 +174,22 @@ describe("Manifest Loader", () => {
       expect(() => loadManifest("/test/manifest.ticbuild.jsonc")).toThrow(ManifestValidationError);
     });
 
+    it("should reject a missing or empty base build configuration name", () => {
+      const { buildConfiguration: _buildConfiguration, ...manifestWithoutBuildConfiguration } = validManifest;
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValueOnce(JSON.stringify(manifestWithoutBuildConfiguration));
+
+      expect(() => loadManifest("/test/manifest.ticbuild.jsonc")).toThrow(ManifestValidationError);
+
+      mockFs.readFileSync.mockReturnValueOnce(JSON.stringify({ ...validManifest, buildConfiguration: "" }));
+
+      expect(() => loadManifest("/test/manifest.ticbuild.jsonc")).toThrow(ManifestValidationError);
+    });
+
     it("should handle JSONC with comments", () => {
       const manifestContent = `{
         // This is a comment
+        "buildConfiguration": "release",
         "project": {
           "name": "test-project",
           "binDir": "./bin",

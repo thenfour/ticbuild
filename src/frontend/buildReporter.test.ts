@@ -29,6 +29,7 @@ function createTempProject(code: string = "print('ok')", minify = false): { dir:
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-reporter-"));
   writeFile(path.join(dir, "main.lua"), code);
   const manifest = {
+    buildConfiguration: "release",
     project: {
       name: "test",
       binDir: "./bin",

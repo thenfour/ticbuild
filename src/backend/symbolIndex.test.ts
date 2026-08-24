@@ -33,6 +33,7 @@ type TestScope = {
 
 function makeManifest(): Manifest {
     return {
+        buildConfiguration: "release",
         project: {
             name: "test",
             binDir: "./bin",

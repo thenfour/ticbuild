@@ -74,7 +74,7 @@ function getPrompt(state: ReplState, hasBuffer: boolean): string {
 function printReplBanner(core: TicbuildProjectCore, state: ReplState): void {
     cons.h1("ticbuild repl");
     cons.info(`Project: ${core.manifestPath}`);
-    cons.info(`Build config: ${core.selectedBuildConfig || "(default)"}`);
+    cons.info(`Build config: ${core.selectedBuildConfig}`);
     cons.info(`Mode: ${state.multiLine ? "multi-line" : "single-line"}`);
     cons.info("Type :help for commands. Use :quit to exit.\n");
 }

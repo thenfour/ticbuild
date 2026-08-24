@@ -1,14 +1,16 @@
 import { preprocessLuaCode } from "./luaPreprocessor";
-import { Manifest } from "./manifestTypes";
+import { Manifest as TicbuildManifest } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import * as cons from "../utils/console";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+type Manifest = Omit<TicbuildManifest, "buildConfiguration">;
+
 function makeProject(manifest: Manifest): TicbuildProjectCore {
   return new TicbuildProjectCore({
-    manifest,
+    manifest: { buildConfiguration: "release", ...manifest },
     manifestPath: "C:/test/manifest.ticbuild.jsonc",
     projectDir: "C:/test",
   });
@@ -598,7 +600,7 @@ describe("Lua preprocessor include resolution", () => {
     };
 
     const project = new TicbuildProjectCore({
-      manifest,
+      manifest: { buildConfiguration: "release", ...manifest },
       manifestPath: path.join(tempRoot, "manifest.ticbuild.jsonc"),
       projectDir: tempRoot,
     });

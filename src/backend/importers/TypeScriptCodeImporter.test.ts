@@ -13,6 +13,7 @@ import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
 
 function createProject(projectDir: string, imports: Manifest["imports"], defines?: Record<string, boolean>) {
   const manifest: Manifest = {
+    buildConfiguration: "release",
     project: {
       name: "typescript-test",
       binDir: "./bin",

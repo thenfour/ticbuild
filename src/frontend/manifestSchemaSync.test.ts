@@ -23,6 +23,7 @@ function createTempProject(options?: { autoUpdateManifestSchema?: boolean; schem
 
     const manifest = {
         $schema: options?.schemaRef ?? "./.ticbuild/ticbuild.schema.json",
+        buildConfiguration: "release",
         project: {
             name: "test",
             binDir: "./bin",

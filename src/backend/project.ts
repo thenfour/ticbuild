@@ -49,20 +49,27 @@ export class TicbuildProject {
     projectDir: string,
     options?: TicbuildProjectLoadOptions,
   ) {
+    const effectiveBuildConfigName = options?.buildConfigName ?? manifest.buildConfiguration;
+
     this.unresolvedCore = new TicbuildProjectCore({
       manifest,
       manifestPath,
       projectDir,
-      buildConfigName: options?.buildConfigName,
+      buildConfigName: effectiveBuildConfigName,
       overrideVariables: options?.overrideVariables,
     });
 
-    const resolvedManifest = this.resolveManifest(manifestPath, projectDir, options);
+    const resolvedManifest = this.resolveManifest(
+      manifestPath,
+      projectDir,
+      effectiveBuildConfigName,
+      options?.overrideVariables,
+    );
     this.resolvedCore = new TicbuildProjectCore({
       manifest: resolvedManifest.manifest,
       manifestPath,
       projectDir,
-      buildConfigName: options?.buildConfigName,
+      buildConfigName: resolvedManifest.selectedBuildConfig,
       overrideVariables: options?.overrideVariables,
     });
   }
@@ -70,18 +77,26 @@ export class TicbuildProject {
   private resolveManifest(
     manifestPath: string,
     projectDir: string,
-    options?: TicbuildProjectLoadOptions,
+    buildConfigName: string,
+    overrideVariables?: Record<string, string>,
   ): ResolvedManifest {
     // avoid mutations
     const resolved: Manifest = this.unresolvedCore.clone().manifest;
+    const baseBuildConfigName = this.unresolvedCore.manifest.buildConfiguration;
+
+    if (this.unresolvedCore.manifest.buildConfigurations?.[baseBuildConfigName]) {
+      throw new Error(
+        `Base build configuration '${baseBuildConfigName}' must not also appear in buildConfigurations`,
+      );
+    }
 
     // in this process, avoid handling of specific fields; general behaviors are preferred
     // for maintainability.
 
-    if (options?.buildConfigName) {
-      const buildConfig = this.unresolvedCore.manifest.buildConfigurations?.[options.buildConfigName];
+    if (buildConfigName !== baseBuildConfigName) {
+      const buildConfig = this.unresolvedCore.manifest.buildConfigurations?.[buildConfigName];
       if (!buildConfig) {
-        throw new Error(`Build configuration not found: ${options.buildConfigName}`);
+        throw new Error(`Build configuration not found: ${buildConfigName}`);
       }
 
       // for every leaf in project settings, override / add to resolved manifest
@@ -115,8 +130,8 @@ export class TicbuildProject {
       resolved,
       manifestPath,
       projectDir,
-      options?.overrideVariables,
-      options?.buildConfigName,
+      buildConfigName,
+      overrideVariables,
     );
 
     // ensure all imports have "kind" -- deduce if missing.
@@ -141,6 +156,7 @@ export class TicbuildProject {
 
     return {
       manifest: resolved, //
+      selectedBuildConfig: buildConfigName,
       variables: calculatedVars,
     };
   }

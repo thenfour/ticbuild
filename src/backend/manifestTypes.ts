@@ -111,6 +111,7 @@ export interface BuildConfiguration {
 
 export interface Manifest {
   $schema?: string;
+  buildConfiguration: string;
   project: ProjectConfig;
   variables?: Record<string, string>;
   preprocessor?: PreprocessorConfig;
@@ -129,7 +130,7 @@ export type VariableInfo = {
 // substituting variables, deducing kinds, etc....
 export type ResolvedManifest = {
   manifest: Manifest;
-  selectedBuildConfig?: string | undefined;
+  selectedBuildConfig: string;
   variables: Map<string, VariableInfo>;
 };
 

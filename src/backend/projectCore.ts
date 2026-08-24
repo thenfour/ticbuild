@@ -101,8 +101,8 @@ export function calculateVars(
   manifest: Manifest,
   manifestPath: string,
   projectDir: string,
+  buildConfigName: string,
   overrideVariables?: Record<string, string>,
-  buildConfigName?: string,
 ) {
   // add variables for non-array leafs in the build config.
   // for example { project: { binDir: "..." } } adds a variable "project.binDir"
@@ -128,7 +128,7 @@ export function calculateVars(
 
   setAutomaticVariable("project.manifestPath", manifestPath);
   setAutomaticVariable("project.projectDir", projectDir);
-  setAutomaticVariable("buildConfiguration", buildConfigName || "release");
+  setAutomaticVariable("buildConfiguration", buildConfigName);
 
   // should be the last step so all variables are as ready as possible for substitution
   const calculatedVars = calculateAllVariables(manifest);
@@ -148,7 +148,7 @@ export class TicbuildProjectCore {
   manifest: Manifest;
   manifestPath: string;
   projectDir: string;
-  selectedBuildConfig: string | undefined;
+  selectedBuildConfig: string;
   overrideVariables: Record<string, string>;
 
   // calculated
@@ -158,7 +158,7 @@ export class TicbuildProjectCore {
     this.manifest = options.manifest;
     this.manifestPath = canonicalizePath(options.manifestPath);
     this.projectDir = canonicalizePath(options.projectDir);
-    this.selectedBuildConfig = options.buildConfigName;
+    this.selectedBuildConfig = options.buildConfigName ?? options.manifest.buildConfiguration;
     this.overrideVariables = options.overrideVariables || {};
 
     this.allVariables = calculateAllVariables(this.manifest);
@@ -187,7 +187,7 @@ export class TicbuildProjectCore {
   }
 
   clone(): TicbuildProjectCore {
-    const dataObj = this.toDataObject();
+    const dataObj = JSON.parse(JSON.stringify(this.toDataObject()));
     return TicbuildProjectCore.fromDataObject(dataObj);
   }
 

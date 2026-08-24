@@ -1,5 +1,6 @@
 {
     "$schema": "./.ticbuild/ticbuild.schema.json",
+    "buildConfiguration": "release",
     "project": {
         "name": "{{PROJECT_NAME}}",
         "importDirs": [

@@ -21,6 +21,7 @@ function createTempDir(): string {
 
 function createManifest(overrides: Partial<Manifest> = {}): Manifest {
     const base: Manifest = {
+        buildConfiguration: "release",
         project: {
             name: "test",
             binDir: "./bin",

@@ -1,12 +1,14 @@
 import { inflateSync } from "node:zlib";
 import { TicbuildProjectCore } from "../projectCore";
-import { Manifest } from "../manifestTypes";
+import { Manifest as TicbuildManifest } from "../manifestTypes";
 import { CodeResourceView } from "./CodeResource";
 import { createIdentitySourceMap, mapPreprocessedOffset } from "../sourceMap";
 
+type Manifest = Omit<TicbuildManifest, "buildConfiguration">;
+
 function makeProject(manifest: Manifest): TicbuildProjectCore {
   return new TicbuildProjectCore({
-    manifest,
+    manifest: { buildConfiguration: "release", ...manifest },
     manifestPath: "C:/test/manifest.ticbuild.jsonc",
     projectDir: "C:/test",
   });

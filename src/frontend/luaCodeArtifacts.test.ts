@@ -16,6 +16,7 @@ function createTempProject(code: string, assemblyBlock: object): { dir: string; 
   writeFile(codePath, code);
 
   const manifest = {
+    buildConfiguration: "release",
     project: {
       name: "test",
       binDir: "./bin",

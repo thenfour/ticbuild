@@ -252,6 +252,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
 // fyi, reference: https://github.com/nesbox/TIC-80/wiki/.tic-File-Format
 {
   "$schema": "./ticbuild.schema.json",
+  "buildConfiguration": "release", // base configuration name (required, gets overridden by other configs)
   "project": {
     "name": "my demo",
     "launchArgs": ["--fs=./", "--skip"], // args that are passed to the tic80 when launched.
@@ -301,7 +302,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
   },
   "preprocessor": {
     "defines": {
-      "DEBUG": true,
+      "RELEASE": true,
       "GEOSPHERE_SUBDIVISIONS": 3,
       "CURVE_BETA": 0.998,
       "TITLE": "$(project.name)", // variable substitutions is performed just like most things in the manifest.
@@ -465,7 +466,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
   },
 
   "buildConfigurations": {
-    // build configurations allow overriding things in the base config above.
+    // build configurations are named overrides  of the base config above.
     // you cannot override individual elements of arrays. for example, `assembly.blocks`
     // if you override that, you must overwrite the whole value.
     // similar with includeDirs / additionalWatchGlobs, you can't "add 1" or so; you have to replace the whole array.
@@ -479,7 +480,8 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
       },
       "preprocessor": {
         "defines": {
-          "DEBUG": null, // removes the DEBUG define inherited from the base manifest
+          "RELEASE": null, // null removes a define from the base config
+          "DEBUG": true,
         },
       },
       "assembly": {
@@ -933,6 +935,12 @@ the effective configuration. This makes both `#ifdef` and `defined(...)` report
 the symbol as undefined:
 
 ```jsonc
+"buildConfiguration": "debug",
+"preprocessor": {
+  "defines": {
+    "DEBUG": true
+  }
+},
 "buildConfigurations": {
   "release": {
     "preprocessor": {

@@ -34,6 +34,7 @@ class FakeTranspiledCodeResource extends CodeResource {
 
 function makeProject(): TicbuildProjectCore {
   const manifest: Manifest = {
+    buildConfiguration: "release",
     project: {
       name: "test",
       binDir: "./bin",

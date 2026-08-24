@@ -4,6 +4,7 @@
   "description": "Configuration file for ticbuild projects",
   "type": "object",
   "required": [
+    "buildConfiguration",
     "project",
     "imports",
     "assembly"
@@ -12,6 +13,11 @@
     "$schema": {
       "type": "string",
       "description": "Path to the manifest JSON schema for editor support"
+    },
+    "buildConfiguration": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the base build configuration used when --mode is omitted"
     },
     "project": {
       "type": "object",

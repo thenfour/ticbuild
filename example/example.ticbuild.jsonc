@@ -1,5 +1,6 @@
 {
   "$schema": "../ticbuild.schema.json",
+  "buildConfiguration": "release",
   // Example manifest for a TIC-80 project
   "project": {
     "name": "example",
@@ -78,7 +79,6 @@
     ]
   },
   "buildConfigurations": {
-    "release": {},
     "debug": {
       "project": {
         "binDir": "./debug/bin",
