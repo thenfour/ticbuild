@@ -1,7 +1,10 @@
 import net from "node:net";
 import * as readline from "node:readline";
 import { DiscoveredTic80Session, listRunningDiscoveredSessions } from "../backend/tic80Controller/discovery";
-import { parseRemotingLine } from "../backend/tic80Controller/remotingProtocol";
+import {
+    decodeRemotingJsonBinaryLiteral,
+    parseRemotingLine,
+} from "../backend/tic80Controller/remotingProtocol";
 import { decodeScriptErrorPayload } from "../backend/tic80Controller/scriptErrorProtocol";
 import * as cons from "../utils/console";
 import { findOptionValue } from "../utils/tic80/args";
@@ -41,14 +44,26 @@ function hasTerminalRequestId(line: string): boolean {
     return /^-?\d+(?:\s|$)/.test(line);
 }
 
+type TerminalResponsePresentation = "human" | "structured" | "raw";
+
 type PendingTerminalRequest = {
     command: string;
+    presentation: TerminalResponsePresentation;
 };
 
-// -123 ping
+interface ParsedTerminalRequest {
+    id: number;
+    request: PendingTerminalRequest;
+    wireLine: string;
+}
+
+// Prefixes decorate the command token and are terminal-only; they are removed
+// before sending the request to TIC-80. Examples: `!script_error_last` becomes
+// `1 script_error_last`, and `42 #script_error_last` becomes
+// `42 script_error_last`.
 // technically request ids should be positive but no point enforcing that here.
-function parseTerminalRequest(line: string): { id: number; request: PendingTerminalRequest } | undefined {
-    const match = /^(-?\d+)\s+([^\s]+)/.exec(line);
+function parseTerminalRequest(line: string): ParsedTerminalRequest | undefined {
+    const match = /^(-?\d+)\s+([^\s]+)(.*)$/.exec(line);
     if (!match) {
         return undefined;
     }
@@ -56,7 +71,26 @@ function parseTerminalRequest(line: string): { id: number; request: PendingTermi
     if (!Number.isInteger(id)) {
         return undefined;
     }
-    return { id, request: { command: match[2].toLowerCase() } };
+
+    const decoratedCommand = match[2];
+    const prefix = decoratedCommand[0];
+    const presentation: TerminalResponsePresentation = prefix === "!"
+        ? "structured"
+        : prefix === "#"
+            ? "raw"
+            : "human";
+    const command = presentation === "human"
+        ? decoratedCommand
+        : decoratedCommand.slice(1);
+    if (command.length === 0) {
+        return undefined;
+    }
+
+    return {
+        id,
+        request: { command: command.toLowerCase(), presentation },
+        wireLine: `${match[1]} ${command}${match[3]}`,
+    };
 }
 
 function readLine(rl: readline.Interface, prompt: string): Promise<string | null> {
@@ -448,11 +482,7 @@ async function runTerminalClientCore(
     // how to format a response. e.g. script_error_last response formatting is defined
     // by its request, not response, but the formatting is on the response. so mapping needed.
     const pendingRequests = new Map<number, PendingTerminalRequest[]>();
-    const enqueueRequest = (requestLine: string) => {
-        const parsed = parseTerminalRequest(requestLine);
-        if (!parsed) {
-            return;
-        }
+    const enqueueRequest = (parsed: ParsedTerminalRequest) => {
         const queued = pendingRequests.get(parsed.id) ?? [];
         queued.push(parsed.request);
         pendingRequests.set(parsed.id, queued);
@@ -484,6 +514,27 @@ async function runTerminalClientCore(
             }
         } catch {
             // The terminal remains a lossless protocol viewer for malformed or newer payloads.
+            terminalOutput.writeLine(rawLine);
+        }
+    };
+    const presentStructuredScriptError = (data: string | undefined, rawLine: string): void => {
+        if (data === undefined || data.trim().length === 0) {
+            return;
+        }
+        try {
+            // Structured presentation intentionally decodes only the remoting
+            // binary/JSON envelope. It preserves every JSON field, including
+            // fields a newer schema adds that this client does not understand.
+            const value = decodeRemotingJsonBinaryLiteral(data);
+            const json = JSON.stringify(value, undefined, 2);
+            if (json === undefined) {
+                throw new Error("Decoded remoting JSON value is not serializable");
+            }
+            for (const line of json.split("\n")) {
+                terminalOutput.writeLine(line);
+            }
+        } catch {
+            // Malformed or newer non-JSON values remain inspectable losslessly.
             terminalOutput.writeLine(rawLine);
         }
     };
@@ -530,7 +581,13 @@ async function runTerminalClientCore(
             if (parsed?.kind === "response") {
                 const request = takeRequest(parsed.id);
                 if (request?.command === "script_error_last" && parsed.status.toUpperCase() === "OK") {
-                    presentScriptError(parsed.data, line, false);
+                    if (request.presentation === "raw") {
+                        terminalOutput.writeLine(line);
+                    } else if (request.presentation === "structured") {
+                        presentStructuredScriptError(parsed.data, line);
+                    } else {
+                        presentScriptError(parsed.data, line, false);
+                    }
                     return;
                 }
             }
@@ -606,8 +663,12 @@ async function runTerminalClientCore(
                         requestLine = `${nextRequestId} ${commandLine}`;
                         nextRequestId = nextRequestId === terminalMaxAutomaticRequestId ? 1 : nextRequestId + 1;
                     }
-                    enqueueRequest(requestLine);
-                    socket.write(`${requestLine}\n`, "ascii");
+                    const parsedRequest = parseTerminalRequest(requestLine);
+                    const wireLine = parsedRequest?.wireLine ?? requestLine;
+                    if (parsedRequest) {
+                        enqueueRequest(parsedRequest);
+                    }
+                    socket.write(`${wireLine}\n`, "ascii");
                 }
                 terminalOutput.showPrompt();
             });

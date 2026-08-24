@@ -61,7 +61,7 @@ describe("script error presentation", () => {
 
     expect(renderScriptError(error).slice(1)).toEqual([
       "  at <main> (cart:7)",
-      "  at <C function> ([C])",
+      "  at <native> ([C])",
       "  at <anonymous> (cart:7)",
       "  at <anonymous> (cart)",
     ]);

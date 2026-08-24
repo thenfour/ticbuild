@@ -173,6 +173,56 @@ describe("terminal remoting session", () => {
         }
     });
 
+    it("supports structured and raw response presentation prefixes", async () => {
+        const scriptError = encodedScriptError(23);
+        const receivedLines: string[] = [];
+        const server = net.createServer((socket) => {
+            pumpSocketLines(socket, (line) => {
+                receivedLines.push(line);
+                const id = line.split(/\s+/, 1)[0];
+                if (line.includes(" event_subscribe ")) {
+                    socket.write(`${id} OK\n`);
+                } else if (id === "2147483646" && line.endsWith(" script_error_last")) {
+                    socket.write(`${id} OK\n`);
+                } else if (line.endsWith(" script_error_last")) {
+                    socket.write(`${id} OK ${scriptError}\n`);
+                }
+            });
+        });
+        const port = await listen(server);
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let rendered = "";
+        output.on("data", (chunk) => {
+            rendered += chunk.toString("utf8");
+        });
+
+        const terminal = await startTerminalClient(
+            { host: "127.0.0.1", port },
+            { input, output, terminal: false },
+        );
+
+        const structuredOffset = rendered.length;
+        input.write("!script_error_last\n");
+        await waitFor(() => rendered.slice(structuredOffset).includes('"errorId": 23'));
+        const structuredOutput = rendered.slice(structuredOffset);
+        expect(receivedLines).toContain("1 script_error_last");
+        expect(structuredOutput).toContain('{\n  "schemaVersion": 1,');
+        expect(structuredOutput).toContain('  "frames": [');
+        expect(structuredOutput).not.toContain(scriptError);
+        expect(structuredOutput).not.toContain("Lua runtime error");
+
+        const rawOffset = rendered.length;
+        input.write("42 #script_error_last\n");
+        await waitFor(() => rendered.slice(rawOffset).includes(`42 OK ${scriptError}`));
+        expect(receivedLines).toContain("42 script_error_last");
+        expect(rendered.slice(rawOffset)).toContain(`42 OK ${scriptError}\n`);
+
+        input.end();
+        await terminal.closed;
+        await closeServer(server);
+    });
+
     it("redraws partially typed input after a pushed event", async () => {
         let connectedSocket: net.Socket | undefined;
         const server = net.createServer((socket) => {

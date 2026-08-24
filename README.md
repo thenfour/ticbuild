@@ -497,6 +497,16 @@ back to authored sources when the running cart matches the build source maps.
 
 Request ID prefixes are optional (e.g. `1 ping`).
 
+Prefix a command to select how its response is presented:
+
+- `!script_error_last` decodes and prints the structured JSON value without
+  human-readable stack-trace formatting.
+- `#script_error_last` prints the exact raw protocol response, including its
+  hex-encoded binary value.
+
+The presentation prefix follows an explicit request ID when one is supplied,
+for example `42 !script_error_last`.
+
 Use `project.additionalWatchGlobs` to add extra glob-based watch targets,
 relative to the manifest directory unless you provide an absolute pattern.
 These extra globs can trigger rebuilds on file changes, file additions, and file removals.
