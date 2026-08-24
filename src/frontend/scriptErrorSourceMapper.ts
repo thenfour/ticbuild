@@ -8,6 +8,7 @@ import {
 } from "../backend/sourceMapLookup";
 import {
   getScriptErrorFrameLine,
+  ScriptErrorFrame,
   ScriptErrorPayload,
 } from "../backend/tic80Controller/scriptErrorProtocol";
 import {
@@ -23,6 +24,12 @@ import { GetFinalLuaArtifactFileLeaf } from "./core";
 // Only that runtime chunk is represented by ticbuild's generated Lua sidecars;
 // native `[C]` and other loaded chunks must retain their runtime locations.
 const TIC80_CART_FRAME_SOURCE = "cart";
+
+function generatedLineRange(frame: ScriptErrorFrame): { startLine: number; endLine: number } | undefined {
+  return frame.lineDefined > 0 && frame.lastLineDefined >= frame.lineDefined
+    ? { startLine: frame.lineDefined, endLine: frame.lastLineDefined }
+    : undefined;
+}
 
 function collectPreferredOriginalNames(error: ScriptErrorPayload, frameIndex: number): string[] {
   const frame = error.frames[frameIndex];
@@ -113,6 +120,33 @@ export class ScriptErrorSourceMapRegistry implements ScriptErrorSourceMapper {
     ) ?? sourceMap.firstMappingOnGeneratedLine(generatedLine);
   }
 
+  mapFrameName(error: ScriptErrorPayload, frameIndex: number): string | undefined {
+    const sourceMap = this.sourceMapsByCodeHash.get(error.codeHash);
+    const frame = error.frames[frameIndex];
+    if (!sourceMap || !frame?.name || frame.source !== TIC80_CART_FRAME_SOURCE) {
+      return undefined;
+    }
+
+    // Lua can learn a function name either from its declaration or from the
+    // caller instruction that invoked an otherwise anonymous value. Check both
+    // function spans before falling back to the map-wide, ambiguity-safe index.
+    const candidateFrames = [frame, error.frames[frameIndex + 1]];
+    for (const candidateFrame of candidateFrames) {
+      if (!candidateFrame || candidateFrame.source !== TIC80_CART_FRAME_SOURCE) {
+        continue;
+      }
+      const range = generatedLineRange(candidateFrame);
+      if (!range) {
+        continue;
+      }
+      const mappedName = sourceMap.findOriginalNameForGeneratedIdentifier(frame.name, range);
+      if (mappedName) {
+        return mappedName;
+      }
+    }
+    return sourceMap.findOriginalNameForGeneratedIdentifier(frame.name);
+  }
+
   mapVariableName(
     error: ScriptErrorPayload,
     frameIndex: number,
@@ -125,10 +159,7 @@ export class ScriptErrorSourceMapRegistry implements ScriptErrorSourceMapper {
       return undefined;
     }
 
-    const range = frame.lineDefined > 0
-      && frame.lastLineDefined >= frame.lineDefined
-      ? { startLine: frame.lineDefined, endLine: frame.lastLineDefined }
-      : undefined;
+    const range = generatedLineRange(frame);
     return sourceMap.findOriginalNameForGeneratedIdentifier(variable.runtimeName, range);
   }
 }

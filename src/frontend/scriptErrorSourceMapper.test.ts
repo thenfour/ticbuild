@@ -51,7 +51,11 @@ describe("script-error source mapping", () => {
     try {
       const generatedPath = path.join(tempDir, "maincode.02.minified.lua");
       const mapPath = `${generatedPath}.map`;
-      const generated = "TIC(); danger(); amount = amount + 1; local a=1; local b=a+1\n";
+      const generated = [
+        "TIC(); danger(); amount = amount + 1; local a=1; local b=a+1",
+        "local function c() end",
+        "",
+      ].join("\n");
       const generatedBytes = Buffer.from(generated, "utf-8");
       fs.writeFileSync(generatedPath, generatedBytes);
 
@@ -86,6 +90,12 @@ describe("script-error source mapping", () => {
         source: "src/main.ts",
         name: "x",
       });
+      generator.addMapping({
+        generated: { line: 2, column: "local function ".length },
+        original: { line: 20, column: 9 },
+        source: "src/main.ts",
+        name: "AUtilFunction",
+      });
       const rawMap = JSON.parse(generator.toString()) as Record<string, unknown>;
       rawMap.x_ticbuild = { generated: { hash: hashTextSha1(generated) } };
       fs.writeFileSync(mapPath, JSON.stringify(rawMap), "utf-8");
@@ -118,8 +128,9 @@ describe("script-error source mapping", () => {
       const variableError = payload({
         codeHash,
         frames: [frame({
+          name: "c",
           lineDefined: 1,
-          lastLineDefined: 1,
+          lastLineDefined: 2,
           variablesCaptured: true,
           variables: [
             {
@@ -143,8 +154,10 @@ describe("script-error source mapping", () => {
       });
       expect(registry.mapVariableName(variableError, 0, 0)).toBe("lut");
       expect(registry.mapVariableName(variableError, 0, 1)).toBe("x");
+      expect(registry.mapFrameName(variableError, 0)).toBe("AUtilFunction");
 
       expect(registry.mapFrame(payload({ codeHash: "md5:stale" }), 0)).toBeUndefined();
+      expect(registry.mapFrameName(payload({ codeHash: "md5:stale" }), 0)).toBeUndefined();
       expect(registry.mapVariableName(payload({ codeHash: "md5:stale" }), 0, 0)).toBeUndefined();
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });

@@ -44,11 +44,12 @@ describe("script error presentation", () => {
   it("renders a mapped source location when one is available", () => {
     const mapper: ScriptErrorSourceMapper = {
       mapFrame: () => ({ filePath: "C:\\project\\src\\main.ts", line: 9, column: 8 }),
+      mapFrameName: () => "AuthoredTIC",
     };
 
     expect(renderScriptError(payload(), mapper)).toEqual([
       "Lua runtime error during tic: cart:7: boom",
-      "  at TIC (C:\\project\\src\\main.ts:9:8)",
+      "  at AuthoredTIC (C:\\project\\src\\main.ts:9:8)",
     ]);
   });
 

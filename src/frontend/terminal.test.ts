@@ -362,6 +362,7 @@ describe("terminal remoting session", () => {
         });
         const sourceMapper: ScriptErrorSourceMapper = {
             mapFrame: () => ({ filePath: "C:\\project\\src\\main.ts", line: 12, column: 5 }),
+            mapFrameName: () => "AuthoredTIC",
             mapVariableName: () => "x",
         };
 
@@ -371,7 +372,7 @@ describe("terminal remoting session", () => {
         );
 
         expect(rendered.match(/Lua runtime error during tic/g)).toHaveLength(1);
-        expect(rendered).toContain("  at TIC (C:\\project\\src\\main.ts:12:5)\n");
+        expect(rendered).toContain("  at AuthoredTIC (C:\\project\\src\\main.ts:12:5)\n");
         expect(rendered).toContain("      local x = nil\n");
         expect(rendered).not.toContain(firstError);
 

@@ -13,6 +13,7 @@ import {
 
 export interface ScriptErrorSourceMapper {
   mapFrame(error: ScriptErrorPayload, frameIndex: number): SourceMapOriginalLocation | undefined;
+  mapFrameName?(error: ScriptErrorPayload, frameIndex: number): string | undefined;
   mapVariableName?(
     error: ScriptErrorPayload,
     frameIndex: number,
@@ -20,7 +21,10 @@ export interface ScriptErrorSourceMapper {
   ): string | undefined;
 }
 
-function frameName(frame: ScriptErrorFrame): string {
+function frameName(frame: ScriptErrorFrame, mappedName?: string): string {
+  if (mappedName) {
+    return mappedName;
+  }
   if (frame.name) {
     return frame.name;
   }
@@ -89,7 +93,8 @@ export function renderScriptError(
     const location = mapped
       ? `${mapped.filePath}:${mapped.line}:${mapped.column}`
       : runtimeFrameLocation(frame);
-    lines.push(`  at ${frameName(frame)} (${location})`);
+    const mappedName = sourceMapper?.mapFrameName?.(error, i);
+    lines.push(`  at ${frameName(frame, mappedName)} (${location})`);
     lines.push(...renderFrameVariables(error, i, sourceMapper));
   }
 
