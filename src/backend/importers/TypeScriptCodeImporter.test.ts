@@ -37,7 +37,7 @@ function getTypeScriptResource(resources: ResourceManager, name: string): TypeSc
 }
 
 describe("TypeScriptCodeResource", () => {
-  it("bundles imported TypeScript, preserves preprocessing, and exposes TIC callbacks", async () => {
+  it("statically links imported TypeScript, preserves preprocessing, and exposes TIC callbacks", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-"));
     const mainPath = path.join(projectDir, "main.ts");
     const helperPath = path.join(projectDir, "helper.ts");
@@ -76,12 +76,18 @@ describe("TypeScriptCodeResource", () => {
       const resource = getTypeScriptResource(resources, "main");
       const artifacts = resource.getCodeArtifacts(project);
 
-      expect(artifacts.inputSource).toContain('["helper"] = function');
+      expect(artifacts.inputSource).toContain('helper = {');
       expect(artifacts.inputSource).toContain("helper:getSuffix()");
+      expect(artifacts.inputSource.indexOf('helper = {')).toBeLessThan(
+        artifacts.inputSource.indexOf("TIC = function"),
+      );
+      expect(artifacts.inputSource).not.toContain("require(");
+      expect(artifacts.inputSource).not.toContain("____modules");
+      expect(artifacts.inputSource).not.toContain("____exports");
       expect(artifacts.preprocessedSource).toContain('"typescript-test"');
       expect(artifacts.preprocessedSource).not.toContain('"disabled"');
-      expect(artifacts.preprocessedSource).toContain('_G["TIC"] = TIC');
-      expect(artifacts.preprocessedSource).not.toContain("return ____entry");
+      expect(artifacts.preprocessedSource).toContain("TIC = function");
+      expect(artifacts.preprocessedSource).not.toContain("_G[");
       const helperLocation = mapPreprocessedOffsetToLineColumn(
         artifacts.preprocessedSourceMap,
         artifacts.preprocessedSource.indexOf('" helper"'),
@@ -103,6 +109,285 @@ describe("TypeScriptCodeResource", () => {
           { path: mainPath, reason: "Imported TypeScript code file" },
           { path: helperPath, reason: "TypeScript compiler dependency" },
         ]),
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses exports as direct globals while keeping non-exported module state local", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-static-scope-"));
+    fs.writeFileSync(
+      path.join(projectDir, "math.ts"),
+      [
+        "const privateScale = 2;",
+        "export function scale(value: number): number { return value * privateScale; }",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { scale as importedScale } from "./math";',
+        "export function TIC(): void { print(importedScale(3)); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
+      expect(artifacts.inputSource).toContain("local privateScale = 2");
+      expect(artifacts.inputSource).toContain("function scale(value)");
+      expect(artifacts.inputSource).toContain("print(scale(3))");
+      expect(artifacts.inputSource).not.toContain("importedScale");
+      expect(artifacts.inputSource).not.toContain("local function scale");
+      expect(artifacts.inputSource.match(/^do$/gm)).toHaveLength(2);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits shared dependencies once in deterministic dependency-first order", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-diamond-"));
+    fs.writeFileSync(path.join(projectDir, "shared.ts"), 'export const sharedMarker = "shared once";\n', "utf-8");
+    fs.writeFileSync(
+      path.join(projectDir, "left.ts"),
+      ['import { sharedMarker } from "./shared";', "export const left = sharedMarker + \" left\";"].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "right.ts"),
+      ['import { sharedMarker } from "./shared";', "export const right = sharedMarker + \" right\";"].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { left } from "./left";',
+        'import { right } from "./right";',
+        "export function TIC(): void { print(left + right); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+      expect(source.match(/sharedMarker = "shared once"/g)).toHaveLength(1);
+      expect(source.indexOf('sharedMarker = "shared once"')).toBeLessThan(source.indexOf("left ="));
+      expect(source.indexOf('sharedMarker = "shared once"')).toBeLessThan(source.indexOf("right ="));
+      expect(source.indexOf("left =")).toBeLessThan(source.indexOf("function TIC()"));
+      expect(source.indexOf("right =")).toBeLessThan(source.indexOf("function TIC()"));
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats relative declaration modules as typed Lua global contracts", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-contract-"));
+    fs.writeFileSync(
+      path.join(projectDir, "lua-env.d.ts"),
+      "export declare function LuaFract(value: number): number;\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { LuaFract as fract } from "./lua-env";',
+        "export function callLua(value: number): number { return fract(value); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
+      expect(artifacts.inputSource).toContain("return LuaFract(value)");
+      expect(artifacts.inputSource).not.toContain("require(");
+      expect(artifacts.inputSource).not.toContain("lua-env");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("links named re-exports without a runtime module object", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-reexport-"));
+    fs.writeFileSync(
+      path.join(projectDir, "base.ts"),
+      "export function utility(): number { return 4; }\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "barrel.ts"),
+      'export { utility as renamedUtility } from "./base";\n',
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { renamedUtility } from "./barrel";',
+        "export function TIC(): void { print(renamedUtility()); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+      expect(source).toContain("function utility()");
+      expect(source).toContain("renamedUtility = utility");
+      expect(source).toContain("print(renamedUtility())");
+      expect(source).not.toContain("require(");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps TypeScriptToLua helpers self-contained without runtime module loading", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-class-link-"));
+    fs.writeFileSync(
+      path.join(projectDir, "counter.ts"),
+      [
+        "export class Counter {",
+        "  public value = 0;",
+        "  public increment(): void { this.value++; }",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { Counter } from "./counter";',
+        "const counter = new Counter();",
+        "export function TIC(): void { counter.increment(); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+      expect(source).toContain("Counter = __TS__Class()");
+      expect(source).toContain("__TS__New(Counter)");
+      expect(source).not.toContain("require(");
+      expect(source).not.toContain("lualib_bundle");
+      expect(source).not.toContain("____modules");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate global exports before emitting ambiguous Lua", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-duplicate-export-"));
+    fs.writeFileSync(path.join(projectDir, "left.ts"), "export function collide(): number { return 1; }\n", "utf-8");
+    fs.writeFileSync(path.join(projectDir, "right.ts"), "export function collide(): number { return 2; }\n", "utf-8");
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      ['import "./left";', 'import "./right";', "export function TIC(): void {}"].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(
+        /exported Lua global 'collide'.*left\.ts.*right\.ts/,
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects static module cycles with the cycle path", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-cycle-"));
+    fs.writeFileSync(
+      path.join(projectDir, "a.ts"),
+      ['import { b } from "./b";', "export function a(): number { return b(); }"].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "b.ts"),
+      ['import { a } from "./a";', "export function b(): number { return a(); }"].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      ['import { a } from "./a";', "export function TIC(): void { print(a()); }"].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(/module cycles.*a\.ts -> b\.ts -> a\.ts/);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['import value from "./dep"; export function TIC() { print(value); }', "default imports"],
+    ['import * as dep from "./dep"; export function TIC() { print(dep.value); }', "namespace imports"],
+    ['export * from "./dep";', "export *"],
+    ['export async function load() { return import("./dep"); }', "dynamic import()"],
+  ])("rejects unsupported static module syntax: %s", async (mainSource, expectedMessage) => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-module-syntax-"));
+    fs.writeFileSync(path.join(projectDir, "dep.ts"), "const value = 1; export { value as default, value };\n", "utf-8");
+    fs.writeFileSync(path.join(projectDir, "main.ts"), `${mainSource}\n`, "utf-8");
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(expectedMessage);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets direct TypeScript globals participate in Lua global renaming", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-global-minify-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        "//#minify allow_rename",
+        "export function VeryLongTypeScriptFunction(): number { return 7; }",
+        "export function TIC(): void { print(VeryLongTypeScriptFunction()); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const resource = getTypeScriptResource(resources, "main");
+      const artifacts = resource.getCodeArtifacts(project);
+      expect(resource.getPreprocessResult().minifyAllowedGlobalNames).toContain("VeryLongTypeScriptFunction");
+      expect(artifacts.preprocessedSource).toContain("function VeryLongTypeScriptFunction()");
+      expect(artifacts.minifiedSource).not.toContain("VeryLongTypeScriptFunction");
+      expect(artifacts.minifiedSourceMap.segments.map((segment) => segment.originalName)).toContain(
+        "VeryLongTypeScriptFunction",
       );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -191,7 +476,7 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
-  it("exposes an exported TIC callback without leaking its internal marker", async () => {
+  it("emits an exported TIC callback directly as a Lua global", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-exported-tic-"));
     fs.writeFileSync(
       path.join(projectDir, "main.ts"),
@@ -207,8 +492,10 @@ describe("TypeScriptCodeResource", () => {
       const resource = getTypeScriptResource(resources, "main");
       const artifacts = resource.getCodeArtifacts(project);
 
-      expect(artifacts.inputSource).toContain('_G["TIC"] = ____exports.TIC');
-      expect(artifacts.inputSource).toContain('_G["TIC"] = ____entry["TIC"]');
+      expect(artifacts.inputSource).toContain("function TIC()");
+      expect(artifacts.inputSource).not.toContain("____exports");
+      expect(artifacts.inputSource).not.toContain("____entry");
+      expect(artifacts.inputSource).not.toContain("_G[");
       expect(artifacts.inputSource).not.toContain("__TICBUILD_EXPORT_GLOBAL__");
       expect(artifacts.preprocessedSource).not.toContain("__TICBUILD_EXPORT_GLOBAL__");
     } finally {
@@ -296,12 +583,10 @@ describe("TypeScriptCodeResource", () => {
       const resource = resources.items.get("main");
       expect(resource).toBeInstanceOf(LuaCodeResource);
       const artifacts = (resource as LuaCodeResource).getCodeArtifacts(project);
-      expect(artifacts.preprocessedSource).toContain(
-        '_G["typescriptTick"] = ____entry["typescriptTick"]',
-      );
-      expect(artifacts.preprocessedSource).toContain("function ____exports.typescriptTick()");
+      expect(artifacts.preprocessedSource).toContain("function typescriptTick()");
       expect(artifacts.preprocessedSource).toContain('print("after TypeScript")');
-      expect(artifacts.preprocessedSource).not.toContain("return ____entry");
+      expect(artifacts.preprocessedSource).not.toContain("____entry");
+      expect(artifacts.preprocessedSource).not.toContain("require(");
       expect(artifacts.minifiedSource.length).toBeGreaterThan(0);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -378,7 +663,7 @@ describe("TypeScriptCodeResource", () => {
       const resources = await loadAllImports(project);
       const resource = getTypeScriptResource(resources, "main");
       const preprocessedSource = resource.getCodeArtifacts(project).preprocessedSource;
-      expect(preprocessedSource).toContain('_G["configuredTick"] = ____entry["configuredTick"]');
+      expect(preprocessedSource).toContain("function configuredTick()");
       expect(preprocessedSource).toContain('helper = "configured"');
       expect(resource.getDependencyList()).toEqual(
         expect.arrayContaining([
@@ -427,7 +712,7 @@ describe("TypeScriptCodeResource", () => {
     try {
       const resources = await loadAllImports(project);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
-      expect(source).toContain('_G["tick"] = ____entry["tick"]');
+      expect(source).toContain("function tick()");
       expect(source).not.toContain("TypeScriptToLua");
       expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining("compilerOptions.noEmit"));
       expect(warningSpy).toHaveBeenCalledWith(expect.stringContaining("tstl.luaTarget"));

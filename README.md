@@ -551,9 +551,37 @@ const TIC = () => {
 TypeScript land.
 
 Lua code can also include TypeScript code with `--#include "import:typescriptAsset"`.
-Exports (value) from the TypeScript entry are published as Lua globals, so
-`export function myTypeScriptFn()` can be called as `myTypeScriptFn()` by the
-including Lua code.
+ticbuild statically links all dependent TypeScript modules.
+Every module becomes enclosed in a Lua `do ... end` scope.
+
+TypeScript value exports become Lua globals.
+Non-exported symbols stay local to their module scope:
+
+```ts
+const privateScale = 2; // -> local privateScale = 2
+
+export function scale(value: number): number { // -> function scale(value)
+  return value * privateScale;
+}
+```
+
+Named imports are linked directly to those globals, including aliases.
+All exported ts module symbols share Lua global namespace, so ticbuild rejects
+different modules that export the same global name. Module cycles are also rejected.
+TIC-80 callbacks (`TIC`, `BOOT`, `BDR`, et al) are always made global.
+
+Default imports/exports, namespace imports/exports, `export *`,
+and dynamic `import()` are not allowed.
+
+You can still opt-in to global renaming in the minifier:
+
+```ts
+//#minify allow_rename
+export function longInternalApiName(): number {
+  return 1;
+}
+```
+
 A filesystem include (`--#include "main.ts"`) does not invoke the TypeScript
 compiler - it will pass through to the later Lua pipeline. That example would
 include `main.ts` verbatim and fail because it's not Lua.

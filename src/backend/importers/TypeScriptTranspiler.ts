@@ -8,14 +8,13 @@ import { ExternalDependency, GeneratedLuaSource } from "../ImportedResourceTypes
 import { TypeScriptImportConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { createTypeScriptTranspilationOptions } from "./TypeScriptTranspilationOptions";
+import { createTypeScriptStaticLinker, getCanonicalTSPathKey, isTypeScriptImplementationFile } from "./TypeScriptStaticLinker";
 import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
 import { assert } from "../../utils/errorHandling";
 import { LuaPreprocessorSourceMap, SourceMapBuilder } from "../sourceMap";
 import { importSourceMapV3, KnownSourceFile } from "../sourceMapV3";
 
 const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
-const exportGlobalMarker = "__TICBUILD_EXPORT_GLOBAL__";
-const bundleFileName = "__ticbuild_typescript_bundle.lua";
 const tic80CallbackNames = new Set(["TIC", "BOOT", "BDR", "SCN", "OVR", "MENU"]);
 const preprocessorDirectivePattern =
   /^([ \t]*)\/\/(?:--)?#(pragma|define|undef|include|if|ifdef|ifndef|else|endif|warning|error|macro|endmacro|minify)\b(.*)$/;
@@ -35,11 +34,6 @@ function formatDiagnostics(diagnostics: readonly ts.Diagnostic[], projectDir: st
   return `TypeScript transpilation failed:\n${lines.map((line) => `  ${line}`).join("\n")}`;
 }
 
-function isTypeScriptImplementationFile(fileName: string): boolean {
-  const lower = fileName.toLowerCase();
-  return (lower.endsWith(".ts") || lower.endsWith(".tsx")) && !lower.endsWith(".d.ts");
-}
-
 function isNodeModulesPath(fileName: string): boolean {
   return canonicalizePath(fileName).split(path.sep).some((part) => part.toLowerCase() === "node_modules");
 }
@@ -52,10 +46,7 @@ export function transpileTypeScriptToLua(
 ): GeneratedLuaSource {
   const builtinsPath = canonicalizePath(getPathRelativeToPackageRoot("tic80.d.ts"));
   const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
-  const options = createTypeScriptTranspilationOptions(configuredProject.options, {
-    entryFilePath,
-    bundleFileName,
-  });
+  const options = createTypeScriptTranspilationOptions(configuredProject.options);
 
   const compilerHost = createCompilerHost(options, entryFilePath, entrySource);
   const program = ts.createProgram(
@@ -63,7 +54,13 @@ export function transpileTypeScriptToLua(
     options,
     compilerHost,
   );
-  const exportedValueNames = getEntryExportedValueNames(program, entryFilePath);
+  const staticLinker = createTypeScriptStaticLinker(
+    program,
+    compilerHost,
+    entryFilePath,
+    project.projectDir,
+    new Set(findDeclaredCallbacks(entrySource, entryFilePath)),
+  );
   const emitReadDependencies = new Set<string>();
   const emitHost: tstl.EmitHost = {
     directoryExists: ts.sys.directoryExists,
@@ -79,18 +76,10 @@ export function transpileTypeScriptToLua(
     writeFile: ts.sys.writeFile,
   };
 
-  const emittedLua = new Map<string, string>();
-  const emittedSourceMaps = new Map<string, string>();
   const emitResult = new tstl.Transpiler({ emitHost }).emit({
     program,
-    plugins: [createSourceMapPathPlugin(project.projectDir)],
-    writeFile(fileName, data) {
-      if (fileName.toLowerCase().endsWith(".lua")) {
-        emittedLua.set(canonicalizePath(fileName), data);
-      } else if (fileName.toLowerCase().endsWith(".lua.map")) {
-        emittedSourceMaps.set(canonicalizePath(fileName), data);
-      }
-    },
+    plugins: [staticLinker.plugin],
+    writeFile() { },
   });
   const diagnostics = ts.sortAndDeduplicateDiagnostics([
     ...ts.getPreEmitDiagnostics(program),
@@ -104,25 +93,14 @@ export function transpileTypeScriptToLua(
     cons.warning(`TypeScript transpilation warning: ${formatDiagnostic(warning, project.projectDir)}`);
   }
 
-  if (emittedLua.size !== 1) {
-    throw new Error(
-      `TypeScript transpilation for ${entryFilePath} produced ${emittedLua.size} Lua files; expected one bundled output.`,
-    );
-  }
-  if (emittedSourceMaps.size !== 1) {
-    throw new Error(
-      `TypeScript transpilation for ${entryFilePath} produced ${emittedSourceMaps.size} Lua source maps; expected one bundled output map.`,
-    );
-  }
-
-  const emittedLuaSource = Array.from(emittedLua.values())[0];
+  const linked = staticLinker.link();
   const emittedMap = importSourceMapV3(
-    emittedLuaSource,
-    Array.from(emittedSourceMaps.values())[0],
+    linked.source,
+    linked.sourceMapV3,
     collectKnownSourceFiles(program, entryFilePath, entrySource),
     project.projectDir,
   );
-  const restored = restoreTicbuildMarkers(emittedLuaSource, emittedMap, exportedValueNames);
+  const restored = restoreTicbuildMarkers(linked.source, emittedMap);
   const dependencies = collectDependencies(
     program,
     builtinsPath,
@@ -135,48 +113,6 @@ export function transpileTypeScriptToLua(
     sourcePath: entryFilePath,
     sourceMap: restored.sourceMap,
     dependencies,
-  };
-}
-
-type MutableSourceNode = {
-  source?: string | null;
-  children?: Array<string | MutableSourceNode>;
-};
-
-function rewriteSourceNodePath(node: MutableSourceNode, sourcePath: string): void {
-  if (node.source !== null && node.source !== undefined) {
-    node.source = sourcePath;
-  }
-  for (const child of node.children ?? []) {
-    if (typeof child !== "string") {
-      rewriteSourceNodePath(child, sourcePath);
-    }
-  }
-}
-
-// TSTL records source path relative to each emitted Lua module. Once
-// those modules are bundled, two sources such as left/shared.ts and
-// right/shared.ts both become shared.ts and cannot be distinguished.
-// rewrite to absolute canonical paths to avoid collisions and allow source map lookups to succeed.
-function createSourceMapPathPlugin(projectDir: string): tstl.Plugin {
-  return {
-    afterPrint(_program, _options, _emitHost, files) {
-      for (const file of files) {
-        if (!file.sourceMapNode) {
-          continue;
-        }
-        const implementationSources = (file.sourceFiles ?? []).filter(
-          (sourceFile) => isTypeScriptImplementationFile(sourceFile.fileName),
-        );
-        if (implementationSources.length !== 1) {
-          continue;
-        }
-        rewriteSourceNodePath(
-          file.sourceMapNode as unknown as MutableSourceNode,
-          toAbsoluteCanonicalPath(implementationSources[0].fileName, projectDir),
-        );
-      }
-    },
   };
 }
 
@@ -214,12 +150,6 @@ function distinctTSPaths(paths: readonly string[]): string[] {
   });
 }
 
-// uses typescript path options
-function getCanonicalTSPathKey(filePath: string): string {
-  const canonicalPath = canonicalizePath(filePath);
-  return ts.sys.useCaseSensitiveFileNames ? canonicalPath : canonicalPath.toLowerCase();
-}
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 function createCompilerHost(
   options: tstl.CompilerOptions,
@@ -233,7 +163,7 @@ function createCompilerHost(
   host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
     const isEntry = getCanonicalTSPathKey(fileName) === canonicalEntryPath;
     if (isEntry) {
-      const transformed = preserveTicbuildDirectives(entrySource, fileName, true);
+      const transformed = preserveTicbuildDirectives(entrySource);
       return ts.createSourceFile(fileName, transformed, languageVersion, true, ts.ScriptKind.TS);
     }
 
@@ -242,7 +172,7 @@ function createCompilerHost(
       return original;
     }
 
-    const transformed = preserveTicbuildDirectives(original.text, fileName, false);
+    const transformed = preserveTicbuildDirectives(original.text);
     const scriptKind = fileName.toLowerCase().endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
     return ts.createSourceFile(fileName, transformed, languageVersion, true, scriptKind);
   };
@@ -250,13 +180,13 @@ function createCompilerHost(
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-function preserveTicbuildDirectives(source: string, fileName: string, isEntry: boolean): string {
+function preserveTicbuildDirectives(source: string): string {
   // convert preprocessor directive lines to a marker with the directive payload base64-encoded.
   // e.g.,
   // //#include "foo.lua"
   // becomes
   // __TICBUILD_PREPROCESSOR_DIRECTIVE__("IyNpbmNsdWRlICJmb28ubHVhIg==");
-  const transformed = source
+  return source
     .split(/\r?\n/)
     .map((line) => {
       const match = line.match(preprocessorDirectivePattern);
@@ -268,18 +198,6 @@ function preserveTicbuildDirectives(source: string, fileName: string, isEntry: b
       return `${indent}${preprocessorMarker}("${payload}");`;
     })
     .join("\n");
-
-  if (!isEntry) {
-    return transformed;
-  }
-
-  // make callbacks globals.
-  const callbacks = findDeclaredCallbacks(source, fileName);
-  if (callbacks.length === 0) {
-    return transformed;
-  }
-  const exports = callbacks.map((name) => `${exportGlobalMarker}("${name}", ${name});`).join("\n");
-  return `${transformed}\n${exports}\n`;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -301,28 +219,6 @@ function findDeclaredCallbacks(source: string, fileName: string): string[] {
     }
   }
   return Array.from(callbacks);
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-function getEntryExportedValueNames(program: ts.Program, entryFilePath: string): string[] {
-  const sourceFile = program.getSourceFile(entryFilePath);
-  if (!sourceFile) {
-    return [];
-  }
-  const moduleSymbol = program.getTypeChecker().getSymbolAtLocation(sourceFile);
-  if (!moduleSymbol) {
-    return [];
-  }
-
-  const checker = program.getTypeChecker();
-  return checker
-    .getExportsOfModule(moduleSymbol)
-    .filter((symbol) => symbol.name !== "default" && symbol.name !== "export=")
-    .filter((symbol) => {
-      const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-      return (target.flags & ts.SymbolFlags.Value) !== 0;
-    })
-    .map((symbol) => symbol.name);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -363,19 +259,10 @@ function applyMappedReplacements(
 function restoreTicbuildMarkers(
   luaSource: string,
   sourceMap: LuaPreprocessorSourceMap,
-  exportedValueNames: readonly string[],
 ): { source: string; sourceMap: LuaPreprocessorSourceMap } {
   const directiveCall = new RegExp(
     `^([ \\t]*)${preprocessorMarker}\\("([A-Za-z0-9+/=]+)"\\)[ \\t]*$`,
   );
-  // must be able to match 
-  // __TICBUILD_EXPORT_GLOBAL__("TIC", ____exports.TIC);
-  // as well as
-  // __TICBUILD_EXPORT_GLOBAL__("TIC", TIC);
-  const exportCall = new RegExp(
-    `^([ \\t]*)${exportGlobalMarker}\\("([A-Z]+)",[ \\t]*(.+)\\)[ \\t]*$`,
-  );
-
   const lines = splitLinesWithOffsets(luaSource);
   const replacements: TextReplacement[] = [];
   for (const line of lines) {
@@ -389,40 +276,10 @@ function restoreTicbuildMarkers(
       });
       continue;
     }
-    const exportMatch = line.text.match(exportCall);
-    if (exportMatch) {
-      const [, indent, globalName, valueExpression] = exportMatch;
-      replacements.push({
-        start: line.start,
-        end: line.end,
-        text: `${indent}_G["${globalName}"] = ${valueExpression}`,
-      });
-    }
-  }
-
-  // A ticbuild code resource is composed into a cartridge chunk rather than
-  // loaded as a Lua module. Publish the entry module's named value exports as
-  // Lua globals, then remove TSTL's final return so Lua may follow this include.
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].text.trim().length === 0) {
-      continue;
-    }
-    if (lines[i].text.trim() === "return ____entry") {
-      const indent = lines[i].text.match(/^[ \t]*/)?.[0] ?? "";
-      replacements.push({
-        start: lines[i].start,
-        end: lines[i].end,
-        text: exportedValueNames.map((name) => {
-          const luaName = JSON.stringify(name);
-          return `${indent}_G[${luaName}] = ____entry[${luaName}]`;
-        }).join("\n"),
-      });
-    }
-    break;
   }
   const restored = applyMappedReplacements(luaSource, sourceMap, replacements);
   assert(
-    !restored.source.includes(`${preprocessorMarker}(`) && !restored.source.includes(`${exportGlobalMarker}(`),
+    !restored.source.includes(`${preprocessorMarker}(`),
     "TypeScript transpilation left an internal ticbuild marker in emitted Lua",
   );
   return restored;

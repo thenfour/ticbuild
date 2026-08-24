@@ -28,9 +28,10 @@ describe("TypeScript project template", () => {
       path.join(exampleDir, "build", "release-obj", "maincode.01.preprocessed.lua"),
       "utf-8",
     );
-    expect(preprocessedLua).toContain("function ____exports.TIC()");
-    expect(preprocessedLua).toContain('_G["TIC"] = ____exports.TIC');
-    expect(preprocessedLua).toContain('_G["TIC"] = ____entry["TIC"]');
+    expect(preprocessedLua).toContain("function TIC()");
+    expect(preprocessedLua).not.toContain("____exports");
+    expect(preprocessedLua).not.toContain("____entry");
+    expect(preprocessedLua).not.toContain("require(");
     expect(preprocessedLua).not.toContain("__TICBUILD_EXPORT_GLOBAL__");
     expect(preprocessedLua).not.toContain("return ____entry");
     const generatedPath = path.join(exampleDir, "build", "release-obj", "maincode.00.generated.lua");

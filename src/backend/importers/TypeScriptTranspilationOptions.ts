@@ -1,14 +1,8 @@
 import * as ts from "typescript";
 import * as tstl from "typescript-to-lua";
 
-export type TicbuildTypeScriptOutputContract = {
-  entryFilePath: string;
-  bundleFileName: string;
-};
-
 export function createTypeScriptTranspilationOptions(
   configuredOptions: tstl.CompilerOptions,
-  output: TicbuildTypeScriptOutputContract,
 ): tstl.CompilerOptions {
   return {
     target: ts.ScriptTarget.ESNext,
@@ -25,9 +19,15 @@ export function createTypeScriptTranspilationOptions(
     emitDeclarationOnly: false,
     noHeader: true,
     luaTarget: tstl.LuaTarget.Lua53,
-    luaLibImport: tstl.LuaLibImportKind.RequireMinimal,
-    luaBundle: output.bundleFileName,
-    luaBundleEntry: output.entryFilePath,
+    // The ticbuild static linker removes runtime module loading (requires/____exports/et al).
+    // Inline helpers keep Lua library support self-contained until linker-level deduplication
+    // is implemented.
+    luaLibImport: tstl.LuaLibImportKind.Inline,
+    luaBundle: undefined,
+    luaBundleEntry: undefined,
+    // use export to define globals
+    // TIC-80 callbacks (TIC et al) are promoted separately by the static linker.
+    noImplicitGlobalVariables: true,
     // ticbuild uses this to map Lua stack traces back to TypeScript source code.
     sourceMap: true,
     inlineSourceMap: false,

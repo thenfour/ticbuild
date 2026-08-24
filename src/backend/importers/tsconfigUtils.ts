@@ -103,13 +103,14 @@ function reportOwnedProjectOptions(options: tstl.CompilerOptions, configPath: st
   noteIf(options.tsBuildInfoFile !== undefined, "compilerOptions.tsBuildInfoFile");
   noteIf(options.luaTarget !== undefined && options.luaTarget !== tstl.LuaTarget.Lua53, "tstl.luaTarget");
   noteIf(
-    options.luaLibImport !== undefined && options.luaLibImport !== tstl.LuaLibImportKind.RequireMinimal,
+    options.luaLibImport !== undefined && options.luaLibImport !== tstl.LuaLibImportKind.Inline,
     "tstl.luaLibImport",
   );
   noteIf(options.luaBundle !== undefined, "tstl.luaBundle");
   noteIf(options.luaBundleEntry !== undefined, "tstl.luaBundleEntry");
   noteIf(options.noHeader === false, "tstl.noHeader");
   noteIf(options.noImplicitSelf === false, "tstl.noImplicitSelf");
+  noteIf(options.noImplicitGlobalVariables === false, "tstl.noImplicitGlobalVariables");
   noteIf(options.sourceMapTraceback === true, "tstl.sourceMapTraceback");
   noteIf(options.buildMode !== undefined && options.buildMode !== tstl.BuildMode.Default, "tstl.buildMode");
   noteIf(options.extension !== undefined && options.extension !== ".lua", "tstl.extension");
