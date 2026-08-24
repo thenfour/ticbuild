@@ -314,6 +314,10 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
       "path": "main.lua",
       "kind": "LuaCode", // defines the type of importer to handle this.
     },
+    // multiple code imports: they will be made available
+    // in code as --#include "import:otherCodeAsset"
+    // but the code bank can only reference one code asset and multiple code banks
+    // are explicitly not supported (ticbuild manages code banking).
     {
       "name": "twilight_bog_palette", // https://lospec.com/palette-list/twilight-bog
       "kind": "binary", // the imported resource is treated as binary data.
@@ -1271,6 +1275,3 @@ correct signatures and doc comments // enough info to produce the correct index.
 
 ```
 
-# FAQ
-
-gotta be asked questions in order to answer them.
