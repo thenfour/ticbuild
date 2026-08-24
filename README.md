@@ -477,6 +477,11 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
       "variables": {
         "anything": "overridden",
       },
+      "preprocessor": {
+        "defines": {
+          "DEBUG": null, // removes the DEBUG define inherited from the base manifest
+        },
+      },
       "assembly": {
         "lua": {
           "minify": false, // overrides
@@ -922,6 +927,22 @@ Preprocessor defines are used by `#if`, `#ifdef`, `#ifndef`, `defined(...)`, `#u
 They can be overridden during `#include` via ` with { ... }` overrides.
 
 They can be string, number, or boolean.
+
+Build configurations may also set an inherited define to `null` to remove it from
+the effective configuration. This makes both `#ifdef` and `defined(...)` report
+the symbol as undefined:
+
+```jsonc
+"buildConfigurations": {
+  "release": {
+    "preprocessor": {
+      "defines": {
+        "DEBUG": null
+      }
+    }
+  }
+}
+```
 
 - `#if X` asks if the preprocessor variable evaluates to true
 - `#ifdef X` asks if it's defined at all

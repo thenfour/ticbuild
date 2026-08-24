@@ -137,6 +137,42 @@ describe("Manifest Loader", () => {
       expect(result.manifest.assembly.lua?.minification?.lineBehavior).toBe("traceable");
     });
 
+    it("should accept null define overrides in build configurations", () => {
+      const manifestWithUndefine = {
+        ...validManifest,
+        buildConfigurations: {
+          release: {
+            preprocessor: {
+              defines: {
+                DEBUG: null,
+              },
+            },
+          },
+        },
+      };
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(manifestWithUndefine));
+
+      const result = loadManifest("/test/manifest.ticbuild.jsonc");
+
+      expect(result.manifest.buildConfigurations?.release.preprocessor?.defines?.DEBUG).toBeNull();
+    });
+
+    it("should reject null defines in the base preprocessor configuration", () => {
+      const manifestWithInvalidBaseDefine = {
+        ...validManifest,
+        preprocessor: {
+          defines: {
+            DEBUG: null,
+          },
+        },
+      };
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(manifestWithInvalidBaseDefine));
+
+      expect(() => loadManifest("/test/manifest.ticbuild.jsonc")).toThrow(ManifestValidationError);
+    });
+
     it("should handle JSONC with comments", () => {
       const manifestContent = `{
         // This is a comment

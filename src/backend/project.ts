@@ -90,6 +90,13 @@ export class TicbuildProject {
       // we want to avoid handling specific cases; we want generic merge/override behavior.
       deepMergeObjects(resolved, buildConfig);
 
+      // remove defines on null
+      for (const [name, value] of Object.entries(buildConfig.preprocessor?.defines ?? {})) {
+        if (value === null) {
+          delete resolved.preprocessor?.defines?.[name];
+        }
+      }
+
       // that makes it theoretically possible to override the assembly.blocks array too,
       // so we need to canonicalize asset references again after applying the build config.
     }
@@ -168,8 +175,7 @@ export class TicbuildProject {
         if (block.bank !== undefined) {
           if (bank >= nativeBankCount && !extendedCodeBanks) {
             throw new Error(
-              `CODE bank ${bank} requires assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build (stock TIC-80 supports banks 0..${
-                nativeBankCount - 1
+              `CODE bank ${bank} requires assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build (stock TIC-80 supports banks 0..${nativeBankCount - 1
               })`,
             );
           }

@@ -427,9 +427,13 @@
                     },
                     {
                       "type": "boolean"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
-                }
+                },
+                "description": "Preprocessor define overrides. null removes a define inherited from the base manifest"
               }
             }
           },

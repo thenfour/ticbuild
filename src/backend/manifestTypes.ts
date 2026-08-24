@@ -84,6 +84,11 @@ export interface PreprocessorConfig {
   defines?: Record<string, PreprocessorValue>;
 }
 
+export interface BuildPreprocessorConfig {
+  // null removes a define inherited from the base manifest.
+  defines?: Record<string, PreprocessorValue | null>;
+}
+
 export type LuaMinificationConfig = Partial<OptimizationRuleOptions>;
 
 export interface LuaAssemblyConfig {
@@ -100,7 +105,7 @@ export interface AssemblyConfig {
 export interface BuildConfiguration {
   project?: Partial<ProjectConfig>;
   variables?: Record<string, string>;
-  preprocessor?: Partial<PreprocessorConfig>;
+  preprocessor?: BuildPreprocessorConfig;
   assembly?: Partial<AssemblyConfig>;
 }
 
