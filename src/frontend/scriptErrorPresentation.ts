@@ -1,0 +1,69 @@
+import {
+  getScriptErrorFrameLine,
+  ScriptErrorFrame,
+  ScriptErrorPayload,
+} from "../backend/tic80Controller/scriptErrorProtocol";
+import { SourceMapOriginalLocation } from "../backend/sourceMapLookup";
+import {
+  LUA_LANGUAGE_DISPLAY_NAME,
+  LUA_LANGUAGE_ID,
+  LUA_NATIVE_FRAME_SOURCE,
+  LuaFrameWhat,
+} from "../utils/lua/lua_debug";
+
+export interface ScriptErrorSourceMapper {
+  mapFrame(error: ScriptErrorPayload, frameIndex: number): SourceMapOriginalLocation | undefined;
+}
+
+function frameName(frame: ScriptErrorFrame): string {
+  if (frame.name) {
+    return frame.name;
+  }
+
+  // see: lua_getinfo
+  switch (frame.what) {
+    case LuaFrameWhat.MainChunk:
+      return "<main>";
+    case LuaFrameWhat.NativeFunction:
+      return "<native>";
+    default:
+      return "<anonymous>";
+  }
+}
+
+function runtimeFrameLocation(frame: ScriptErrorFrame): string {
+  if (frame.what === LuaFrameWhat.NativeFunction || frame.source === LUA_NATIVE_FRAME_SOURCE) {
+    return LUA_NATIVE_FRAME_SOURCE;
+  }
+  const line = getScriptErrorFrameLine(frame);
+  return line ? `${frame.source}:${line}` : frame.source;
+}
+
+export function renderScriptError(
+  error: ScriptErrorPayload,
+  sourceMapper?: ScriptErrorSourceMapper,
+): string[] {
+  const context = error.phase ? ` during ${error.phase}` : "";
+  const languageName = error.language === LUA_LANGUAGE_ID
+    ? LUA_LANGUAGE_DISPLAY_NAME
+    : error.language;
+  const lines = [`${languageName} ${error.kind} error${context}: ${error.message}`];
+
+  for (let i = 0; i < error.frames.length; i += 1) {
+    const frame = error.frames[i];
+    const mapped = sourceMapper?.mapFrame(error, i);
+    const location = mapped
+      ? `${mapped.filePath}:${mapped.line}:${mapped.column}`
+      : runtimeFrameLocation(frame);
+    lines.push(`  at ${frameName(frame)} (${location})`);
+  }
+
+  if (error.frames.length === 0 && error.traceback) {
+    const tracebackLines = error.traceback.split(/\r?\n/).slice(1).filter((line) => line.length > 0);
+    lines.push(...tracebackLines.map((line) => `  ${line.trimStart()}`));
+  }
+  if (error.framesTruncated) {
+    lines.push("  ... stack trace truncated by TIC-80");
+  }
+  return lines;
+}

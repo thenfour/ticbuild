@@ -30,6 +30,11 @@ type BuildReportSession = {
   dispose: () => void;
 };
 
+
+export function GetFinalLuaArtifactFileLeaf(name: string): string {
+  return `${name}.02.minified.lua`;
+}
+
 function createBuildReportSession(selectedReporter: BuildReporter): BuildReportSession {
   const pendingBuildReportLines: string[] = [];
   let buildReportFilePath: string | undefined;
@@ -232,7 +237,8 @@ async function executeBuildCore(
       const generatedMapPath = `${generatedPath}.map`;
       const preprocessedPath = project.resolvedCore.resolveObjPath(`${identifier}.01.preprocessed.lua`);
       const preprocessedMapPath = `${preprocessedPath}.map`;
-      const minifiedPath = project.resolvedCore.resolveObjPath(`${identifier}.02.minified.lua`);
+      const minifiedPathLeaf = GetFinalLuaArtifactFileLeaf(identifier);
+      const minifiedPath = project.resolvedCore.resolveObjPath(minifiedPathLeaf);
       const minifiedMapPath = `${minifiedPath}.map`;
 
       await writeTextFile(generatedPath, artifacts.inputSource, "utf-8");
@@ -390,12 +396,12 @@ function reportLuaMinification(reporter: BuildReporter, importName: string, repo
           fn.rules.aliasRepeatedExpressions.estimatedBytesOmitted;
         cons.warning(
           `Lua minification local budget reached in ${fn.functionName} ` +
-            `(minifier input line ${fn.sourceLine}): ${fn.peakActiveLocals}/${fn.localLimit} active locals; ` +
-            `omitted ${omittedAliasSummary(fn)} (${omittedBytes} estimated bytes not saved).`,
+          `(minifier input line ${fn.sourceLine}): ${fn.peakActiveLocals}/${fn.localLimit} active locals; ` +
+          `omitted ${omittedAliasSummary(fn)} (${omittedBytes} estimated bytes not saved).`,
         );
         cons.info(
           `  Peak composition: ${fn.existingLocalsAtPeak} existing, ${fn.generatedLocalsAtPeak} generated. ` +
-            `Reduce simultaneously active locals or narrow their scopes to admit more aliases.`,
+          `Reduce simultaneously active locals or narrow their scopes to admit more aliases.`,
         );
       });
     },
@@ -411,8 +417,8 @@ function appendLuaMinificationLog(lines: string[], report: AliasPassReport): voi
       fn.rules.aliasLiterals.estimatedBytesOmitted + fn.rules.aliasRepeatedExpressions.estimatedBytesOmitted;
     lines.push(
       `    ${fn.functionName} (line ${fn.sourceLine}): peak ${fn.peakActiveLocals}/${fn.localLimit}; ` +
-        `existing ${fn.existingLocalsAtPeak}; generated ${fn.generatedLocalsAtPeak}; ` +
-        `omitted ${omittedAliasSummary(fn)}; estimated bytes not saved ${omittedBytes}`,
+      `existing ${fn.existingLocalsAtPeak}; generated ${fn.generatedLocalsAtPeak}; ` +
+      `omitted ${omittedAliasSummary(fn)}; estimated bytes not saved ${omittedBytes}`,
     );
   });
 }

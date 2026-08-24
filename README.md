@@ -488,7 +488,14 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
 When running `ticbuild watch`, ticbuild watches the manifest file and
 project dependencies discovered during build. With the bundled TIC-80, it
 also displays events such as `trace` and `script_error` in
-real time and accepts remoting commands such as `ping`. Request ID prefixes are optional (e.g. `1 ping`).
+real time and accepts remoting commands such as `ping`.
+
+`script_error` events and `script_error_last` responses are made to be more 
+human-readible  than the raw  protocol JSON/encoded value. These specifically
+are rendered as readable stack traces and mapped
+back to authored sources when the running cart matches the build source maps.
+
+Request ID prefixes are optional (e.g. `1 ping`).
 
 Use `project.additionalWatchGlobs` to add extra glob-based watch targets,
 relative to the manifest directory unless you provide an absolute pattern.

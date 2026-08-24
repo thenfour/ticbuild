@@ -6,6 +6,9 @@ export function decodeHexString(input: string): Uint8Array {
   if (trimmed.length % 2 !== 0) {
     throw new Error(`hex decode: input length ${trimmed.length} is not even`);
   }
+  if (!/^[0-9a-fA-F]*$/.test(trimmed)) {
+    throw new Error("hex decode: input contains a non-hexadecimal character");
+  }
 
   const out = new Uint8Array(trimmed.length / 2);
   for (let i = 0; i < trimmed.length; i += 2) {

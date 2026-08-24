@@ -2,9 +2,12 @@ import net from "node:net";
 import * as readline from "node:readline";
 import { DiscoveredTic80Session, listRunningDiscoveredSessions } from "../backend/tic80Controller/discovery";
 import { parseRemotingLine } from "../backend/tic80Controller/remotingProtocol";
+import { decodeScriptErrorPayload } from "../backend/tic80Controller/scriptErrorProtocol";
 import * as cons from "../utils/console";
 import { findOptionValue } from "../utils/tic80/args";
 import { sleep } from "../utils/utils";
+import { renderScriptError, ScriptErrorSourceMapper } from "./scriptErrorPresentation";
+import { tryCreateCurrentProjectScriptErrorSourceMaps } from "./scriptErrorSourceMapper";
 
 export interface TerminalTarget {
     host: string;
@@ -21,6 +24,7 @@ export interface TerminalClientOptions {
     startupAttempts?: number;
     startupRetryDelayMs?: number;
     onStartupRetry?: (error: Error, failedAttempt: number, totalAttempts: number) => void;
+    scriptErrorSourceMapper?: ScriptErrorSourceMapper;
 }
 
 export interface RunningTerminalClient {
@@ -29,10 +33,30 @@ export interface RunningTerminalClient {
 
 const terminalEventTypes = ["trace", "cart_run", "lua_profiler_stopped", "script_error"] as const;
 const terminalSubscriptionRequestId = 2147483647;
+const terminalLastScriptErrorRequestId = 2147483646;
+const terminalMaxAutomaticRequestId = 2147483645;
 const terminalSubscriptionTimeoutMs = 5000;
 
 function hasTerminalRequestId(line: string): boolean {
     return /^-?\d+(?:\s|$)/.test(line);
+}
+
+type PendingTerminalRequest = {
+    command: string;
+};
+
+// -123 ping
+// technically request ids should be positive but no point enforcing that here.
+function parseTerminalRequest(line: string): { id: number; request: PendingTerminalRequest } | undefined {
+    const match = /^(-?\d+)\s+([^\s]+)/.exec(line);
+    if (!match) {
+        return undefined;
+    }
+    const id = Number(match[1]);
+    if (!Number.isInteger(id)) {
+        return undefined;
+    }
+    return { id, request: { command: match[2].toLowerCase() } };
 }
 
 function readLine(rl: readline.Interface, prompt: string): Promise<string | null> {
@@ -229,6 +253,49 @@ function subscribeToTerminalEvents(
     });
 }
 
+function requestLatestScriptError(
+    socket: net.Socket,
+    registerResponseHandler: (handler: (line: string) => boolean) => () => void,
+    registerCloseHandler: (handler: (error?: Error) => void) => () => void,
+    onResponse: (data: string | undefined, rawLine: string) => void,
+): Promise<void> {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeout: NodeJS.Timeout;
+        let unregisterResponseHandler = () => { };
+        let unregisterCloseHandler = () => { };
+        const settle = (callback: () => void) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timeout);
+            unregisterResponseHandler();
+            unregisterCloseHandler();
+            callback();
+        };
+
+        unregisterResponseHandler = registerResponseHandler((line) => {
+            const parsed = parseRemotingLine(line);
+            if (!parsed || parsed.kind !== "response" || parsed.id !== terminalLastScriptErrorRequestId) {
+                return false;
+            }
+            onResponse(parsed.status.toUpperCase() === "OK" ? parsed.data : undefined, line);
+            settle(resolve);
+            return true;
+        });
+        unregisterCloseHandler = registerCloseHandler((error) => {
+            const detail = error ? `: ${error.message}` : "";
+            settle(() => reject(new Error(`Disconnected while requesting the latest TIC-80 script error${detail}`)));
+        });
+        timeout = setTimeout(() => {
+            settle(() => reject(new Error("Timed out requesting the latest TIC-80 script error")));
+        }, terminalSubscriptionTimeoutMs);
+
+        socket.write(`${terminalLastScriptErrorRequestId} script_error_last\n`, "ascii");
+    });
+}
+
 export function parseHostPort(hostPortValue: string): TerminalTarget {
     const value = hostPortValue.trim();
     if (!value) {
@@ -375,6 +442,51 @@ async function runTerminalClientCore(
     });
 
     const terminalOutput = new InteractiveTerminalOutput(rl, output, terminal);
+    const seenScriptErrorIds = new Set<number>();
+
+    // keep track of requests so we can match responses to them. required in order to know
+    // how to format a response. e.g. script_error_last response formatting is defined
+    // by its request, not response, but the formatting is on the response. so mapping needed.
+    const pendingRequests = new Map<number, PendingTerminalRequest[]>();
+    const enqueueRequest = (requestLine: string) => {
+        const parsed = parseTerminalRequest(requestLine);
+        if (!parsed) {
+            return;
+        }
+        const queued = pendingRequests.get(parsed.id) ?? [];
+        queued.push(parsed.request);
+        pendingRequests.set(parsed.id, queued);
+    };
+    const takeRequest = (id: number): PendingTerminalRequest | undefined => {
+        const queued = pendingRequests.get(id);
+        if (!queued || queued.length === 0) {
+            return undefined;
+        }
+        const request = queued.shift();
+        if (queued.length === 0) {
+            pendingRequests.delete(id);
+        }
+        return request;
+    };
+    const presentScriptError = (data: string | undefined, rawLine: string, deduplicate: boolean = true): void => {
+        if (data === undefined) {
+            terminalOutput.writeLine(rawLine);
+            return;
+        }
+        try {
+            const scriptError = decodeScriptErrorPayload(data);
+            if (!scriptError || (deduplicate && seenScriptErrorIds.has(scriptError.errorId))) {
+                return;
+            }
+            seenScriptErrorIds.add(scriptError.errorId);
+            for (const renderedLine of renderScriptError(scriptError, options.scriptErrorSourceMapper)) {
+                terminalOutput.writeLine(renderedLine);
+            }
+        } catch {
+            // The terminal remains a lossless protocol viewer for malformed or newer payloads.
+            terminalOutput.writeLine(rawLine);
+        }
+    };
     let inputHasClosed = false;
     let resolveInputClosed!: () => void;
     const inputClosed = new Promise<void>((resolve) => {
@@ -407,6 +519,18 @@ async function runTerminalClientCore(
         (line) => {
             for (const handler of responseHandlers) {
                 if (handler(line)) {
+                    return;
+                }
+            }
+            const parsed = parseRemotingLine(line);
+            if (parsed?.kind === "event" && parsed.eventType.toLowerCase() === "script_error") {
+                presentScriptError(parsed.data, line);
+                return;
+            }
+            if (parsed?.kind === "response") {
+                const request = takeRequest(parsed.id);
+                if (request?.command === "script_error_last" && parsed.status.toUpperCase() === "OK") {
+                    presentScriptError(parsed.data, line, false);
                     return;
                 }
             }
@@ -448,6 +572,21 @@ async function runTerminalClientCore(
             },
         );
 
+        // upon connect, a script error could have already occurred; this is a  convenient
+        // best-effort way to show it to the user. they probably want to see that.
+        await requestLatestScriptError(
+            socket,
+            (handler) => {
+                responseHandlers.add(handler);
+                return () => responseHandlers.delete(handler);
+            },
+            (handler) => {
+                closeHandlers.add(handler);
+                return () => closeHandlers.delete(handler);
+            },
+            presentScriptError,
+        );
+
         if (disconnected) {
             throw new Error("Disconnected from TIC-80 remoting server");
         }
@@ -460,12 +599,15 @@ async function runTerminalClientCore(
                 terminalOutput.acceptInputLine();
                 const commandLine = line.trim();
                 if (commandLine.length > 0 && !disconnected) {
+                    let requestLine: string;
                     if (hasTerminalRequestId(commandLine)) {
-                        socket.write(`${commandLine}\n`, "ascii");
+                        requestLine = commandLine;
                     } else {
-                        socket.write(`${nextRequestId} ${commandLine}\n`, "ascii");
-                        nextRequestId = nextRequestId === terminalSubscriptionRequestId - 1 ? 1 : nextRequestId + 1;
+                        requestLine = `${nextRequestId} ${commandLine}`;
+                        nextRequestId = nextRequestId === terminalMaxAutomaticRequestId ? 1 : nextRequestId + 1;
                     }
+                    enqueueRequest(requestLine);
+                    socket.write(`${requestLine}\n`, "ascii");
                 }
                 terminalOutput.showPrompt();
             });
@@ -574,7 +716,7 @@ export async function terminalCommand(hostPort?: string): Promise<void> {
     if (!target) {
         return;
     }
-    await runTerminalClient(target);
+    await runTerminalClient(target, { scriptErrorSourceMapper: tryCreateCurrentProjectScriptErrorSourceMaps() });
 }
 
 export async function attachTerminalToLaunchedTic80(
@@ -585,7 +727,7 @@ export async function attachTerminalToLaunchedTic80(
     const explicitPort = findOptionValue(launchArgs, "--remoting-port");
     if (explicitPort) {
         const target = parseHostPort(`127.0.0.1:${explicitPort}`);
-        await runTerminalClient(target);
+        await runTerminalClient(target, { scriptErrorSourceMapper: tryCreateCurrentProjectScriptErrorSourceMaps() });
         return;
     }
 
@@ -594,7 +736,10 @@ export async function attachTerminalToLaunchedTic80(
         const sessions = await listRunningDiscoveredSessions({ projectDir: process.cwd() });
         const launchedSession = sessions.find((session) => !preLaunchSessionKeys.has(session.key));
         if (launchedSession) {
-            await runTerminalClient({ host: launchedSession.host, port: launchedSession.port });
+            await runTerminalClient(
+                { host: launchedSession.host, port: launchedSession.port },
+                { scriptErrorSourceMapper: tryCreateCurrentProjectScriptErrorSourceMaps() },
+            );
             return;
         }
         await sleep(250);

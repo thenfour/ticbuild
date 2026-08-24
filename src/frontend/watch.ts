@@ -8,6 +8,7 @@ import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { ITic80Controller, Tic80RemotingTarget } from "../backend/tic80Controller/tic80Controller";
 import { mergeTic80Args } from "../utils/tic80/args";
 import { RunningTerminalClient, startTerminalClient } from "./terminal";
+import { ScriptErrorSourceMapRegistry } from "./scriptErrorSourceMapper";
 
 export function resolveAdditionalWatchGlob(projectDir: string, glob: string): string {
   const trimmed = glob.trim();
@@ -54,6 +55,7 @@ export async function watchCommand(
   let isShuttingDown = false;
   let terminalSession: RunningTerminalClient | undefined;
   let terminalStarting: Promise<void> | undefined;
+  const scriptErrorSourceMaps = new ScriptErrorSourceMapRegistry();
 
   const cleanup = async (reason?: string) => {
     if (isShuttingDown) {
@@ -89,6 +91,7 @@ export async function watchCommand(
           keepOpenOnInputClose: true,
           startupAttempts: 3,
           startupRetryDelayMs: 100,
+          scriptErrorSourceMapper: scriptErrorSourceMaps,
           onStartupRetry: (error, failedAttempt, totalAttempts) => {
             cons.dim(
               `[remoting] Terminal attach failed (attempt ${failedAttempt}/${totalAttempts}): ${error.message}; retrying...`,
@@ -203,6 +206,14 @@ export async function watchCommand(
       // Get the output file path
       const projectLoadOptions = parseBuildOptions(manifestPath, options);
       const project = TicbuildProject.loadFromManifest(projectLoadOptions);
+      try {
+        // update source maps with newly bult.
+        scriptErrorSourceMaps.replaceFromProject(project);
+      } catch (error) {
+        cons.warning(
+          `Unable to load script-error source maps: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       const outputFilePath = project.resolvedCore.getOutputFilePath();
       const manifestArgs = (project.resolvedCore.manifest.project.launchArgs || []).map((arg) =>
         project.resolvedCore.substituteVariables(arg),

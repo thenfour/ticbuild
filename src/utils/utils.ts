@@ -2,6 +2,50 @@ import { createHash } from "node:crypto";
 
 export const kNullKey = "__NULL__";
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function requiredPropertyTypeError(objectName: string, propertyName: string, expectedType: string): Error {
+  return new Error(`${objectName} field '${propertyName}' must be ${expectedType}`);
+}
+
+export function requireStringProperty(
+  record: Record<string, unknown>,
+  propertyName: string,
+  objectName: string = "object",
+): string {
+  const value = record[propertyName];
+  if (typeof value !== "string") {
+    throw requiredPropertyTypeError(objectName, propertyName, "a string");
+  }
+  return value;
+}
+
+export function requireIntegerProperty(
+  record: Record<string, unknown>,
+  propertyName: string,
+  objectName: string = "object",
+): number {
+  const value = record[propertyName];
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw requiredPropertyTypeError(objectName, propertyName, "a safe integer");
+  }
+  return value;
+}
+
+export function requireBooleanProperty(
+  record: Record<string, unknown>,
+  propertyName: string,
+  objectName: string = "object",
+): boolean {
+  const value = record[propertyName];
+  if (typeof value !== "boolean") {
+    throw requiredPropertyTypeError(objectName, propertyName, "a boolean");
+  }
+  return value;
+}
+
 export function TryParseInt(value: any): number | null {
   if (typeof value === "number" && isFinite(value)) {
     return Math.floor(value);
@@ -122,6 +166,10 @@ export function trimTrailingZeros(data: Uint8Array): Uint8Array {
 export function hashTextSha1(text: string): string {
   const hash = createHash("sha1").update(text, "utf-8").digest("hex");
   return `sha1:${hash}`;
+}
+
+export function hashBytesMd5(bytes: Uint8Array): string {
+  return `md5:${createHash("md5").update(bytes).digest("hex")}`;
 }
 
 
