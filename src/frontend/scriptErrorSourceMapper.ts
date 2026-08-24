@@ -112,6 +112,25 @@ export class ScriptErrorSourceMapRegistry implements ScriptErrorSourceMapper {
       collectPreferredOriginalNames(error, frameIndex),
     ) ?? sourceMap.firstMappingOnGeneratedLine(generatedLine);
   }
+
+  mapVariableName(
+    error: ScriptErrorPayload,
+    frameIndex: number,
+    variableIndex: number,
+  ): string | undefined {
+    const sourceMap = this.sourceMapsByCodeHash.get(error.codeHash);
+    const frame = error.frames[frameIndex];
+    const variable = frame?.variables[variableIndex];
+    if (!sourceMap || !frame || !variable || frame.source !== TIC80_CART_FRAME_SOURCE) {
+      return undefined;
+    }
+
+    const range = frame.lineDefined > 0
+      && frame.lastLineDefined >= frame.lineDefined
+      ? { startLine: frame.lineDefined, endLine: frame.lastLineDefined }
+      : undefined;
+    return sourceMap.findOriginalNameForGeneratedIdentifier(variable.runtimeName, range);
+  }
 }
 
 export function tryCreateCurrentProjectScriptErrorSourceMaps(): ScriptErrorSourceMapRegistry | undefined {

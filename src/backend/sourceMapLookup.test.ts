@@ -11,7 +11,13 @@ describe("source-map lookup", () => {
     try {
       const generatedPath = path.join(tempDir, "output.lua");
       const mapPath = `${generatedPath}.map`;
-      const generated = "TIC(); danger()\n";
+      const generated = [
+        "TIC(); danger()",
+        "local a=1",
+        "print(a)",
+        "function f(a) return a end",
+        "",
+      ].join("\n");
       fs.writeFileSync(generatedPath, generated, "utf-8");
 
       const generator = new SourceMapGenerator({ file: path.basename(generatedPath) });
@@ -27,6 +33,24 @@ describe("source-map lookup", () => {
         source: "../src/main.ts",
         name: "danger",
       });
+      generator.addMapping({
+        generated: { line: 2, column: 6 },
+        original: { line: 12, column: 6 },
+        source: "../src/main.ts",
+        name: "playerPosition",
+      });
+      generator.addMapping({
+        generated: { line: 3, column: 6 },
+        original: { line: 13, column: 2 },
+        source: "../src/main.ts",
+        name: "playerPosition",
+      });
+      generator.addMapping({
+        generated: { line: 4, column: 11 },
+        original: { line: 20, column: 12 },
+        source: "../src/main.ts",
+        name: "amount",
+      });
       const rawMap = JSON.parse(generator.toString()) as Record<string, unknown>;
       rawMap.x_ticbuild = { generated: { hash: hashTextSha1(generated) } };
       fs.writeFileSync(mapPath, JSON.stringify(rawMap), "utf-8");
@@ -36,6 +60,7 @@ describe("source-map lookup", () => {
       expect(lookup.findOriginalNameOnGeneratedLine(1, ["danger"])).toEqual({
         generatedLine: 1,
         generatedColumn: 8,
+        generatedName: "danger",
         filePath: expectedSourcePath,
         line: 9,
         column: 9,
@@ -43,6 +68,15 @@ describe("source-map lookup", () => {
       });
       expect(lookup.findMappingAtOrBefore(1, 7)?.originalName).toBe("TIC");
       expect(lookup.findMappingAtOrBefore(1, 8)?.originalName).toBe("danger");
+      expect(lookup.findOriginalNameForGeneratedIdentifier("a")).toBeUndefined();
+      expect(lookup.findOriginalNameForGeneratedIdentifier(
+        "a",
+        { startLine: 2, endLine: 3 },
+      )).toBe("playerPosition");
+      expect(lookup.findOriginalNameForGeneratedIdentifier(
+        "a",
+        { startLine: 4, endLine: 4 },
+      )).toBe("amount");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

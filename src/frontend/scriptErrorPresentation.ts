@@ -13,6 +13,11 @@ import {
 
 export interface ScriptErrorSourceMapper {
   mapFrame(error: ScriptErrorPayload, frameIndex: number): SourceMapOriginalLocation | undefined;
+  mapVariableName?(
+    error: ScriptErrorPayload,
+    frameIndex: number,
+    variableIndex: number,
+  ): string | undefined;
 }
 
 function frameName(frame: ScriptErrorFrame): string {
@@ -39,7 +44,12 @@ function runtimeFrameLocation(frame: ScriptErrorFrame): string {
   return line ? `${frame.source}:${line}` : frame.source;
 }
 
-function renderFrameVariables(frame: ScriptErrorFrame): string[] {
+function renderFrameVariables(
+  error: ScriptErrorPayload,
+  frameIndex: number,
+  sourceMapper?: ScriptErrorSourceMapper,
+): string[] {
+  const frame = error.frames[frameIndex];
   if (!frame.variablesCaptured) {
     return [];
   }
@@ -48,10 +58,13 @@ function renderFrameVariables(frame: ScriptErrorFrame): string[] {
   }
 
   const lines = ["    variables:"];
-  for (const variable of frame.variables) {
+  for (let variableIndex = 0; variableIndex < frame.variables.length; variableIndex += 1) {
+    const variable = frame.variables[variableIndex];
+    const displayName = sourceMapper?.mapVariableName?.(error, frameIndex, variableIndex)
+      ?? variable.runtimeName;
     const truncation = variable.valueTruncated ? "  (value truncated)" : "";
     lines.push(
-      `      ${variable.scope} ${variable.runtimeName} = ${variable.display}${truncation}`,
+      `      ${variable.scope} ${displayName} = ${variable.display}${truncation}`,
     );
   }
   if (frame.variablesTruncated) {
@@ -77,7 +90,7 @@ export function renderScriptError(
       ? `${mapped.filePath}:${mapped.line}:${mapped.column}`
       : runtimeFrameLocation(frame);
     lines.push(`  at ${frameName(frame)} (${location})`);
-    lines.push(...renderFrameVariables(frame));
+    lines.push(...renderFrameVariables(error, i, sourceMapper));
   }
 
   if (error.frames.length === 0 && error.traceback) {

@@ -71,6 +71,11 @@ describe("script error presentation", () => {
   });
 
   it("renders captured parameters, locals, and upvalues beneath their frame", () => {
+    const mapper: ScriptErrorSourceMapper = {
+      mapFrame: () => undefined,
+      mapVariableName: (_error, _frameIndex, variableIndex) =>
+        ["deltaTime", "inventory", undefined][variableIndex],
+    };
     const error = payload({
       frames: [frame({
         variablesCaptured: true,
@@ -104,11 +109,11 @@ describe("script error presentation", () => {
       })],
     });
 
-    expect(renderScriptError(error).slice(1)).toEqual([
+    expect(renderScriptError(error, mapper).slice(1)).toEqual([
       "  at TIC (cart:7)",
       "    variables:",
-      "      parameter dt = 0.016",
-      "      local items = {1, 2, 3, ...}  (value truncated)",
+      "      parameter deltaTime = 0.016",
+      "      local inventory = {1, 2, 3, ...}  (value truncated)",
       "      upvalue config = {speed=2}",
       "      ... variables truncated by TIC-80",
     ]);

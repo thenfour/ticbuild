@@ -51,7 +51,7 @@ describe("script-error source mapping", () => {
     try {
       const generatedPath = path.join(tempDir, "maincode.02.minified.lua");
       const mapPath = `${generatedPath}.map`;
-      const generated = "TIC(); danger(); amount = amount + 1\n";
+      const generated = "TIC(); danger(); amount = amount + 1; local a=1; local b=a+1\n";
       const generatedBytes = Buffer.from(generated, "utf-8");
       fs.writeFileSync(generatedPath, generatedBytes);
 
@@ -73,6 +73,18 @@ describe("script-error source mapping", () => {
         original: { line: 12, column: 6 },
         source: "src/main.ts",
         name: "amount",
+      });
+      generator.addMapping({
+        generated: { line: 1, column: generated.indexOf("local a") + "local ".length },
+        original: { line: 15, column: 8 },
+        source: "src/main.ts",
+        name: "lut",
+      });
+      generator.addMapping({
+        generated: { line: 1, column: generated.indexOf("local b") + "local ".length },
+        original: { line: 16, column: 8 },
+        source: "src/main.ts",
+        name: "x",
       });
       const rawMap = JSON.parse(generator.toString()) as Record<string, unknown>;
       rawMap.x_ticbuild = { generated: { hash: hashTextSha1(generated) } };
@@ -103,7 +115,37 @@ describe("script-error source mapping", () => {
       const nonLua = registry.mapFrame(payload({ codeHash, language: "javascript" }), 0);
       expect(nonLua).toMatchObject({ line: 3, column: 1, originalName: "TIC" });
 
+      const variableError = payload({
+        codeHash,
+        frames: [frame({
+          lineDefined: 1,
+          lastLineDefined: 1,
+          variablesCaptured: true,
+          variables: [
+            {
+              runtimeName: "a",
+              scope: "local",
+              type: "table",
+              display: "{1,2,3}",
+              index: 1,
+              valueTruncated: false,
+            },
+            {
+              runtimeName: "b",
+              scope: "local",
+              type: "nil",
+              display: "nil",
+              index: 2,
+              valueTruncated: false,
+            },
+          ],
+        })],
+      });
+      expect(registry.mapVariableName(variableError, 0, 0)).toBe("lut");
+      expect(registry.mapVariableName(variableError, 0, 1)).toBe("x");
+
       expect(registry.mapFrame(payload({ codeHash: "md5:stale" }), 0)).toBeUndefined();
+      expect(registry.mapVariableName(payload({ codeHash: "md5:stale" }), 0, 0)).toBeUndefined();
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

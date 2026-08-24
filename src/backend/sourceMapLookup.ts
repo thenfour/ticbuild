@@ -24,6 +24,12 @@ export interface SourceMapOriginalLocation {
 export interface IndexedSourceMapping extends SourceMapOriginalLocation {
   generatedLine: number;
   generatedColumn: number;
+  generatedName?: string;
+}
+
+export interface GeneratedLineRange {
+  startLine: number;
+  endLine: number;
 }
 
 type SerializedSourceMap = RawSourceMap & {
@@ -37,10 +43,12 @@ type SerializedSourceMap = RawSourceMap & {
 export class SourceMapLookup {
   private readonly mappingsByGeneratedLine: ReadonlyMap<number, readonly IndexedSourceMapping[]>;
   private readonly namedMappingsByGeneratedLine: ReadonlyMap<number, ReadonlyMap<string, IndexedSourceMapping>>;
+  private readonly mappingsByGeneratedName: ReadonlyMap<string, readonly IndexedSourceMapping[]>;
 
   constructor(mappings: readonly IndexedSourceMapping[]) {
     const mutableLines = new Map<number, IndexedSourceMapping[]>();
     const mutableNames = new Map<number, Map<string, IndexedSourceMapping>>();
+    const mutableGeneratedNames = new Map<string, IndexedSourceMapping[]>();
     for (const mapping of mappings) {
       const lineMappings = mutableLines.get(mapping.generatedLine) ?? [];
       lineMappings.push(mapping);
@@ -56,9 +64,15 @@ export class SourceMapLookup {
         }
         mutableNames.set(mapping.generatedLine, lineNames);
       }
+      if (mapping.generatedName && mapping.originalName) {
+        const generatedNameMappings = mutableGeneratedNames.get(mapping.generatedName) ?? [];
+        generatedNameMappings.push(mapping);
+        mutableGeneratedNames.set(mapping.generatedName, generatedNameMappings);
+      }
     }
     this.mappingsByGeneratedLine = mutableLines;
     this.namedMappingsByGeneratedLine = mutableNames;
+    this.mappingsByGeneratedName = mutableGeneratedNames;
   }
 
   getMappingsForGeneratedLine(generatedLine: number): readonly IndexedSourceMapping[] {
@@ -100,6 +114,28 @@ export class SourceMapLookup {
   firstMappingOnGeneratedLine(generatedLine: number): IndexedSourceMapping | undefined {
     return this.getMappingsForGeneratedLine(generatedLine)[0];
   }
+
+  findOriginalNameForGeneratedIdentifier(
+    generatedName: string,
+    range?: GeneratedLineRange,
+  ): string | undefined {
+    const mappings = this.mappingsByGeneratedName.get(generatedName) ?? [];
+    const originalNames = new Set<string>();
+    for (const mapping of mappings) {
+      if (range
+        && (mapping.generatedLine < range.startLine || mapping.generatedLine > range.endLine)) {
+        continue;
+      }
+      if (mapping.originalName) {
+        originalNames.add(mapping.originalName);
+      }
+    }
+
+    // A generated spelling can be reused by third-party producers or by
+    // unminified code in unrelated scopes. Only return a name when the selected
+    // frame range makes the authored binding unambiguous.
+    return originalNames.size === 1 ? originalNames.values().next().value : undefined;
+  }
 }
 
 export interface LoadedSourceMapArtifact {
@@ -119,6 +155,20 @@ function readExpectedGeneratedHash(raw: SerializedSourceMap): string | undefined
   return hash;
 }
 
+// read a symbol name from code.
+function readGeneratedIdentifier(
+  generatedLines: readonly string[],
+  oneBasedLine: number,
+  zeroBasedColumn: number,
+): string | undefined {
+  const line = generatedLines[oneBasedLine - 1];
+  if (line === undefined || zeroBasedColumn < 0 || zeroBasedColumn >= line.length) {
+    return undefined;
+  }
+
+  return /^[A-Za-z_][A-Za-z0-9_]*/.exec(line.slice(zeroBasedColumn))?.[0];
+}
+
 export function loadSourceMapArtifact(artifact: SourceMapArtifactPaths): LoadedSourceMapArtifact {
   const generatedBytes = fs.readFileSync(artifact.generatedPath);
   const generatedCode = generatedBytes.toString("utf-8");
@@ -129,6 +179,7 @@ export function loadSourceMapArtifact(artifact: SourceMapArtifactPaths): LoadedS
   }
 
   const mappings: IndexedSourceMapping[] = [];
+  const generatedLines = generatedCode.split(/\r?\n/);
   const consumer = new SourceMapConsumer(raw);
   consumer.eachMapping((mapping) => {
     if (!mapping.source || mapping.originalLine <= 0 || mapping.generatedLine <= 0) {
@@ -141,6 +192,9 @@ export function loadSourceMapArtifact(artifact: SourceMapArtifactPaths): LoadedS
       line: mapping.originalLine,
       column: mapping.originalColumn + 1,
       originalName: mapping.name || undefined,
+      generatedName: mapping.name
+        ? readGeneratedIdentifier(generatedLines, mapping.generatedLine, mapping.generatedColumn)
+        : undefined,
     });
   }, undefined, SourceMapConsumer.GENERATED_ORDER);
 
