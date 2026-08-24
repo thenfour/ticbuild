@@ -640,6 +640,29 @@ build/release-obj/maincode.02.minified.lua.map
 
 These maps lead all the way back to the source origin (TypeScript or Lua).
 
+## Some notable typescript patterns
+
+Typescript gives free inlining of constants via `const enum`:
+
+```ts
+const enum TicDefs {
+  WIDTH = 240,
+  HEIGHT = 136,
+  PALETTE_SIZE = 16,
+  DEMO_TITLE = "Monkeys on a branch",
+}
+...
+const p = y * TicDefs.WIDTH;
+print(`title = ${DEMO_TITLE}`)
+```
+
+transpiles to simply:
+```lua
+local p = y * 240
+print("title = " .. "aoeuaoeu")
+```
+
+So that reduces the need for `//#macro`, though that still exists.
 
 # Lua preprocessor
 
