@@ -100,6 +100,16 @@ function encodedScriptError(errorId: number): string {
             upvalueCount: 0,
             variadic: false,
             tailCall: false,
+            variablesCaptured: true,
+            variablesTruncated: false,
+            variables: [{
+                runtimeName: "b",
+                scope: "local",
+                type: "nil",
+                display: "nil",
+                index: 2,
+                valueTruncated: false,
+            }],
         }],
     };
     return `<${Buffer.from(JSON.stringify(payload), "utf-8").toString("hex")}>`;
@@ -361,6 +371,7 @@ describe("terminal remoting session", () => {
 
         expect(rendered.match(/Lua runtime error during tic/g)).toHaveLength(1);
         expect(rendered).toContain("  at TIC (C:\\project\\src\\main.ts:12:5)\n");
+        expect(rendered).toContain("      local b = nil\n");
         expect(rendered).not.toContain(firstError);
 
         input.write("script_error_last\n");

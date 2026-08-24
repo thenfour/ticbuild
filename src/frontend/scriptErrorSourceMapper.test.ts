@@ -22,6 +22,9 @@ function frame(overrides: Partial<ScriptErrorFrame> = {}): ScriptErrorFrame {
     upvalueCount: 0,
     variadic: false,
     tailCall: false,
+    variablesCaptured: false,
+    variablesTruncated: false,
+    variables: [],
     ...overrides,
   };
 }

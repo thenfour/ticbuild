@@ -39,6 +39,27 @@ function runtimeFrameLocation(frame: ScriptErrorFrame): string {
   return line ? `${frame.source}:${line}` : frame.source;
 }
 
+function renderFrameVariables(frame: ScriptErrorFrame): string[] {
+  if (!frame.variablesCaptured) {
+    return [];
+  }
+  if (frame.variables.length === 0 && !frame.variablesTruncated) {
+    return ["    variables: (none)"];
+  }
+
+  const lines = ["    variables:"];
+  for (const variable of frame.variables) {
+    const truncation = variable.valueTruncated ? "  (value truncated)" : "";
+    lines.push(
+      `      ${variable.scope} ${variable.runtimeName} = ${variable.display}${truncation}`,
+    );
+  }
+  if (frame.variablesTruncated) {
+    lines.push("      ... variables truncated by TIC-80");
+  }
+  return lines;
+}
+
 export function renderScriptError(
   error: ScriptErrorPayload,
   sourceMapper?: ScriptErrorSourceMapper,
@@ -56,6 +77,7 @@ export function renderScriptError(
       ? `${mapped.filePath}:${mapped.line}:${mapped.column}`
       : runtimeFrameLocation(frame);
     lines.push(`  at ${frameName(frame)} (${location})`);
+    lines.push(...renderFrameVariables(frame));
   }
 
   if (error.frames.length === 0 && error.traceback) {

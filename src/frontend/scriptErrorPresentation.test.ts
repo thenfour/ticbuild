@@ -17,6 +17,9 @@ function frame(overrides: Partial<ScriptErrorFrame> = {}): ScriptErrorFrame {
     upvalueCount: 0,
     variadic: false,
     tailCall: false,
+    variablesCaptured: false,
+    variablesTruncated: false,
+    variables: [],
     ...overrides,
   };
 }
@@ -64,6 +67,65 @@ describe("script error presentation", () => {
       "  at <native> ([C])",
       "  at <anonymous> (cart:7)",
       "  at <anonymous> (cart)",
+    ]);
+  });
+
+  it("renders captured parameters, locals, and upvalues beneath their frame", () => {
+    const error = payload({
+      frames: [frame({
+        variablesCaptured: true,
+        variablesTruncated: true,
+        variables: [
+          {
+            runtimeName: "dt",
+            scope: "parameter",
+            type: "number",
+            display: "0.016",
+            index: 1,
+            valueTruncated: false,
+          },
+          {
+            runtimeName: "items",
+            scope: "local",
+            type: "table",
+            display: "{1, 2, 3, ...}",
+            index: 2,
+            valueTruncated: true,
+          },
+          {
+            runtimeName: "config",
+            scope: "upvalue",
+            type: "table",
+            display: "{speed=2}",
+            index: 1,
+            valueTruncated: false,
+          },
+        ],
+      })],
+    });
+
+    expect(renderScriptError(error).slice(1)).toEqual([
+      "  at TIC (cart:7)",
+      "    variables:",
+      "      parameter dt = 0.016",
+      "      local items = {1, 2, 3, ...}  (value truncated)",
+      "      upvalue config = {speed=2}",
+      "      ... variables truncated by TIC-80",
+    ]);
+  });
+
+  it("distinguishes a captured empty frame from one without a snapshot", () => {
+    expect(renderScriptError(payload({
+      frames: [frame({ variablesCaptured: true })],
+    })).slice(1)).toEqual([
+      "  at TIC (cart:7)",
+      "    variables: (none)",
+    ]);
+
+    expect(renderScriptError(payload({
+      frames: [frame({ variablesCaptured: false })],
+    })).slice(1)).toEqual([
+      "  at TIC (cart:7)",
     ]);
   });
 

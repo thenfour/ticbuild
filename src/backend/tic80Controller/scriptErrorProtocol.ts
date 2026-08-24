@@ -8,6 +8,15 @@ import { decodeRemotingJsonBinaryLiteral } from "./remotingProtocol";
 
 export const SCRIPT_ERROR_SCHEMA_VERSION = 1 as const;
 
+export interface ScriptErrorVariable {
+  runtimeName: string;
+  scope: string;
+  type: string;
+  display: string;
+  index: number;
+  valueTruncated: boolean;
+}
+
 export interface ScriptErrorFrame {
   source: string;
   name: string;
@@ -20,6 +29,9 @@ export interface ScriptErrorFrame {
   upvalueCount: number;
   variadic: boolean;
   tailCall: boolean;
+  variablesCaptured: boolean;
+  variablesTruncated: boolean;
+  variables: ScriptErrorVariable[];
 }
 
 export interface ScriptErrorPayload {
@@ -35,11 +47,39 @@ export interface ScriptErrorPayload {
   frames: ScriptErrorFrame[];
 }
 
+function parseVariable(
+  value: unknown,
+  frameIndex: number,
+  variableIndex: number,
+): ScriptErrorVariable {
+  const objectName = `script_error frame[${frameIndex}] variable[${variableIndex}]`;
+  if (!isRecord(value)) {
+    throw new Error(`${objectName} must be an object`);
+  }
+  return {
+    runtimeName: requireStringProperty(value, "runtimeName", objectName),
+    scope: requireStringProperty(value, "scope", objectName),
+    type: requireStringProperty(value, "type", objectName),
+    display: requireStringProperty(value, "display", objectName),
+    index: requireIntegerProperty(value, "index", objectName),
+    valueTruncated: requireBooleanProperty(value, "valueTruncated", objectName),
+  };
+}
+
 function parseFrame(value: unknown, frameIndex: number): ScriptErrorFrame {
   const objectName = `script_error frame[${frameIndex}]`;
   if (!isRecord(value)) {
     throw new Error(`${objectName} must be an object`);
   }
+
+  // variable snapshot payload is not required.
+  const hasVariableSnapshot = value.variablesCaptured !== undefined
+    || value.variablesTruncated !== undefined
+    || value.variables !== undefined;
+  if (hasVariableSnapshot && !Array.isArray(value.variables)) {
+    throw new Error(`${objectName} field 'variables' must be an array`);
+  }
+
   return {
     source: requireStringProperty(value, "source", objectName),
     name: requireStringProperty(value, "name", objectName),
@@ -52,6 +92,16 @@ function parseFrame(value: unknown, frameIndex: number): ScriptErrorFrame {
     upvalueCount: requireIntegerProperty(value, "upvalueCount", objectName),
     variadic: requireBooleanProperty(value, "variadic", objectName),
     tailCall: requireBooleanProperty(value, "tailCall", objectName),
+    variablesCaptured: hasVariableSnapshot
+      ? requireBooleanProperty(value, "variablesCaptured", objectName)
+      : false,
+    variablesTruncated: hasVariableSnapshot
+      ? requireBooleanProperty(value, "variablesTruncated", objectName)
+      : false,
+    variables: hasVariableSnapshot
+      ? (value.variables as unknown[]).map((variable, variableIndex) =>
+        parseVariable(variable, frameIndex, variableIndex))
+      : [],
   };
 }
 
