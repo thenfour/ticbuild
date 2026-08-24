@@ -10,7 +10,7 @@ import { LuaPreprocessorSourceMap, mapPreprocessedOffset, SourceMapBuilder } fro
 import * as luaparse from "luaparse";
 import { hashTextSha1 } from "../utils/utils";
 import { IsImportReference } from "./importUtils";
-import { isLuaDocCommentText, isWhitespaceText } from "../utils/lua/lua_doc";
+import { isLuaDocCommentText, isWhitespaceText, LuaDocInfo, parseLuaDocLines } from "../utils/lua/lua_doc";
 
 type Span = {
     start: number;
@@ -39,24 +39,11 @@ type SymbolInfo = {
     selectionRange: Span;
     scopeId: string;
     visibility: SymbolVisibility;
-    doc?: DocInfo;
+    doc?: LuaDocInfo;
     callable?: {
         isColonMethod: boolean;
         params: string[];
     };
-};
-
-type DocParam = {
-    name: string;
-    type?: string;
-    description?: string;
-};
-
-type DocInfo = {
-    description?: string;
-    params?: DocParam[];
-    returnType?: string;
-    returnDescription?: string;
 };
 
 type SymbolSpan = {
@@ -812,7 +799,7 @@ function addPreprocessorSymbols(
         const span: Span = { start: symbol.offset, length: symbol.name.length };
         const symbolId = makeSymbolId(filePath, span.start, symbol.name);
         const scope = builder.ensureFileScope(filePath);
-        const doc = symbol.docLines ? parseDocLines(symbol.docLines) ?? undefined : undefined;
+        const doc = symbol.docLines ? parseLuaDocLines(symbol.docLines) ?? undefined : undefined;
         const info: SymbolInfo = {
             symbolId,
             name: symbol.name,
@@ -846,7 +833,7 @@ function addPreprocessorSymbols(
 type DocBlock = {
     start: number;
     end: number;
-    doc: DocInfo;
+    doc: LuaDocInfo;
 };
 
 function collectDocBlocks(code: string, comments: luaparse.Comment[]): DocBlock[] {
@@ -868,7 +855,7 @@ function collectDocBlocks(code: string, comments: luaparse.Comment[]): DocBlock[
         if (currentStart === null || currentEnd === null) {
             return;
         }
-        const doc = parseDocLines(currentLines);
+        const doc = parseLuaDocLines(currentLines);
         if (doc) {
             blocks.push({ start: currentStart, end: currentEnd, doc });
         }
@@ -901,7 +888,7 @@ function collectDocBlocks(code: string, comments: luaparse.Comment[]): DocBlock[
     return blocks;
 }
 
-function findDocForSymbol(code: string, blocks: DocBlock[], symbolStart: number): DocInfo | undefined {
+function findDocForSymbol(code: string, blocks: DocBlock[], symbolStart: number): LuaDocInfo | undefined {
     for (let i = blocks.length - 1; i >= 0; i--) {
         const block = blocks[i];
         if (block.end > symbolStart) {
@@ -929,7 +916,7 @@ function isImmediateDocGap(text: string): boolean {
     return true;
 }
 
-function findDocForSymbolFromSource(code: string, symbolStart: number): DocInfo | undefined {
+function findDocForSymbolFromSource(code: string, symbolStart: number): LuaDocInfo | undefined {
     let lineStart = code.lastIndexOf("\n", Math.max(0, symbolStart - 1));
     if (lineStart < 0) {
         lineStart = 0;
@@ -966,103 +953,7 @@ function findDocForSymbolFromSource(code: string, symbolStart: number): DocInfo 
     if (docLines.length === 0) {
         return undefined;
     }
-    return parseDocLines(docLines) ?? undefined;
-}
-
-function parseDocLines(lines: string[]): DocInfo | null {
-    const descriptionLines: string[] = [];
-    const params: DocParam[] = [];
-    let returnType: string | undefined;
-    let returnDescription: string | undefined;
-
-    for (const rawLine of lines) {
-        const cleaned = stripDocPrefix(rawLine);
-        if (!cleaned) {
-            continue;
-        }
-        const tagMatch = cleaned.match(/^@(\w+)\s*(.*)$/);
-        if (!tagMatch) {
-            descriptionLines.push(cleaned);
-            continue;
-        }
-        const tag = tagMatch[1];
-        const rest = tagMatch[2] || "";
-        if (tag === "param") {
-            const parsed = parseParamDoc(rest);
-            if (parsed) {
-                params.push(parsed);
-            }
-        } else if (tag === "return" && returnType === undefined) {
-            const parsed = parseReturnDoc(rest);
-            if (parsed) {
-                returnType = parsed.type;
-                returnDescription = parsed.description;
-            }
-        }
-    }
-
-    const doc: DocInfo = {};
-    if (descriptionLines.length > 0) {
-        doc.description = descriptionLines.join("\n").trim();
-    }
-    if (params.length > 0) {
-        doc.params = params;
-    }
-    if (returnType) {
-        doc.returnType = returnType;
-    }
-    if (returnDescription) {
-        doc.returnDescription = returnDescription;
-    }
-    if (!doc.description && !doc.params && !doc.returnType && !doc.returnDescription) {
-        return null;
-    }
-    return doc;
-}
-
-function stripDocPrefix(line: string): string | null {
-    let text = line.trim();
-    if (text.startsWith("--")) {
-        text = text.slice(2);
-    }
-    text = text.trimStart();
-    text = text.replace(/^\[=+\[/, "").replace(/^\[\[/, "");
-    text = text.replace(/\]=*\]$/, "");
-    text = text.trim();
-    if (!text) {
-        return null;
-    }
-    if (text.startsWith("-")) {
-        text = text.replace(/^-+/, "").trimStart();
-    }
-    return text || null;
-}
-
-function parseParamDoc(rest: string): DocParam | null {
-    const parts = rest.trim().split(/\s+/).filter((part) => part.length > 0);
-    if (parts.length === 0) {
-        return null;
-    }
-    const name = parts.shift() as string;
-    let type: string | undefined;
-    let description: string | undefined;
-    if (parts.length === 1) {
-        type = parts[0];
-    } else if (parts.length > 1) {
-        type = parts[0];
-        description = parts.slice(1).join(" ");
-    }
-    return { name, type, description };
-}
-
-function parseReturnDoc(rest: string): { type: string; description?: string } | null {
-    const parts = rest.trim().split(/\s+/).filter((part) => part.length > 0);
-    if (parts.length === 0) {
-        return null;
-    }
-    const type = parts[0];
-    const description = parts.length > 1 ? parts.slice(1).join(" ") : undefined;
-    return { type, description };
+    return parseLuaDocLines(docLines) ?? undefined;
 }
 
 async function computeFileHashes(filePaths: string[], projectRoot: string): Promise<Map<string, string>> {

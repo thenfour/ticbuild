@@ -547,8 +547,52 @@ const TIC = () => {
 };
 ```
 
-`//--#include "import:luaHelper"` is also accepted, allowing inclusion of Lua code from
-TypeScript land.
+Lua assets declared in the project manifest are available as TypeScript modules.
+
+```jsonc
+{
+  "name": "LuaUtils",
+  "path": "src/luaUtils.lua",
+  "kind": "LuaCode"
+}
+```
+
+and Lua globals with optional LuaDoc annotations:
+
+```lua
+---@param value number
+---@return number
+function Floor(value)
+  return value // 1
+end
+```
+
+TypeScript can import them by manifest name:
+
+```ts
+import { Floor } from "ticbuild-assets/LuaUtils";
+```
+
+ticbuild generates `.ticbuild/declarations/lua-assets.d.ts` before compiling
+TypeScript. Repeated imports include the asset only once (pragma once implicit).
+The import owns that runtime inclusion, so the Lua dependency should not also
+be added as a separate code assembly block.
+
+**NOTE**: Your IDE won't be able to auto-discover the module until it's built.
+So if you have trouble with your IDE not understanding where a symbol can be imported from,
+try building once, and trying again. You shouldn't have to manually type the `import`
+statement.
+
+The generated surface currently includes direct Lua globals (`function Name`,
+`Name = function` / `Name = value`).
+Named and side-effect imports are supported; default and namespace imports
+aren't. Since the runtime surface is Lua's global namespace, ticbuild rejects imported
+Lua assets whose globals collide with each other or with linked TypeScript globals.
+
+`//--#include "import:luaHelper"` remains available, maybe if you want to use the
+`with { BAYER_SIZE = 4, DEBUG = true }` facilities for lexical behavior. But it
+does not provide the typed module contract or linker-level behaviors of
+`ticbuild-assets/...`.
 
 Lua code can also include TypeScript code with `--#include "import:typescriptAsset"`.
 ticbuild statically links all dependent TypeScript modules.

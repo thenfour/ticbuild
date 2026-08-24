@@ -4,6 +4,11 @@ import * as ts from "typescript";
 import * as tstl from "typescript-to-lua";
 import { canonicalizePath, toAbsoluteCanonicalPath } from "../../utils/fileSystem";
 import { LUA_RESERVED_WORDS } from "../../utils/lua/lua_ast";
+import {
+  LuaAssetModuleDefinition,
+  LUA_ASSET_MODULE_PREFIX,
+  parseLuaAssetModuleSpecifier,
+} from "./LuaAssetTypeScriptModules";
 
 export function isTypeScriptImplementationFile(fileName: string): boolean {
   const lower = fileName.toLowerCase();
@@ -39,10 +44,17 @@ type MutableSourceNode = {
 type StaticModule = {
   sourceFile: ts.SourceFile;
   dependencies: StaticModule[];
+  luaAssetDependencies: LuaAssetDependency[];
   // import paths which TSTL would otherwise lower to require(). Keeping
   // these separate allows the linker to distinguish between TSTL's require()
   // and user-authored require() calls.
   linkSpecifiers: ReadonlySet<string>;
+};
+
+type LuaAssetDependency = {
+  importName: string;
+  moduleSpecifier: string;
+  exportedValueNames: readonly string[];
 };
 
 type PrintedStaticModule = {
@@ -74,8 +86,9 @@ export function createTypeScriptStaticLinker(
   entryFilePath: string,
   projectDir: string,
   entryCallbackNames: ReadonlySet<string>,
+  luaAssetModules: ReadonlyMap<string, LuaAssetModuleDefinition>,
 ): TypeScriptStaticLinker {
-  const modules = createStaticModuleOrder(program, compilerHost, entryFilePath, projectDir);
+  const modules = createStaticModuleOrder(program, compilerHost, entryFilePath, projectDir, luaAssetModules);
   validateGlobalExports(program, modules, entryFilePath, entryCallbackNames, projectDir);
 
   const modulesByKey = new Map(
@@ -147,6 +160,7 @@ export function createTypeScriptStaticLinker(
       }
 
       const combined = new SourceNode();
+      const emittedLuaAssets = new Set<string>();
       // Preserve mapped SourceNode children rather than flattening them to text.
       const add = (chunk: string | SourceNode) => {
         // source-map 0.6 accepts SourceNode children at runtime, though its
@@ -154,6 +168,13 @@ export function createTypeScriptStaticLinker(
         (combined.add as unknown as (value: string | SourceNode) => void)(chunk);
       };
       for (const module of modules) {
+        for (const dependency of module.luaAssetDependencies) {
+          if (emittedLuaAssets.has(dependency.importName)) {
+            continue;
+          }
+          emittedLuaAssets.add(dependency.importName);
+          add(`--#include ${JSON.stringify(`import:${dependency.importName}`)}\n`);
+        }
         const printed = printedModules.get(getCanonicalTSPathKey(module.sourceFile.fileName))!;
         add("do\n");
         add(printed.sourceMapNode);
@@ -178,6 +199,7 @@ function createStaticModuleOrder(
   compilerHost: ts.CompilerHost,
   entryFilePath: string,
   projectDir: string,
+  luaAssetModules: ReadonlyMap<string, LuaAssetModuleDefinition>,
 ): StaticModule[] {
   const entryFile = program.getSourceFile(entryFilePath);
   if (!entryFile) {
@@ -191,10 +213,17 @@ function createStaticModuleOrder(
     const key = getCanonicalTSPathKey(sourceFile.fileName);
     let module = modules.get(key);
     if (!module) {
-      module = { sourceFile, dependencies: [], linkSpecifiers: new Set<string>() };
+      module = { sourceFile, dependencies: [], luaAssetDependencies: [], linkSpecifiers: new Set<string>() };
       modules.set(key, module);
-      const collected = collectStaticDependencies(program, compilerHost, sourceFile, projectDir);
+      const collected = collectStaticDependencies(
+        program,
+        compilerHost,
+        sourceFile,
+        projectDir,
+        luaAssetModules,
+      );
       module.linkSpecifiers = collected.linkSpecifiers;
+      module.luaAssetDependencies = collected.luaAssetDependencies;
       module.dependencies = collected.dependencies.map(getModule);
     }
     return module;
@@ -237,8 +266,14 @@ function collectStaticDependencies(
   compilerHost: ts.CompilerHost,
   sourceFile: ts.SourceFile,
   projectDir: string,
-): { dependencies: ts.SourceFile[]; linkSpecifiers: ReadonlySet<string> } {
+  luaAssetModules: ReadonlyMap<string, LuaAssetModuleDefinition>,
+): {
+  dependencies: ts.SourceFile[];
+  luaAssetDependencies: LuaAssetDependency[];
+  linkSpecifiers: ReadonlySet<string>;
+} {
   const dependencies: ts.SourceFile[] = [];
+  const luaAssetDependencies = new Map<string, LuaAssetDependency>();
   const linkSpecifiers = new Set<string>();
 
   // Resolve one runtime edge and classify declaration-only targets as Lua
@@ -248,6 +283,35 @@ function collectStaticDependencies(
       throwStaticLinkError(sourceFile, specifier, `${description} must use a string-literal module path`, projectDir);
     }
     linkSpecifiers.add(specifier.text);
+    const luaAssetName = parseLuaAssetModuleSpecifier(specifier.text);
+    if (specifier.text.startsWith(LUA_ASSET_MODULE_PREFIX)) {
+      if (!luaAssetName) {
+        throwStaticLinkError(
+          sourceFile,
+          specifier,
+          `invalid Lua asset module '${specifier.text}'; expected '${LUA_ASSET_MODULE_PREFIX}<manifest import name>'`,
+          projectDir,
+        );
+      }
+      const definition = luaAssetModules.get(luaAssetName);
+      if (!definition) {
+        throwStaticLinkError(
+          sourceFile,
+          specifier,
+          `'${specifier.text}' does not name a manifest LuaCode asset`,
+          projectDir,
+        );
+      }
+      if (description === "re-export") {
+        throwStaticLinkError(sourceFile, specifier, "re-exporting Lua assets is not supported yet", projectDir);
+      }
+      luaAssetDependencies.set(definition.importName, {
+        importName: definition.importName,
+        moduleSpecifier: definition.moduleSpecifier,
+        exportedValueNames: getModuleValueExportNames(program, specifier),
+      });
+      return;
+    }
     const resolved = ts.resolveModuleName(
       specifier.text,
       sourceFile.fileName,
@@ -344,7 +408,28 @@ function collectStaticDependencies(
       }
     }
   }
-  return { dependencies: distinctModules(dependencies), linkSpecifiers };
+  return {
+    dependencies: distinctModules(dependencies),
+    luaAssetDependencies: Array.from(luaAssetDependencies.values()),
+    linkSpecifiers,
+  };
+}
+
+function getModuleValueExportNames(program: ts.Program, moduleSpecifier: ts.StringLiteralLike): string[] {
+  const checker = program.getTypeChecker();
+  let moduleSymbol = checker.getSymbolAtLocation(moduleSpecifier);
+  if (moduleSymbol?.flags && moduleSymbol.flags & ts.SymbolFlags.Alias) {
+    moduleSymbol = checker.getAliasedSymbol(moduleSymbol);
+  }
+  if (!moduleSymbol) {
+    return [];
+  }
+  return checker.getExportsOfModule(moduleSymbol)
+    .filter((symbol) => {
+      const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+      return (target.flags & ts.SymbolFlags.Value) !== 0;
+    })
+    .map((symbol) => symbol.name);
 }
 
 function distinctModules(modules: readonly ts.SourceFile[]): ts.SourceFile[] {
@@ -412,6 +497,36 @@ function validateGlobalExports(
         `${displayPath(entryFile.fileName, projectDir)} conflicts with an export from ` +
         displayPath(existing.sourceFile.fileName, projectDir),
       );
+    }
+  }
+
+  const luaAssetOwners = new Map<string, string>();
+  for (const module of modules) {
+    for (const dependency of module.luaAssetDependencies) {
+      for (const globalName of dependency.exportedValueNames) {
+        validateLuaGlobalName(globalName, module.sourceFile, projectDir);
+        const typescriptOwner = owners.get(globalName);
+        if (typescriptOwner) {
+          throw new Error(
+            `TypeScript static linking failed: Lua asset '${dependency.importName}' and ` +
+            `${displayPath(typescriptOwner.sourceFile.fileName, projectDir)} both declare Lua global '${globalName}'`,
+          );
+        }
+        if (entryCallbackNames.has(globalName)) {
+          throw new Error(
+            `TypeScript static linking failed: Lua asset '${dependency.importName}' conflicts with ` +
+            `Lua global callback '${globalName}' in ${displayPath(entryFile.fileName, projectDir)}`,
+          );
+        }
+        const existingAsset = luaAssetOwners.get(globalName);
+        if (existingAsset && existingAsset !== dependency.importName) {
+          throw new Error(
+            `TypeScript static linking failed: Lua assets '${existingAsset}' and '${dependency.importName}' ` +
+            `both declare Lua global '${globalName}'`,
+          );
+        }
+        luaAssetOwners.set(globalName, dependency.importName);
+      }
     }
   }
 }

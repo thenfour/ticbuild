@@ -9,6 +9,7 @@ import { TicbuildProjectCore } from "../projectCore";
 import { mapPreprocessedOffsetToLineColumn } from "../sourceMap";
 import { LuaCodeResource } from "./LuaCodeImporter";
 import { TypeScriptCodeResource } from "./TypeScriptCodeImporter";
+import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
 
 function createProject(projectDir: string, imports: Manifest["imports"], defines?: Record<string, boolean>) {
   const manifest: Manifest = {
@@ -526,6 +527,189 @@ describe("TypeScriptCodeResource", () => {
       expect(resource.getPreprocessResult().code).toContain('local fromLua = "included"');
       expect(resource.getDependencyList().map((dependency) => dependency.path)).toContain(
         path.join(projectDir, "helper.lua"),
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("imports a manifest LuaCode asset as a typed TypeScript module", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-module-"));
+    const mainPath = path.join(projectDir, "main.ts");
+    const luaPath = path.join(projectDir, "luaUtils.lua");
+    fs.writeFileSync(
+      luaPath,
+      [
+        "--- Clamps a number to the supplied range.",
+        "---@param value number",
+        "---@param minimum integer",
+        "---@param maximum number",
+        "---@return number",
+        "function Clamp(value, minimum, maximum)",
+        "  return math.min(math.max(value, minimum), maximum)",
+        "end",
+        "LuaVersion = \"one\"",
+        "local function HiddenHelper() end",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      mainPath,
+      [
+        'import { Clamp as clampFromLua, LuaVersion } from "ticbuild-assets/LuaUtils";',
+        "export function TIC(): void {",
+        "  print(clampFromLua(12, 0, 10));",
+        "  print(LuaVersion);",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "LuaUtils", path: "luaUtils.lua", kind: "LuaCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const resource = getTypeScriptResource(resources, "main");
+      const artifacts = resource.getCodeArtifacts(project);
+      const declarationsPath = getLuaAssetDeclarationsPath(projectDir);
+      const declarations = fs.readFileSync(declarationsPath, "utf-8");
+
+      expect(declarations).toContain('declare module "ticbuild-assets/LuaUtils"');
+      expect(declarations).toContain(
+        "export function Clamp(value: number, minimum: number, maximum: number): number;",
+      );
+      expect(declarations).toContain("export const LuaVersion: string;");
+      expect(declarations).not.toContain("HiddenHelper");
+      expect(artifacts.inputSource.match(/--#include "import:LuaUtils"/g)).toHaveLength(1);
+      expect(artifacts.inputSource).not.toContain("require(");
+      expect(artifacts.inputSource).not.toContain("clampFromLua");
+      expect(artifacts.preprocessedSource).toContain("function Clamp(value, minimum, maximum)");
+      expect(artifacts.preprocessedSource).toContain("print(Clamp(12, 0, 10))");
+      expect(artifacts.preprocessedSource.indexOf("function Clamp")).toBeLessThan(
+        artifacts.preprocessedSource.indexOf("function TIC"),
+      );
+      expect(resource.getDependencyList()).toEqual(
+        expect.arrayContaining([{ path: luaPath, reason: "Lua preprocessor dependency" }]),
+      );
+      expect(resource.getDependencyList().map((dependency) => dependency.path)).not.toContain(declarationsPath);
+      const luaLocation = mapPreprocessedOffsetToLineColumn(
+        artifacts.preprocessedSourceMap,
+        artifacts.preprocessedSource.indexOf("function Clamp"),
+        "right",
+      );
+      expect(luaLocation?.file).toBe(luaPath);
+      expect(luaLocation?.line).toBe(6);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes a side-effect Lua asset once across multiple TypeScript modules", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-module-once-"));
+    fs.writeFileSync(path.join(projectDir, "hooks.lua"), "function InstallHooks() end\n", "utf-8");
+    fs.writeFileSync(
+      path.join(projectDir, "helper.ts"),
+      ['import "ticbuild-assets/Hooks";', "export const helper = 1;"].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import "ticbuild-assets/Hooks";',
+        'import { helper } from "./helper";',
+        "export function TIC(): void { print(helper); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "Hooks", path: "hooks.lua", kind: "LuaCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
+      expect(artifacts.inputSource.match(/--#include "import:Hooks"/g)).toHaveLength(1);
+      expect(artifacts.preprocessedSource.match(/function InstallHooks/g)).toHaveLength(1);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("typechecks TypeScript calls against generated LuaDoc signatures on the first build", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-module-types-"));
+    fs.writeFileSync(
+      path.join(projectDir, "math.lua"),
+      ["---@param value number", "function Double(value)", "  return value * 2", "end"].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { Double } from "ticbuild-assets/Math";',
+        'export function TIC(): void { print(Double("wrong")); }',
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "Math", path: "math.lua", kind: "LuaCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(
+        /main\.ts:2:\d+ - Argument of type 'string' is not assignable to parameter of type 'number'/,
+      );
+      expect(fs.existsSync(getLuaAssetDeclarationsPath(projectDir))).toBe(true);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects first-class imports which do not name a manifest LuaCode asset", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-module-missing-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      ['import "ticbuild-assets/Missing";', "export function TIC(): void {}"].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(
+        /ticbuild-assets\/Missing.*does not name a manifest LuaCode asset/,
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects colliding globals from two imported Lua assets", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-module-collision-"));
+    fs.writeFileSync(path.join(projectDir, "left.lua"), "function SharedLuaGlobal() end\n", "utf-8");
+    fs.writeFileSync(path.join(projectDir, "right.lua"), "function SharedLuaGlobal() end\n", "utf-8");
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { SharedLuaGlobal as left } from "ticbuild-assets/Left";',
+        'import { SharedLuaGlobal as right } from "ticbuild-assets/Right";',
+        "export function TIC(): void { left(); right(); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "Left", path: "left.lua", kind: "LuaCode" },
+      { name: "Right", path: "right.lua", kind: "LuaCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(
+        /Lua assets 'Left' and 'Right' both declare Lua global 'SharedLuaGlobal'/,
       );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });

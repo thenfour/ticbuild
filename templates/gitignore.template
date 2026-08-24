@@ -11,6 +11,7 @@
 
 # generated
 build/
+.ticbuild/declarations/
 
 # ephemeral remoting discovery
 .ticbuild/remoting/sessions

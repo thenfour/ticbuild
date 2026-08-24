@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import * as ts from "typescript";
 import * as tstl from "typescript-to-lua";
-import { canonicalizePath, toAbsoluteCanonicalPath } from "../../utils/fileSystem";
+import { canonicalizePath, fileExists, toAbsoluteCanonicalPath } from "../../utils/fileSystem";
 import { getPathRelativeToPackageRoot } from "../../utils/templates";
 import * as cons from "../../utils/console";
 import { ExternalDependency, GeneratedLuaSource } from "../ImportedResourceTypes";
@@ -13,6 +13,10 @@ import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
 import { assert } from "../../utils/errorHandling";
 import { LuaPreprocessorSourceMap, SourceMapBuilder } from "../sourceMap";
 import { importSourceMapV3, KnownSourceFile } from "../sourceMapV3";
+import {
+  createLuaAssetModuleCatalog,
+  getLuaAssetDeclarationsPath,
+} from "./LuaAssetTypeScriptModules";
 
 const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const tic80CallbackNames = new Set(["TIC", "BOOT", "BDR", "SCN", "OVR", "MENU"]);
@@ -47,10 +51,17 @@ export function transpileTypeScriptToLua(
   const builtinsPath = canonicalizePath(getPathRelativeToPackageRoot("tic80.d.ts"));
   const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
   const options = createTypeScriptTranspilationOptions(configuredProject.options);
+  const luaAssetDeclarationsPath = getLuaAssetDeclarationsPath(project.projectDir);
+  const generatedDeclarationRoots = fileExists(luaAssetDeclarationsPath) ? [luaAssetDeclarationsPath] : [];
 
   const compilerHost = createCompilerHost(options, entryFilePath, entrySource);
   const program = ts.createProgram(
-    distinctTSPaths([entryFilePath, builtinsPath, ...configuredProject.declarationRootPaths]),
+    distinctTSPaths([
+      entryFilePath,
+      builtinsPath,
+      ...configuredProject.declarationRootPaths,
+      ...generatedDeclarationRoots,
+    ]),
     options,
     compilerHost,
   );
@@ -60,6 +71,7 @@ export function transpileTypeScriptToLua(
     entryFilePath,
     project.projectDir,
     new Set(findDeclaredCallbacks(entrySource, entryFilePath)),
+    createLuaAssetModuleCatalog(project),
   );
   const emitReadDependencies = new Set<string>();
   const emitHost: tstl.EmitHost = {
@@ -107,6 +119,7 @@ export function transpileTypeScriptToLua(
     emitReadDependencies,
     project.projectDir,
     configuredProject.configDependencies,
+    luaAssetDeclarationsPath,
   );
   return {
     source: restored.source,
@@ -292,19 +305,29 @@ function collectDependencies(
   emitReadDependencies: Set<string>,
   projectDir: string,
   configDependencies: readonly string[],
+  generatedDeclarationsPath: string,
 ): ExternalDependency[] {
   const dependencies = new Map<string, string>();
   const canonicalBuiltinsPath = getCanonicalTSPathKey(builtinsPath);
+  const canonicalGeneratedDeclarationsPath = getCanonicalTSPathKey(generatedDeclarationsPath);
   for (const sourceFile of program.getSourceFiles()) {
     if (!program.isSourceFileDefaultLibrary(sourceFile)) {
       const dependencyPath = toAbsoluteCanonicalPath(sourceFile.fileName, projectDir);
-      if (getCanonicalTSPathKey(dependencyPath) !== canonicalBuiltinsPath && !isNodeModulesPath(dependencyPath)) {
+      const dependencyKey = getCanonicalTSPathKey(dependencyPath);
+      if (
+        dependencyKey !== canonicalBuiltinsPath &&
+        dependencyKey !== canonicalGeneratedDeclarationsPath &&
+        !isNodeModulesPath(dependencyPath)
+      ) {
         dependencies.set(dependencyPath, "TypeScript compiler dependency");
       }
     }
   }
   for (const dependencyPath of emitReadDependencies) {
-    if (!isNodeModulesPath(dependencyPath)) {
+    if (
+      getCanonicalTSPathKey(dependencyPath) !== canonicalGeneratedDeclarationsPath &&
+      !isNodeModulesPath(dependencyPath)
+    ) {
       dependencies.set(dependencyPath, "TypeScript compiler dependency");
     }
   }

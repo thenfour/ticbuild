@@ -5,6 +5,7 @@ import { ImportedResourceBase, ResourceManager } from "./ImportedResourceTypes";
 import { importLuaCode } from "./importers/LuaCodeImporter";
 import { CodeResource } from "./importers/CodeResource";
 import { importTypeScriptCode } from "./importers/TypeScriptCodeImporter";
+import { prepareLuaAssetTypeScriptDeclarations } from "./importers/LuaAssetTypeScriptModules";
 import { importBinaryResource } from "./importers/binaryResourceImporter";
 import { importTextResource } from "./importers/textResourceImporter";
 import { importTic80Cart } from "./importers/tic80CartImporter";
@@ -60,6 +61,11 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
   }
 
   const resourceManager = new ResourceManager(items);
+
+  // TypeScript needs to see Lua module defs on the first build. Build
+  // their declarations after all raw resources exist, but before any code
+  // resource starts the language-specific generation pipeline.
+  await prepareLuaAssetTypeScriptDeclarations(project, resourceManager);
 
   // code resources may have a processing step to be done here to generate its lua output.
   // (e.g. typescript transpilation)
