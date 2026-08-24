@@ -116,6 +116,27 @@ describe("Manifest Loader", () => {
       expect(result.manifest.imports[0].typescript?.tsconfig).toBe("tsconfig.json");
     });
 
+    it("should accept traceable Lua printer configuration", () => {
+      const traceableManifest = {
+        ...validManifest,
+        assembly: {
+          ...validManifest.assembly,
+          lua: {
+            minify: true,
+            minification: {
+              lineBehavior: "traceable",
+            },
+          },
+        },
+      };
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(traceableManifest));
+
+      const result = loadManifest("/test/manifest.ticbuild.jsonc");
+
+      expect(result.manifest.assembly.lua?.minification?.lineBehavior).toBe("traceable");
+    });
+
     it("should handle JSONC with comments", () => {
       const manifestContent = `{
         // This is a comment

@@ -22,20 +22,37 @@ function options(overrides: Partial<OptimizationRuleOptions> = {}): Optimization
 }
 
 describe("Lua optimizer source mapping", () => {
-  it.each(["pretty", "tight", "single-line-blocks"] as const)(
+  it.each(["pretty", "tight", "single-line-blocks", "traceable"] as const)(
     "retains the authored name and position for a renamed local in %s mode",
     (lineBehavior) => {
       const input = "local playerPosition=time()\nprint(playerPosition)";
       const result = processLuaWithReport(input, options({ renameLocalVariables: true, lineBehavior }));
-      const renamedOffset = result.code.indexOf("local a") + "local ".length;
+      const renamedOffset = lineBehavior === "traceable"
+        ? result.code.indexOf("\na\n") + 1
+        : result.code.indexOf("local a") + "local ".length;
 
-      expect(result.code).toContain("local a=time()");
+      if (lineBehavior === "traceable") {
+        expect(result.code).toContain("local\na\n=\ntime\n(\n)");
+      } else {
+        expect(result.code).toContain("local a=time()");
+      }
       expect(mapLuaTransformOffset(result.transformMap, renamedOffset, "right")).toEqual({
         offset: input.indexOf("playerPosition"),
         originalName: "playerPosition",
       });
     },
   );
+
+  it("maps a traceable operator line to its authored expression", () => {
+    const input = "local x=lut[9]\npoke(x+1,42)";
+    const result = processLuaWithReport(input, options({ lineBehavior: "traceable" }));
+    const operatorOffset = result.code.indexOf("\n+\n") + 1;
+
+    expect(operatorOffset).toBeGreaterThan(0);
+    expect(mapLuaTransformOffset(result.transformMap, operatorOffset, "right")?.offset).toBe(
+      input.indexOf("x+1"),
+    );
+  });
 
   it("anchors a folded literal to the expression that produced it", () => {
     const input = "local result=(1+2)*3\nprint(result)";
@@ -71,20 +88,24 @@ describe("Lua optimizer source mapping", () => {
     });
   });
 
-  it("maps reinserted minification-off blocks line by line", () => {
-    const input = [
-      "-- MINIFICATION OFF",
-      "local keepFormatting = 1",
-      "print(keepFormatting)",
-      "-- MINIFICATION ON",
-      "print('after')",
-    ].join("\n");
-    const result = processLuaWithReport(input, options());
-    const restoredOffset = result.code.indexOf("print(keepFormatting)");
+  it.each(["tight", "traceable"] as const)(
+    "maps reinserted minification-off blocks line by line in %s mode",
+    (lineBehavior) => {
+      const input = [
+        "-- MINIFICATION OFF",
+        "local keepFormatting = 1",
+        "print(keepFormatting)",
+        "-- MINIFICATION ON",
+        "print('after')",
+      ].join("\n");
+      const result = processLuaWithReport(input, options({ lineBehavior }));
+      const restoredOffset = result.code.indexOf("print(keepFormatting)");
 
-    expect(restoredOffset).toBeGreaterThanOrEqual(0);
-    expect(mapLuaTransformOffset(result.transformMap, restoredOffset, "right")?.offset).toBe(
-      input.indexOf("print(keepFormatting)"),
-    );
-  });
+      expect(restoredOffset).toBeGreaterThanOrEqual(0);
+      expect(result.code).not.toContain("__SOMATIC_DISABLED_MINIFICATION_BLOCK_");
+      expect(mapLuaTransformOffset(result.transformMap, restoredOffset, "right")?.offset).toBe(
+        input.indexOf("print(keepFormatting)"),
+      );
+    },
+  );
 });

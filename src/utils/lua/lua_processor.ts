@@ -23,13 +23,16 @@ import {
   LuaTransformMapBuilder,
 } from "./lua_transform_map";
 
+export type LuaLineBehavior = "pretty" | "tight" | "single-line-blocks" | "traceable";
+
 export type OptimizationRuleOptions = {
   stripComments: boolean; //
   //stripDebugBlocks: boolean; //
   maxIndentLevel: number; // limits indentation to N levels; beyond that, everything is flattened
   // Line formatting behavior: pretty preserves newlines, tight packs lines up to maxLineLength,
-  // single-line-blocks packs only when an entire block fits on one line.
-  lineBehavior: "pretty" | "tight" | "single-line-blocks";
+  // single-line-blocks packs only when an entire block fits on one line
+  // traceable emits one token per line so Lua's line-only runtime errors identify the narrowest useful syntax.
+  lineBehavior: LuaLineBehavior;
   maxLineLength: number;
   renameLocalVariables: boolean;
   aliasRepeatedExpressions: boolean;
@@ -162,6 +165,10 @@ export class LuaPrinter {
   print(chunk: luaparse.Chunk): string {
     const mode = this.options.lineBehavior || "pretty";
 
+    if (mode === "traceable") {
+      return this.printTraceableMode(chunk);
+    }
+
     // For tight mode, use the token-stream approach
     if (mode === "tight") {
       return this.printTightMode(chunk);
@@ -174,6 +181,62 @@ export class LuaPrinter {
     this.printBlock(chunk.body);
     if (this.currentLine.length > 0) this.flushLine();
     return this.buf.join("");
+  }
+
+  // ===== TRACEABLE MODE: one lexical token per generated line =====
+  //
+  // Lua 5.3 records binary/unary bytecode against the operator token's line and
+  // function calls against the opening argument token's line. Giving every
+  // token a line of its own therefore lets a line-only runtime location select
+  // a narrowly mapped AST region without changing the Lua token stream.
+  //
+  // Generate canonical pretty output first instead of maintaining a second AST
+  // serializer. Re-lexing that valid output preserves literal spellings and
+  // comments while replacing only insignificant whitespace. maxLineLength and
+  // maxIndentLevel intentionally do not apply in this diagnostic mode.
+  private printTraceableMode(chunk: luaparse.Chunk): string {
+    const canonicalPrinter = new LuaPrinter(
+      { ...this.options, lineBehavior: "pretty" },
+      this.blockComments,
+    );
+    const canonical = canonicalPrinter.print(chunk);
+    if (canonical.length === 0) {
+      return "";
+    }
+
+    const parsed = luaparse.parse(canonical, {
+      luaVersion: "5.3",
+      comments: true,
+      locations: false,
+      ranges: true,
+    });
+    const ranges: Array<[number, number]> = [];
+
+    const lexer = luaparse.parse({
+      wait: true,
+      luaVersion: "5.3",
+      comments: false,
+      locations: false,
+      ranges: true,
+    });
+    lexer.write(canonical);
+    while (true) {
+      const token = lexer.lex();
+      if (token.range[0] === token.range[1]) {
+        break;
+      }
+      ranges.push(token.range);
+    }
+
+    for (const comment of parsed.comments ?? []) {
+      const range = (comment as luaparse.Comment & { range?: [number, number] }).range;
+      if (range && range[1] > range[0]) {
+        ranges.push(range);
+      }
+    }
+
+    ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    return ranges.map(([begin, end]) => canonical.slice(begin, end)).join("\n") + "\n";
   }
 
   // ===== TIGHT MODE: Token-stream based packing =====
@@ -1531,7 +1594,16 @@ function reinsertDisableMinificationBlocksWithMap(
   }
 
   const replacements = blocks.flatMap((block) => {
-    const pattern = new RegExp(`[\\t ]*${escapeRegExp(block.placeholder)}[\\t ]*`, "g");
+    const placeholderIdentifier = block.placeholder.endsWith("()")
+      ? block.placeholder.slice(0, -2)
+      : null;
+    const placeholderPattern = placeholderIdentifier
+      // Traceable output puts the call's identifier and parentheses on separate
+      // lines. They remain the same token sequence and must still be replaced as
+      // one placeholder statement.
+      ? `${escapeRegExp(placeholderIdentifier)}\\s*\\(\\s*\\)`
+      : escapeRegExp(block.placeholder);
+    const pattern = new RegExp(`[\\t ]*${placeholderPattern}[\\t ]*`, "g");
     const match = pattern.exec(source);
     return match
       ? [{ start: match.index, end: match.index + match[0].length, block }]

@@ -232,7 +232,8 @@
                   "enum": [
                     "pretty",
                     "tight",
-                    "single-line-blocks"
+                    "single-line-blocks",
+                    "traceable"
                   ]
                 },
                 "maxLineLength": {

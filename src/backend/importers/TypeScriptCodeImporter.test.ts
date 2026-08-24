@@ -116,6 +116,47 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
+  it("maps a traceable generated operator line to the authored TypeScript expression", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-traceable-"));
+    const mainPath = path.join(projectDir, "main.ts");
+    fs.writeFileSync(
+      mainPath,
+      [
+        "export function TIC(): void {",
+        "  const lut = [1, 2, 3];",
+        "  const x = lut[8];",
+        "  poke(x + 1, 42);",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(
+      projectDir,
+      [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }],
+    );
+    project.manifest.assembly.lua = {
+      minify: true,
+      minification: { lineBehavior: "traceable" },
+    };
+
+    try {
+      const resources = await loadAllImports(project);
+      const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
+      const operatorOffset = artifacts.minifiedSource.indexOf("\n+\n") + 1;
+      const mapped = mapPreprocessedOffsetToLineColumn(
+        artifacts.minifiedSourceMap,
+        operatorOffset,
+        "right",
+      );
+
+      expect(operatorOffset).toBeGreaterThan(0);
+      expect(artifacts.minifiedSource.slice(operatorOffset, operatorOffset + 1)).toBe("+");
+      expect(mapped).toMatchObject({ file: mainPath, line: 4, column: 7 });
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses exports as direct globals while keeping non-exported module state local", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-static-scope-"));
     fs.writeFileSync(

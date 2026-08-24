@@ -26,6 +26,59 @@ describe("Lua base language support", () => {
   });
 });
 
+describe("Lua traceable printer", () => {
+  const traceableOptions: OptimizationRuleOptions = {
+    stripComments: false,
+    maxIndentLevel: 1,
+    lineBehavior: "traceable",
+    maxLineLength: 180,
+    renameLocalVariables: false,
+    aliasRepeatedExpressions: false,
+    aliasLiterals: false,
+    packLocalDeclarations: false,
+    simplifyExpressions: false,
+    removeUnusedLocals: false,
+    removeUnusedFunctions: false,
+    functionNamesToKeep: [],
+    renameTableFields: false,
+    tableEntryKeysToRename: [],
+  };
+
+  it("emits every lexical token on a separate line while preserving comments", () => {
+    const input = [
+      "-- keep this",
+      "function TIC()",
+      "  local x=lut[9]",
+      "  poke(x+1,42)",
+      "end",
+    ].join("\n");
+
+    expect(processLua(input, traceableOptions).trimEnd().split("\n")).toEqual([
+      "-- keep this",
+      "function",
+      "TIC",
+      "(",
+      ")",
+      "local",
+      "x",
+      "=",
+      "lut",
+      "[",
+      "9",
+      "]",
+      "poke",
+      "(",
+      "x",
+      "+",
+      "1",
+      ",",
+      "42",
+      ")",
+      "end",
+    ]);
+  });
+});
+
 describe("Lua printer numeric literal formatting with simplifyExpressions", () => {
   it("should keep leading zero after string concatenation", () => {
     const options: OptimizationRuleOptions = {
