@@ -18,6 +18,19 @@ const options: OptimizationRuleOptions = {
 };
 
 describe("lexically scoped generated local names", () => {
+  it("uses the full first-character alphabet before longer local names", () => {
+    const originalNames = Array.from({ length: 54 }, (_, index) => `originalName${index}`);
+    const output = processLua(`local ${originalNames.join(",")}`, options).trim();
+    const expectedNames = [
+      ..."abcdefghijklmnopqrstuvwxyz",
+      ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "_",
+      "aa",
+    ];
+
+    expect(output).toBe(`local ${expectedNames.join(",")}`);
+  });
+
   it("reuses names in sibling blocks", () => {
     const input = `
 do

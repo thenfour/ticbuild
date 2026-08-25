@@ -1,19 +1,33 @@
 import * as luaparse from "luaparse";
 import { isIdentifier, LUA_RESERVED_WORDS, walkAST } from "./lua_ast";
 
-const LUA_GENERATED_SYMBOL_ALPHABET = "abcdefghijklmnopqrstuvwxyz";
+const LUA_IDENTIFIER_FIRST_CHARACTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_";
+const LUA_IDENTIFIER_CONTINUATION_CHARACTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
 
 export function generateLuaSymbolName(index: number, prefix = ""): string {
   if (!Number.isSafeInteger(index) || index < 0) {
     throw new RangeError(`Lua symbol index must be a non-negative safe integer; received ${index}`);
   }
 
-  let suffix = "";
+  const firstCharacters = prefix ? LUA_IDENTIFIER_CONTINUATION_CHARACTERS : LUA_IDENTIFIER_FIRST_CHARACTERS;
+  const continuationRadix = LUA_IDENTIFIER_CONTINUATION_CHARACTERS.length;
   let remaining = index;
-  do {
-    suffix = LUA_GENERATED_SYMBOL_ALPHABET[remaining % LUA_GENERATED_SYMBOL_ALPHABET.length] + suffix;
-    remaining = Math.floor(remaining / LUA_GENERATED_SYMBOL_ALPHABET.length) - 1;
-  } while (remaining >= 0);
+  let suffixLength = 1;
+  let namesAtLength = firstCharacters.length;
+  while (remaining >= namesAtLength) {
+    remaining -= namesAtLength;
+    namesAtLength *= continuationRadix;
+    suffixLength++;
+  }
+
+  let placeValue = namesAtLength / firstCharacters.length;
+  let suffix = firstCharacters[Math.floor(remaining / placeValue)];
+  remaining %= placeValue;
+  for (let position = 1; position < suffixLength; position++) {
+    placeValue /= continuationRadix;
+    suffix += LUA_IDENTIFIER_CONTINUATION_CHARACTERS[Math.floor(remaining / placeValue)];
+    remaining %= placeValue;
+  }
   return prefix + suffix;
 }
 
