@@ -59,7 +59,6 @@ type PreprocessorState = {
   dependencies: Set<string>;
   pragmaOnceKeys: Set<string>;
   includeStack: string[];
-  macros: Map<string, MacroDefinition>;
   macroSymbols: PreprocessorSymbol[];
   minifyAllowedGlobalNames: string[];
   resolveCodeImport?: LuaCodeImportResolver;
@@ -76,6 +75,13 @@ type MacroDefinition = {
   body: string;
   sourceFile: string;
   lineNumber: number;
+};
+
+type MacroDefinitionEvent = {
+  // Offset in the flattened ProcessResult.code where this definition becomes active.
+  // Events stay in source order so definitions at the same offset resolve last-one-wins.
+  offset: number;
+  definition: MacroDefinition;
 };
 
 type ConditionFrame = {
@@ -97,7 +103,6 @@ export async function preprocessLuaCode(
     dependencies: new Set<string>(),
     pragmaOnceKeys: new Set<string>(),
     includeStack: [],
-    macros: new Map<string, MacroDefinition>(),
     macroSymbols: [],
     minifyAllowedGlobalNames: [],
     resolveCodeImport: options.resolveCodeImport,
@@ -107,7 +112,7 @@ export async function preprocessLuaCode(
   const inputSourceMap = options.sourceMap ?? createIdentitySourceMap(source, filePath);
   assertSourceMapMatchesSource(inputSourceMap, source);
   const rawResult = await processSource(project, source, inputSourceMap, filePath, includeKey, state, {});
-  const expandedResult = expandMacros(project, rawResult, state.macros, filePath);
+  const expandedResult = expandMacros(project, rawResult, filePath);
   const finalResult = await expandPreprocessorCalls(project, expandedResult, filePath, state);
 
   return {
@@ -135,6 +140,7 @@ function getManifestPreprocessorDefines(project: TicbuildProjectCore): Record<st
 type ProcessResult = {
   code: string;
   map: SourceMapBuilder;
+  macroDefinitions: MacroDefinitionEvent[];
 };
 
 async function processSource(
@@ -148,7 +154,7 @@ async function processSource(
   trackDependency: boolean = true,
 ): Promise<ProcessResult> {
   if (state.pragmaOnceKeys.has(includeKey)) {
-    return { code: "", map: new SourceMapBuilder() };
+    return { code: "", map: new SourceMapBuilder(), macroDefinitions: [] };
   }
   if (state.includeStack.includes(includeKey)) {
     const cycle = [...state.includeStack, includeKey].join(" -> ");
@@ -170,6 +176,7 @@ async function processSource(
 
   const conditionalStack: ConditionFrame[] = [];
   const builder = new SourceMapBuilder();
+  const macroDefinitions: MacroDefinitionEvent[] = [];
   let output = "";
   let lastEmittedOrigin: { file: string; offset: number } | null = null;
   let pendingMinifyAllowRename: PendingMinifyAllowRename | null = null;
@@ -230,12 +237,15 @@ async function processSource(
         const docLines = collectDocCommentAbove(lineTexts, i);
         if (macroHeader.inlineBody !== undefined) {
           if (isActive()) {
-            state.macros.set(macroHeader.name, {
-              name: macroHeader.name,
-              params: macroHeader.params,
-              body: macroHeader.inlineBody,
-              sourceFile: authoredFilePath,
-              lineNumber: authoredLineNumber,
+            macroDefinitions.push({
+              offset: output.length,
+              definition: {
+                name: macroHeader.name,
+                params: macroHeader.params,
+                body: macroHeader.inlineBody,
+                sourceFile: authoredFilePath,
+                lineNumber: authoredLineNumber,
+              },
             });
             state.macroSymbols.push({
               name: macroHeader.name,
@@ -253,12 +263,15 @@ async function processSource(
         i = bodyResult.endIndex;
         if (isActive()) {
           const strippedBody = stripLuaCommentsPreserveNewlines(bodyResult.body);
-          state.macros.set(macroHeader.name, {
-            name: macroHeader.name,
-            params: macroHeader.params,
-            body: strippedBody,
-            sourceFile: authoredFilePath,
-            lineNumber: authoredLineNumber,
+          macroDefinitions.push({
+            offset: output.length,
+            definition: {
+              name: macroHeader.name,
+              params: macroHeader.params,
+              body: strippedBody,
+              sourceFile: authoredFilePath,
+              lineNumber: authoredLineNumber,
+            },
           });
           state.macroSymbols.push({
             name: macroHeader.name,
@@ -439,18 +452,26 @@ async function processSource(
           state,
           authoredLineNumber,
         );
+        let includedOffset = output.length;
         if (included.code) {
           if (output.length > 0) {
             output += "\n";
             const newlineOrigin = lastEmittedOrigin ?? { file: authoredFilePath, offset: authoredLineLocation?.offset ?? 0 };
             builder.appendGenerated("\n", newlineOrigin);
           }
+          includedOffset = output.length;
           output += included.code;
           builder.appendMap(included.map);
           const endOrigin = included.map.mapOffset(included.code.length);
           if (endOrigin) {
             lastEmittedOrigin = endOrigin;
           }
+        }
+        for (const event of included.macroDefinitions) {
+          macroDefinitions.push({
+            offset: includedOffset + event.offset,
+            definition: event.definition,
+          });
         }
         break;
       }
@@ -494,7 +515,7 @@ async function processSource(
   }
 
   state.includeStack.pop();
-  return { code: output, map: builder };
+  return { code: output, map: builder, macroDefinitions };
 }
 
 function isIgnorableMinifyTargetLine(line: string): boolean {
@@ -549,7 +570,7 @@ async function resolveInclude(
   const includeKey = makeIncludeKey(resolvedPath, overrides);
 
   if (state.pragmaOnceKeys.has(includeKey)) {
-    return { code: "", map: new SourceMapBuilder() };
+    return { code: "", map: new SourceMapBuilder(), macroDefinitions: [] };
   }
 
   const source = await readTextFileAsync(resolvedPath);
@@ -593,7 +614,7 @@ async function resolveImportInclude(
     }
     const includeKey = makeIncludeKey(generatedLua.sourcePath, overrides);
     if (state.pragmaOnceKeys.has(includeKey)) {
-      return { code: "", map: new SourceMapBuilder() };
+      return { code: "", map: new SourceMapBuilder(), macroDefinitions: [] };
     }
     const included = await processSource(
       project,
@@ -886,7 +907,7 @@ function ensureTrailingNewline(result: ProcessResult, filePath: string): Process
   const map = new SourceMapBuilder();
   map.appendMap(result.map);
   map.appendGenerated("\n", origin);
-  return { code: result.code + "\n", map };
+  return { code: result.code + "\n", map, macroDefinitions: result.macroDefinitions };
 }
 
 type LongBracketInfo = {
@@ -1100,21 +1121,24 @@ function readMacroBody(
 function expandMacros(
   project: TicbuildProjectCore,
   result: ProcessResult,
-  macros: Map<string, MacroDefinition>,
   filePath: string,
 ): ProcessResult {
-  if (macros.size === 0) {
+  if (result.macroDefinitions.length === 0) {
     return result;
   }
 
   let current = result;
   const maxPasses = 25;
   for (let pass = 0; pass < maxPasses; pass++) {
-    const passResult = applyMacroPass(project, current, macros, filePath);
+    const passResult = applyMacroPass(project, current, filePath);
     if (!passResult.changed) {
       return current;
     }
-    current = { code: passResult.code, map: passResult.map };
+    current = {
+      code: passResult.code,
+      map: passResult.map,
+      macroDefinitions: passResult.macroDefinitions,
+    };
   }
 
   throw new Error(formatError(filePath, 1, `Macro expansion exceeded ${maxPasses} passes (possible recursion)`));
@@ -1123,9 +1147,8 @@ function expandMacros(
 function applyMacroPass(
   project: TicbuildProjectCore,
   result: ProcessResult,
-  macros: Map<string, MacroDefinition>,
   filePath: string,
-): { code: string; map: SourceMapBuilder; changed: boolean } {
+): ProcessResult & { changed: boolean } {
   const chunk = parseLua(result.code)!;
   const replacements: Array<{ start: number; end: number; text: string }> = [];
 
@@ -1137,12 +1160,12 @@ function applyMacroPass(
     if (callNode.base.type !== "Identifier") {
       return;
     }
-    const macroDef = macros.get(callNode.base.name);
+    const range = getRange(callNode, filePath);
+    const macroDef = findMacroDefinitionAtOffset(result.macroDefinitions, callNode.base.name, range[0]);
     if (!macroDef) {
       return;
     }
 
-    const range = getRange(callNode, filePath);
     const lineNumber = getLineNumber(callNode, 1);
     const args = callNode.arguments || [];
     if (args.length !== macroDef.params.length) {
@@ -1163,7 +1186,7 @@ function applyMacroPass(
   });
 
   if (replacements.length === 0) {
-    return { code: result.code, map: result.map, changed: false };
+    return { ...result, changed: false };
   }
 
   const sortedByStart = [...replacements].sort((a, b) => a.start - b.start || b.end - a.end);
@@ -1182,7 +1205,24 @@ function applyMacroPass(
 
   const sorted = filtered.sort((a, b) => b.start - a.start);
   const updated = applyReplacementsWithMap(result, sorted, filePath);
-  return { code: updated.code, map: updated.map, changed: true };
+  return { ...updated, changed: true };
+}
+
+function findMacroDefinitionAtOffset(
+  events: MacroDefinitionEvent[],
+  name: string,
+  invocationOffset: number,
+): MacroDefinition | undefined {
+  let found: MacroDefinition | undefined;
+  for (const event of events) {
+    if (event.offset > invocationOffset) {
+      break;
+    }
+    if (event.definition.name === name) {
+      found = event.definition;
+    }
+  }
+  return found;
 }
 
 function expandMacroBody(
@@ -1427,12 +1467,27 @@ function applyReplacementsWithMap(
   filePath: string,
 ): ProcessResult {
   let out = result.code;
+  let macroDefinitions = result.macroDefinitions;
   for (const rep of replacements) {
     out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
     const origin = result.map.mapOffset(rep.start, "right") ?? { file: filePath, offset: 0 };
     result.map.spliceRange(rep.start, rep.end, rep.text.length, origin);
+    macroDefinitions = macroDefinitions.map((event) => ({
+      offset: mapOffsetThroughReplacement(event.offset, rep.start, rep.end, rep.text.length),
+      definition: event.definition,
+    }));
   }
-  return { code: out, map: result.map };
+  return { code: out, map: result.map, macroDefinitions };
+}
+
+function mapOffsetThroughReplacement(offset: number, start: number, end: number, replacementLength: number): number {
+  if (offset <= start) {
+    return offset;
+  }
+  if (offset >= end) {
+    return offset + replacementLength - (end - start);
+  }
+  return start + replacementLength;
 }
 
 type LineInfo = {

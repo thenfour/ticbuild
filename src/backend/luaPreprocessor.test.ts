@@ -395,6 +395,58 @@ local value = ID(42)`;
     expect(result.code).toContain("local value = 42");
   });
 
+  it("should apply a macro definition only to later invocations", async () => {
+    const project = makeProject(manifest);
+    const source = `local before = ID(1)
+--#macro ID(x) => x
+local after = ID(2)`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain(`local before = ID(1)
+local after = 2`);
+  });
+
+  it("should apply each macro redefinition only to later invocations", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro VALUE(x) => x+1
+local first = VALUE(10)
+--#macro VALUE(x) => x+2
+local second = VALUE(20)`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain(`local first = 10+1
+local second = 20+2`);
+  });
+
+  it("should resolve nested macros using definitions active at the invocation", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro WRAP(x) => ID(x)
+local before = WRAP(10)
+--#macro ID(x) => x+1
+local middle = WRAP(20)
+--#macro ID(x) => x+2
+local after = WRAP(30)`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain(`local before = ID(10)
+local middle = 20+1
+local after = 30+2`);
+  });
+
+  it("should ignore inactive macro definitions when resolving later invocations", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro VALUE(x) => x+1
+local first = VALUE(10)
+--#if false
+--#macro VALUE(x) => x+99
+--#endif
+local second = VALUE(20)`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain(`local first = 10+1
+local second = 20+1`);
+  });
+
   it("should be nestable", async () => {
     const project = makeProject(manifest);
     const source = `
@@ -617,5 +669,50 @@ describe("Lua preprocessor include resolution", () => {
 
     // note: 2 line endings -- don't skip them, don't collapse them.
     expect(result.code).toContain(`local M = 1\n\nlocal x = 1`);
+  });
+
+  it("should preserve macro definition order across includes", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-preproc-macros-"));
+    const srcDir = path.join(tempRoot, "src");
+    fs.mkdirSync(srcDir, { recursive: true });
+
+    const includePath = path.join(srcDir, "macros.lua");
+    fs.writeFileSync(
+      includePath,
+      `local includedBefore = VALUE(2)
+--#macro VALUE(x) => x+2
+local includedAfter = VALUE(3)`,
+      "utf-8",
+    );
+
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      imports: [],
+      assembly: {
+        blocks: [],
+      },
+    };
+    const project = new TicbuildProjectCore({
+      manifest: { buildConfiguration: "release", ...manifest },
+      manifestPath: path.join(tempRoot, "manifest.ticbuild.jsonc"),
+      projectDir: tempRoot,
+    });
+    const source = `--#macro VALUE(x) => x+1
+local mainBefore = VALUE(1)
+--#include "src/macros.lua"
+local mainAfter = VALUE(4)`;
+
+    const result = await preprocessLuaCode(project, source, path.join(tempRoot, "main.lua"));
+
+    expect(result.code).toContain("local mainBefore = 1+1");
+    expect(result.code).toContain("local includedBefore = 2+1");
+    expect(result.code).toContain("local includedAfter = 3+2");
+    expect(result.code).toContain("local mainAfter = 4+2");
   });
 });
