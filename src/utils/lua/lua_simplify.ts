@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
 import { inheritLuaNodeOrigin } from "./lua_ast_provenance";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import {LiteralNode, StringLiteralNode, stringValue} from "./lua_utils";
 
 
@@ -604,3 +605,15 @@ export function simplifyExpressionsInAST(ast: luaparse.Chunk): luaparse.Chunk {
    simplifyBlock(ast.body, freshScope());
    return ast;
 }
+
+export const simplifyExpressionsRule: LuaOptimizationRule = {
+   id: "reduce.simplify-expressions",
+   family: "simplify",
+   description: "Fold constants and propagate simple constant locals",
+   enabled: (options) => options.simplifyExpressions,
+   hooks: {
+      reduce(context) {
+         context.ast = simplifyExpressionsInAST(context.ast);
+      },
+   },
+};

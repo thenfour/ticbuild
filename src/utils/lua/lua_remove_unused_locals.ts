@@ -1,4 +1,5 @@
 import * as luaparse from "luaparse";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 
 function exprHasSideEffects(expr: luaparse.Expression): boolean {
    switch (expr.type) {
@@ -342,3 +343,15 @@ export function removeUnusedLocalsInAST(ast: luaparse.Chunk): luaparse.Chunk {
    ast.body = removeUnusedLocalsInBlock(ast.body);
    return ast;
 }
+
+export const removeUnusedLocalsRule: LuaOptimizationRule = {
+   id: "reduce.remove-unused-locals",
+   family: "dead-code",
+   description: "Remove unused locals with side-effect-free initializers",
+   enabled: (options) => options.removeUnusedLocals,
+   hooks: {
+      reduce(context) {
+         context.ast = removeUnusedLocalsInAST(context.ast);
+      },
+   },
+};

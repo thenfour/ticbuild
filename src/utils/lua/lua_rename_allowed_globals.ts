@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
 import { LUA_RESERVED_WORDS } from "./lua_ast";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import { collectLuaIdentifierNames, LuaSymbolAllocator } from "./lua_symbols";
 
 const DEFAULT_GLOBAL_NAMES_TO_KEEP = new Set([
@@ -368,3 +369,25 @@ export function renameAllowedGlobalsInAST(
   processBlock(ast.body, new GlobalRenameScope(), mapping);
   return ast;
 }
+
+export const renameAllowedGlobalsRule: LuaOptimizationRule = {
+  id: "rename.allowed-globals",
+  family: "symbols",
+  description: "Rename eligible globals while preserving protected names",
+  enabled: (options) => (options.globalSymbolRenaming ?? "opt-in") !== "off",
+  hooks: {
+    rename(context) {
+      const options = context.options;
+      const mode = options.globalSymbolRenaming ?? "opt-in";
+      if (mode === "off") return;
+      context.ast = renameAllowedGlobalsInAST(context.ast, {
+        mode,
+        namesToRename: options.globalSymbolsToRename,
+        namesToKeep: [
+          ...(options.functionNamesToKeep ?? []),
+          ...(options.globalSymbolsToKeep ?? []),
+        ],
+      });
+    },
+  },
+};

@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
 import {AliasBindingScope, AliasInfo, AliasStrategy, runAliasPass} from "./lua_alias_shared";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import {StringLiteralNode} from "./lua_utils";
 
 // ============================================================================
@@ -178,6 +179,18 @@ export const repeatedExpressionAliasStrategy: AliasStrategy = {
       return serializeExpression(node, bindings);
    },
    estimateSavings: estimateExpressionSavings,
+};
+
+export const aliasRepeatedExpressionsRule: LuaOptimizationRule = {
+   id: "introduce.alias-repeated-expressions",
+   family: "aliases",
+   description: "Introduce locals for profitable repeated expressions",
+   enabled: (options) => options.aliasRepeatedExpressions,
+   hooks: {
+      introduceLocals(context) {
+         context.localIntroductions.proposeAlias(repeatedExpressionAliasStrategy);
+      },
+   },
 };
 
 /**

@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
 import { AliasInfo, AliasStrategy, runAliasPass } from "./lua_alias_shared";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import { StringLiteralNode } from "./lua_utils";
 
 // ============================================================================
@@ -92,6 +93,18 @@ export const literalAliasStrategy: AliasStrategy = {
   prefix: LITERAL_ALIAS_PREFIX,
   serialize: serializeLiteral,
   estimateSavings: estimateLiteralSavings,
+};
+
+export const aliasLiteralsRule: LuaOptimizationRule = {
+  id: "introduce.alias-literals",
+  family: "aliases",
+  description: "Introduce locals for profitable repeated literals",
+  enabled: (options) => options.aliasLiterals,
+  hooks: {
+    introduceLocals(context) {
+      context.localIntroductions.proposeAlias(literalAliasStrategy);
+    },
+  },
 };
 
 /**

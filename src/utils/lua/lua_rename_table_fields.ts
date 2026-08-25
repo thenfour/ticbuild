@@ -19,6 +19,7 @@ we would need to follow data flow across function boundaries to track that, whic
 */
 
 import * as luaparse from "luaparse";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import {LuaSymbolAllocator} from "./lua_symbols";
 import {isStringLiteral, stringValue} from "./lua_utils";
 
@@ -479,3 +480,15 @@ export function renameTableFieldsInAST(ast: luaparse.Chunk): luaparse.Chunk {
 
    return ast;
 }
+
+export const renameTableFieldsRule: LuaOptimizationRule = {
+   id: "rename.table-fields",
+   family: "symbols",
+   description: "Rename fields of non-escaping local tables",
+   enabled: (options) => options.renameTableFields,
+   hooks: {
+      rename(context) {
+         context.ast = renameTableFieldsInAST(context.ast);
+      },
+   },
+};

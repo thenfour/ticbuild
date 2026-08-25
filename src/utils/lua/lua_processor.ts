@@ -1,25 +1,13 @@
 import * as luaparse from "luaparse";
-import { renameLocalVariablesInAST } from "./lua_renamer";
-import { literalAliasStrategy } from "./lua_alias_literals";
-import { repeatedExpressionAliasStrategy } from "./lua_alias_expressions";
-import {
-  AliasPassReport,
-  AliasStrategy,
-  createEmptyAliasPassReport,
-  runAliasPasses,
-} from "./lua_alias_shared";
-import { packLocalDeclarationsInAST } from "./lua_pack_locals";
-import { simplifyExpressionsInAST } from "./lua_simplify";
-import { removeUnusedLocalsInAST } from "./lua_remove_unused_locals";
-import { removeUnusedFunctionsInAST } from "./lua_remove_unused_functions";
-import { renameTableFieldsInAST } from "./lua_rename_table_fields";
-import { renameAllowedTableKeysInAST } from "./lua_rename_allowed_table_keys";
-import { renameAllowedGlobalsInAST } from "./lua_rename_allowed_globals";
+import { createEmptyAliasPassReport } from "./lua_alias_shared";
+import type { AliasPassReport } from "./lua_alias_shared";
 import { extractLuaBlocks } from "./lua_fundamentals";
 import { annotateLuaAstOrigins } from "./lua_ast_provenance";
+import { optimizeLuaAst } from "./lua_optimizer";
+import type { OptimizationRuleOptions } from "./lua_optimizer_types";
 import { createLuaPrintTransformMap } from "./lua_print_trace";
 import { unparseLua } from "./lua_printer";
-import type { LuaLineBehavior, LuaPrinterOptions } from "./lua_printer";
+import type { LuaLineBehavior } from "./lua_printer";
 import {
   LuaTransformMap,
   LuaTransformMapBuilder,
@@ -27,80 +15,7 @@ import {
 
 export { LuaPrinter } from "./lua_printer";
 export { unparseLua };
-export type { LuaLineBehavior };
-
-export type OptimizationRuleOptions = LuaPrinterOptions & {
-  stripComments: boolean; //
-  //stripDebugBlocks: boolean; //
-  renameLocalVariables: boolean;
-  aliasRepeatedExpressions: boolean;
-
-  // literal values like "hello" or numbers like 65535 that appear enough times can be
-  // replaced with a local variable to save space.
-  // * only done for values that appear enough times to offset the cost of the local declaration.
-  // * alias declaration placed in the narrowest possible scope that contains all uses.
-  aliasLiterals: boolean;
-
-  // Simplify expressions by folding constants and propagating simple constant locals.
-  // * folds basic arithmetic, boolean logic, and string concatenation when operands are literals.
-  // * propagates locals that are assigned literal values until they are reassigned or shadowed.
-  simplifyExpressions: boolean;
-
-  // Remove local declarations that are never referenced (and whose initializers are side-effect free).
-  removeUnusedLocals: boolean;
-
-  // Remove unused function declarations (global and local) when safe.
-  // Uses a conservative approach and always preserves functions in functionNamesToKeep.
-  removeUnusedFunctions: boolean;
-
-  // Names of functions that must not be removed.
-  // Intended for entrypoints and externally-referenced API surfaces.
-  functionNamesToKeep: string[];
-
-  // Rename table literal field names when safe (non-escaping locals, string/identifier keys only).
-  renameTableFields: boolean;
-
-  // Globally rename specific table entry keys (string/identifier keys and member/index accesses) to short names.
-  // Intended for callers that know these keys are safe to minify even when the table escapes.
-  tableEntryKeysToRename: string[];
-
-  // Explicit global names eligible for renaming in opt-in or opt-out mode.
-  globalSymbolsToRename?: string[];
-
-  // Controls whether global renaming is disabled, uses only the explicit allow-list, or
-  // automatically renames globals defined in this code unless they are kept.
-  globalSymbolRenaming?: "off" | "opt-in" | "opt-out";
-
-  // Globals that must retain their authored names. Takes precedence over rename candidates.
-  globalSymbolsToKeep?: string[];
-
-  // Merge consecutive local declarations into one using packing.
-  // e.g.,
-  // local a=1
-  // local b=2
-  // ->
-  // local a,b = 1,2
-  // (18 chars -> 15)
-  //
-  // we should be conservative in choosing to apply this treatment:
-  // * must be consecutive to guarantee no side-effects or dependencies in between.
-  // * it's NOT safe when there are any intervening statements with side effects.
-  // * or any dependencies between the variables being declared. like,
-  //   local a = 1
-  //   local b = a + c
-  //   -> cannot be packed.
-  //   local a, b = 1, a + c -- does not work because 'a' is not defined yet
-  // * or if any of the variables are used before all are declared. this is non-trivial because you could
-  //   have:
-  //   local a = 1
-  //   local b = doSomething() -- 'a' is used in doSomething()
-  // so we skip packing in that case.
-  packLocalDeclarations: boolean;
-
-  // NOTE: so much lua code is `local`, `function`, `end`, and it's very tempting to attempt to
-  // inline function calls. but it's way too difficult / complex to do in a minifier; basically anything other than the most
-  // simple tiny case has side-effects we can't guarantee won't break.
-};
+export type { LuaLineBehavior, OptimizationRuleOptions };
 
 export function parseLua(code: string): luaparse.Chunk | null {
   //console.log(code);
@@ -127,26 +42,11 @@ export type LuaProcessResult = {
 };
 
 export function processLuaWithReport(code: string, ruleOptions: OptimizationRuleOptions): LuaProcessResult {
-  // Apply optimization rules
-  //const options = {...DEFAULT_OPTIMIZATION_RULES, ...ruleOptions};
-
-  // Strip debug blocks and lines before parsing (line-based string matching)
   let processedCode = code;
   const preparationMap = LuaTransformMapBuilder.identity(code.length);
   processedCode = disambiguateNumericConcat(processedCode, preparationMap);
-  // if (ruleOptions.stripDebugBlocks) {
-  //    // Strip debug blocks
-  //    processedCode = replaceLuaBlock(processedCode, "-- BEGIN_DEBUG_ONLY", "-- END_DEBUG_ONLY", "");
 
-  //    // Strip individual lines marked with -- DEBUG_ONLY
-  //    const eol = processedCode.includes("\r\n") ? "\r\n" : "\n";
-  //    const lines = processedCode.split(eol);
-  //    const filteredLines = lines.filter(line => !line.includes("-- DEBUG_ONLY"));
-  //    processedCode = filteredLines.join(eol);
-  // }
-
-  // Honor explicit directives to keep certain regions verbatim
-  // doing this at text level for simplification and because the printer can reformat everything.
+  // Hide verbatim regions because every AST printer is allowed to reformat them.
   const disableMinify = extractLuaBlocks(
     processedCode,
     "-- MINIFICATION OFF",
@@ -180,59 +80,8 @@ export function processLuaWithReport(code: string, ruleOptions: OptimizationRule
     };
   }
   annotateLuaAstOrigins(ast, preparationMap.toMap(), code);
-  //console.log("Parsed Lua AST:", ast);
-
-  if (ruleOptions.stripComments) {
-    ast.comments = [];
-  }
-
-  if (ruleOptions.simplifyExpressions) {
-    ast = simplifyExpressionsInAST(ast);
-  }
-
-  if (ruleOptions.removeUnusedLocals) {
-    ast = removeUnusedLocalsInAST(ast);
-  }
-
-  if (ruleOptions.removeUnusedFunctions) {
-    ast = removeUnusedFunctionsInAST(ast, {
-      functionNamesToKeep: ruleOptions.functionNamesToKeep,
-    });
-  }
-
-  const aliasStrategies: AliasStrategy[] = [];
-  if (ruleOptions.aliasLiterals) aliasStrategies.push(literalAliasStrategy);
-  if (ruleOptions.aliasRepeatedExpressions) aliasStrategies.push(repeatedExpressionAliasStrategy);
-  const aliasResult = runAliasPasses(ast, aliasStrategies);
-  ast = aliasResult.ast;
-
-  if (ruleOptions.packLocalDeclarations) {
-    ast = packLocalDeclarationsInAST(ast);
-  }
-
-  if (ruleOptions.renameLocalVariables) {
-    ast = renameLocalVariablesInAST(ast);
-  }
-
-  const globalSymbolRenaming = ruleOptions.globalSymbolRenaming ?? "opt-in";
-  if (globalSymbolRenaming !== "off") {
-    ast = renameAllowedGlobalsInAST(ast, {
-      mode: globalSymbolRenaming,
-      namesToRename: ruleOptions.globalSymbolsToRename,
-      namesToKeep: [
-        ...(ruleOptions.functionNamesToKeep ?? []),
-        ...(ruleOptions.globalSymbolsToKeep ?? []),
-      ],
-    });
-  }
-
-  if (ruleOptions.tableEntryKeysToRename && ruleOptions.tableEntryKeysToRename.length > 0) {
-    ast = renameAllowedTableKeysInAST(ast, ruleOptions.tableEntryKeysToRename);
-  }
-
-  if (ruleOptions.renameTableFields) {
-    ast = renameTableFieldsInAST(ast);
-  }
+  const optimizationResult = optimizeLuaAst(ast, ruleOptions);
+  ast = optimizationResult.ast;
 
   const minified = unparseLua(ast, ruleOptions);
   const emittedAst = parseLua(minified);
@@ -251,7 +100,7 @@ export function processLuaWithReport(code: string, ruleOptions: OptimizationRule
   );
   return {
     code: restored.code,
-    report: aliasResult.report,
+    report: optimizationResult.report,
     transformMap: restored.transformMap,
   };
 }

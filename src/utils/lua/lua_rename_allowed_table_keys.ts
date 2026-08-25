@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
 import {walkAST} from "./lua_ast";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import {LuaSymbolAllocator} from "./lua_symbols";
 import {isStringLiteral, stringValue} from "./lua_utils";
 
@@ -199,3 +200,18 @@ export function renameAllowedTableKeysInAST(ast: luaparse.Chunk, keys: string[]|
    ast.body.forEach(stmt => rewriteStatement(stmt, mapping));
    return ast;
 }
+
+export const renameAllowedTableKeysRule: LuaOptimizationRule = {
+   id: "rename.allowed-table-keys",
+   family: "symbols",
+   description: "Rename explicitly allowed table entry keys",
+   enabled: (options) => options.tableEntryKeysToRename?.length > 0,
+   hooks: {
+      rename(context) {
+         context.ast = renameAllowedTableKeysInAST(
+            context.ast,
+            context.options.tableEntryKeysToRename,
+         );
+      },
+   },
+};

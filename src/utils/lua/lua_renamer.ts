@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
 import { isIdentifier } from "./lua_ast";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import { collectNamesUnavailableToLocalRenaming, LuaSymbolAllocator } from "./lua_symbols";
 
 type RenameBinding = {
@@ -238,3 +239,15 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
 
   return ast;
 }
+
+export const renameLocalVariablesRule: LuaOptimizationRule = {
+  id: "rename.local-variables",
+  family: "symbols",
+  description: "Assign compact names to lexical local bindings",
+  enabled: (options) => options.renameLocalVariables,
+  hooks: {
+    rename(context) {
+      context.ast = renameLocalVariablesInAST(context.ast);
+    },
+  },
+};

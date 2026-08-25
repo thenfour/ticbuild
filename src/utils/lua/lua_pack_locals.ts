@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
 import { inheritCombinedLuaNodeOrigin, inheritLuaNodeOrigin } from "./lua_ast_provenance";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import {StringLiteralNode} from "./lua_utils";
 
 // // Optional string literal value helper (luaparse may omit value)
@@ -256,3 +257,15 @@ export function packLocalDeclarationsInAST(ast: luaparse.Chunk): luaparse.Chunk 
    ast.body = processBlock(ast.body);
    return ast;
 }
+
+export const packLocalDeclarationsRule: LuaOptimizationRule = {
+   id: "finalize.pack-local-declarations",
+   family: "layout",
+   description: "Pack compatible consecutive local declarations",
+   enabled: (options) => options.packLocalDeclarations,
+   hooks: {
+      finalize(context) {
+         context.ast = packLocalDeclarationsInAST(context.ast);
+      },
+   },
+};

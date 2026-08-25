@@ -1,4 +1,5 @@
 import * as luaparse from "luaparse";
+import type { LuaOptimizationRule } from "./lua_optimizer_types";
 
 export type RemoveUnusedFunctionsOptions = {
    functionNamesToKeep?: string[];
@@ -569,3 +570,17 @@ export function removeUnusedFunctionsInAST(
    ast.body = rewriteBlock(ast.body);
    return ast;
 }
+
+export const removeUnusedFunctionsRule: LuaOptimizationRule = {
+   id: "reduce.remove-unused-functions",
+   family: "dead-code",
+   description: "Remove conservatively proven unused function declarations",
+   enabled: (options) => options.removeUnusedFunctions,
+   hooks: {
+      reduce(context) {
+         context.ast = removeUnusedFunctionsInAST(context.ast, {
+            functionNamesToKeep: context.options.functionNamesToKeep,
+         });
+      },
+   },
+};
