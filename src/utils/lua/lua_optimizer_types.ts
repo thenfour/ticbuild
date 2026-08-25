@@ -50,6 +50,8 @@ export type LuaLocalIntroductionHook = (
 export type LuaOptimizationHooks = {
   normalize?: LuaOptimizationHook;
   reduce?: LuaReductionHook;
+  // Reshape existing locals before rules decide which new locals to introduce.
+  prepareLocals?: LuaOptimizationHook;
   introduceLocals?: LuaLocalIntroductionHook;
   finalize?: LuaOptimizationHook;
   rename?: LuaOptimizationHook;

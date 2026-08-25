@@ -46,6 +46,79 @@ describe("Lua syntax canonicalization rules", () => {
   });
 });
 
+describe("Lua declaration packing with implicit nils", () => {
+  const packingOptions: Partial<OptimizationRuleOptions> = {
+    canonicalizeSyntax: true,
+    packLocalDeclarations: true,
+  };
+
+  it("packs declarations whose initializers are all implicit nil", () => {
+    expect(minify(
+      "local x=nil local y=nil return x,y",
+      packingOptions,
+    )).toBe("local x,y return x,y");
+  });
+
+  it("omits a trailing implicit nil after a single-valued initializer", () => {
+    expect(minify(
+      "local x=1 local y=nil return x,y",
+      packingOptions,
+    )).toBe("local x,y=1 return x,y");
+  });
+
+  it("materializes positional nils before later initializers", () => {
+    expect(minify(
+      "local x=nil local y=f() return x,y",
+      packingOptions,
+    )).toBe("local x,y=nil,f() return x,y");
+  });
+
+  it("closes a multi-return initializer with one nil before omitting later nils", () => {
+    expect(minify(
+      "local x=f() local y=nil local z=nil return x,y,z",
+      packingOptions,
+    )).toBe("local x,y,z=f(),nil return x,y,z");
+  });
+
+  it("does not pack a declaration with extra side-effecting initializers", () => {
+    expect(minify(
+      "local x=f(),g() local y=1 return x,y",
+      packingOptions,
+    )).toBe("local x=f(),g() local y=1 return x,y");
+  });
+
+  it("does not create a literal alias for nils that packing leaves implicit", () => {
+    const declarations = Array.from({ length: 6 }, (_, index) =>
+      `local value${index}=nil`
+    ).join("\n");
+    const output = minify(
+      `${declarations}\nreturn value0,value1,value2,value3,value4,value5`,
+      { ...packingOptions, aliasLiterals: true },
+    );
+
+    expect(output).not.toContain("nil");
+    expect(output.match(/\blocal\b/g)).toHaveLength(1);
+  });
+
+  it("lets literal aliases see nil placeholders that packing must materialize", () => {
+    const declarations = Array.from({ length: 20 }, (_, index) => [
+      `local value${index}=nil`,
+      `local result${index}=f()`,
+    ].join("\n")).join("\n");
+    const output = minify(
+      `${declarations}\nreturn value0`,
+      {
+        ...packingOptions,
+        aliasLiterals: true,
+        renameLocalVariables: true,
+        maxLineLength: 10_000,
+      },
+    );
+
+    expect(output.match(/\bnil\b/g)).toHaveLength(1);
+  });
+});
+
 describe("Lua control-flow simplification rules", () => {
   it("inverts an exact negated if/else and swaps its branches", () => {
     expect(minify(

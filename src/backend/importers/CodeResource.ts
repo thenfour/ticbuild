@@ -29,7 +29,6 @@ import {
 
 export const LUA_RELEASE_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   stripComments: true,
-  //stripDebugBlocks: true,
   maxIndentLevel: 1,
   lineBehavior: "tight",
   maxLineLength: 180,
@@ -70,8 +69,6 @@ export const MAX_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   globalSymbolsToRename: [],
   globalSymbolRenaming: "opt-out",
   ruleOverrides: {
-    // currently not helpful.
-    "syntax.omit-local-nil": false,
   },
 } as const;
 

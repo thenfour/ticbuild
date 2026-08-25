@@ -93,6 +93,7 @@ describe("Lua optimizer engine", () => {
             events.push("second.reduce");
             return { changed: false };
           },
+          prepareLocals: () => events.push("second.prepareLocals"),
           finalize: () => events.push("second.finalize"),
         },
       },
@@ -113,6 +114,7 @@ describe("Lua optimizer engine", () => {
       "second.normalize",
       "first.reduce",
       "second.reduce",
+      "second.prepareLocals",
       "second.finalize",
       "first.rename",
     ]);

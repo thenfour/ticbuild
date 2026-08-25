@@ -123,12 +123,47 @@ function statementUsesNames(stmt: luaparse.Statement, names: Set<string>): boole
 function isPackableLocal(stmt: luaparse.LocalStatement): boolean {
    // Only pack 1-variable locals. Multi-variable locals can rely on Lua's multi-return
    // fill semantics (e.g. `local a,b,c = f()`), and packing them with neighbors can
-   // silently change results.
-   return stmt.variables.length === 1 && stmt.variables.every(v => v.type === "Identifier");
+   // silently change results. Extra initializers must also remain separate because
+   // Lua evaluates them for side effects even when no variable receives their value.
+   return stmt.variables.length === 1 && stmt.init.length <= 1 &&
+      stmt.variables.every(v => v.type === "Identifier");
 }
 
 function nilLiteral(source: luaparse.Node): luaparse.NilLiteral {
    return inheritLuaNodeOrigin({type: "NilLiteral", value: null, raw: "nil"}, source);
+}
+
+type PackedInitializerSlot = {
+   expression: luaparse.Expression;
+   implicitNil: boolean;
+};
+
+function canReturnMultipleValues(expression: luaparse.Expression): boolean {
+   return expression.type === "CallExpression" ||
+      expression.type === "TableCallExpression" ||
+      expression.type === "StringCallExpression" ||
+      expression.type === "VarargLiteral";
+}
+
+function emittedInitializerCount(slots: readonly PackedInitializerSlot[]): number {
+   let lastExplicit = -1;
+   for (let i = 0; i < slots.length; i++) {
+      if (!slots[i].implicitNil)
+         lastExplicit = i;
+   }
+
+   // Lua fills a declaration with nil when the initializer list is empty.
+   if (lastExplicit < 0)
+      return 0;
+
+   if (lastExplicit === slots.length - 1)
+      return slots.length;
+
+   // A final call or vararg can fill later variables with additional results.
+   // Keep one nil after it to close the multi-return slot; later nils stay implicit.
+   return canReturnMultipleValues(slots[lastExplicit].expression)
+      ? lastExplicit + 2
+      : lastExplicit + 1;
 }
 
 function processBlock(body: luaparse.Statement[]): luaparse.Statement[] {
@@ -187,20 +222,22 @@ function processBlock(body: luaparse.Statement[]): luaparse.Statement[] {
 
          // Merge group
          const mergedVars: luaparse.Identifier[] = [];
-         const mergedInits: luaparse.Expression[] = [];
+         const initializerSlots: PackedInitializerSlot[] = [];
 
          group.forEach(ls => {
             const vars = ls.variables as luaparse.Identifier[];
             const inits = ls.init || [];
-            vars.forEach((v, idx) => {
+            vars.forEach(v => {
                mergedVars.push(v);
-               if (idx < inits.length) {
-                  mergedInits.push(inits[idx]);
-               } else {
-                  mergedInits.push(nilLiteral(v));
-               }
+               initializerSlots.push(inits.length === 0
+                  ? {expression: nilLiteral(v), implicitNil: true}
+                  : {expression: inits[0], implicitNil: false});
             });
          });
+
+         const mergedInits = initializerSlots
+            .slice(0, emittedInitializerCount(initializerSlots))
+            .map(slot => slot.expression);
 
          const packed = inheritCombinedLuaNodeOrigin({
             type: "LocalStatement",
@@ -264,6 +301,12 @@ export const packLocalDeclarationsRule: LuaOptimizationRule = {
    description: "Pack compatible consecutive local declarations",
    defaultEnabled: (options) => options.packLocalDeclarations,
    hooks: {
+      // Pack once before alias planning so it sees only the nil placeholders
+      // that the final declaration must materialize.
+      prepareLocals(context) {
+         context.ast = packLocalDeclarationsInAST(context.ast);
+      },
+      // Alias rules introduce declarations of their own, so pack once more.
       finalize(context) {
          context.ast = packLocalDeclarationsInAST(context.ast);
       },

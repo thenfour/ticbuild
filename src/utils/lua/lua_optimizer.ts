@@ -161,6 +161,7 @@ export function optimizeLuaAst(
 
   runHooks(enabledRules, context, (rule) => rule.hooks.normalize);
   runReductions(enabledRules, context);
+  runHooks(enabledRules, context, (rule) => rule.hooks.prepareLocals);
 
   localIntroductions.collect(() => {
     const introductionContext = { ast: context.ast, options, localIntroductions };
