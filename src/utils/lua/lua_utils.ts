@@ -1,10 +1,11 @@
 import * as luaparse from "luaparse";
-import {LUA_RESERVED_WORDS} from "./lua_ast";
+import { LUA_RESERVED_WORDS } from "./lua_ast";
 
 // luaparse doesn't actually output value; correct the type.
-export type StringLiteralNode = luaparse.StringLiteral&{value?: string | null};
-export type LiteralNode = luaparse.NumericLiteral|StringLiteralNode|luaparse.BooleanLiteral|luaparse.NilLiteral;
+export type StringLiteralNode = luaparse.StringLiteral & { value?: string | null };
+export type LiteralNode = luaparse.NumericLiteral | StringLiteralNode | luaparse.BooleanLiteral | luaparse.NilLiteral;
 
+// https://www.lua.org/manual/5.3/manual.html#6.4
 const LUA_SIMPLE_STRING_ESCAPES: Readonly<Record<string, string>> = {
    a: "\x07",
    b: "\b",
@@ -31,7 +32,7 @@ export function generateShortName(index: number): string {
    return name;
 }
 
-export function nextFreeName(counter: {value: number}): string {
+export function nextFreeName(counter: { value: number }): string {
    while (true) {
       const name = generateShortName(counter.value++);
       if (!LUA_RESERVED_WORDS.has(name))
@@ -39,11 +40,11 @@ export function nextFreeName(counter: {value: number}): string {
    }
 }
 
-export function isStringLiteral(node: luaparse.Expression|undefined|null): node is luaparse.StringLiteral {
+export function isStringLiteral(node: luaparse.Expression | undefined | null): node is luaparse.StringLiteral {
    return !!node && node.type === "StringLiteral";
 }
 
-function decodeQuotedString(raw: string): string|null {
+function decodeQuotedString(raw: string): string | null {
    const quote = raw[0];
    if ((quote !== "\"" && quote !== "'") || raw[raw.length - 1] !== quote)
       return null;
@@ -115,7 +116,7 @@ function decodeQuotedString(raw: string): string|null {
    return value;
 }
 
-export function decodeRawString(raw: string|undefined): string|null {
+export function decodeRawString(raw: string | undefined): string | null {
    if (!raw || raw.length < 2)
       return null;
 
@@ -132,7 +133,7 @@ export function decodeRawString(raw: string|undefined): string|null {
    return decodeQuotedString(raw);
 }
 
-export function stringValue(node: StringLiteralNode): string|null {
+export function stringValue(node: StringLiteralNode): string | null {
    if (typeof node.value === "string")
       return node.value;
    return decodeRawString(node.raw);
