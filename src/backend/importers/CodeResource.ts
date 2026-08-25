@@ -47,6 +47,25 @@ export const LUA_RELEASE_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   globalSymbolRenaming: "opt-in",
 } as const;
 
+export const MAX_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
+  stripComments: true,
+  maxIndentLevel: 1,
+  lineBehavior: "tight2",
+  maxLineLength: 180,
+  aliasRepeatedExpressions: true,
+  renameLocalVariables: true,
+  aliasLiterals: true,
+  packLocalDeclarations: true,
+  simplifyExpressions: true,
+  removeUnusedLocals: true,
+  removeUnusedFunctions: false,
+  functionNamesToKeep: ["TIC", "BDR", "SCN"],
+  renameTableFields: false,
+  tableEntryKeysToRename: [],
+  globalSymbolsToRename: [],
+  globalSymbolRenaming: "opt-in",
+} as const;
+
 const zopfliMaxOptions: ZopfliOptions = {
   verbose: false,
   verbose_more: false,
@@ -228,15 +247,15 @@ export class CodeResourceView extends ResourceViewBase {
       compressionMode === "zopfli"
         ? zopfliZlibAsync(rawBytes, zopfliMaxOptions).then((bytes) => new Uint8Array(bytes))
         : new Uint8Array(
-            compressionMode === "zlib-max"
-              ? deflateSync(Buffer.from(rawBytes), {
-                  level: zlibConstants.Z_BEST_COMPRESSION,
-                  memLevel: zlibConstants.Z_MAX_MEMLEVEL,
-                  windowBits: zlibConstants.Z_MAX_WINDOWBITS,
-                  strategy: zlibConstants.Z_DEFAULT_STRATEGY,
-                })
-              : deflateSync(Buffer.from(rawBytes)),
-          );
+          compressionMode === "zlib-max"
+            ? deflateSync(Buffer.from(rawBytes), {
+              level: zlibConstants.Z_BEST_COMPRESSION,
+              memLevel: zlibConstants.Z_MAX_MEMLEVEL,
+              windowBits: zlibConstants.Z_MAX_WINDOWBITS,
+              strategy: zlibConstants.Z_DEFAULT_STRATEGY,
+            })
+            : deflateSync(Buffer.from(rawBytes)),
+        );
     this.cachedCompressedBytes = compressed;
     this.cachedCompressedSource = minifiedSource;
     this.cachedCompressionMode = compressionMode;

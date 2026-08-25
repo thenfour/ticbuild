@@ -6,9 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { runLuaMinifierBenchmark, formatLuaMinifierBenchmark } = require("../dist/benchmarks/luaMinifiers");
-const {
-  LUA_RELEASE_OPTIMIZATION_OPTIONS,
-} = require("../dist/backend/importers/CodeResource");
+const { MAX_OPTIMIZATION_OPTIONS } = require("../dist/backend/importers/CodeResource");
 const { processLua } = require("../dist/utils/lua/lua_processor");
 const luamin = require("luamin");
 
@@ -71,7 +69,10 @@ function loadFixtures(inputPaths) {
   const roots = usingDefaults ? [defaultFixtureRoot] : inputPaths;
   const files = roots.flatMap(collectLuaFiles);
   return files.map((file) => ({
-    id: (usingDefaults ? path.relative(defaultFixtureRoot, file) : path.relative(process.cwd(), file)).replaceAll("\\", "/"),
+    id: (usingDefaults ? path.relative(defaultFixtureRoot, file) : path.relative(process.cwd(), file)).replaceAll(
+      "\\",
+      "/",
+    ),
     source: fs.readFileSync(file, "utf8"),
   }));
 }
@@ -133,11 +134,7 @@ function externalTools() {
           available: true,
           minify: (source) =>
             withTemporaryFiles("ticbuild-darklua-", source, (inputPath, outputPath) => {
-              runCommand(
-                darklua.command,
-                ["process", inputPath, outputPath, "--config", darkluaConfigPath],
-                "darklua",
-              );
+              runCommand(darklua.command, ["process", inputPath, outputPath, "--config", darkluaConfigPath], "darklua");
             }),
         }
       : {
@@ -182,7 +179,7 @@ async function main() {
       label: "ticbuild",
       version: `${packageJson.version} release`,
       available: true,
-      minify: (source) => processLua(source, LUA_RELEASE_OPTIMIZATION_OPTIONS),
+      minify: (source) => processLua(source, MAX_OPTIMIZATION_OPTIONS),
     },
     {
       id: "luamin",
@@ -219,6 +216,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
   process.exitCode = 1;
 });

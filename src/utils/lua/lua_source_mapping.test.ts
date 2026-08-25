@@ -22,7 +22,7 @@ function options(overrides: Partial<OptimizationRuleOptions> = {}): Optimization
 }
 
 describe("Lua optimizer source mapping", () => {
-  it.each(["pretty", "tight", "single-line-blocks", "traceable"] as const)(
+  it.each(["pretty", "tight", "tight2", "single-line-blocks", "traceable"] as const)(
     "retains the authored name and position for a renamed local in %s mode",
     (lineBehavior) => {
       const input = "local playerPosition=time()\nprint(playerPosition)";
@@ -111,7 +111,7 @@ describe("Lua optimizer source mapping", () => {
     });
   });
 
-  it.each(["tight", "traceable"] as const)(
+  it.each(["tight", "tight2", "traceable"] as const)(
     "maps reinserted minification-off blocks line by line in %s mode",
     (lineBehavior) => {
       const input = [

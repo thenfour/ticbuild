@@ -117,25 +117,25 @@ describe("Manifest Loader", () => {
       expect(result.manifest.imports[0].typescript?.tsconfig).toBe("tsconfig.json");
     });
 
-    it("should accept traceable Lua printer configuration", () => {
-      const traceableManifest = {
+    it.each(["traceable", "tight2"] as const)("should accept %s Lua printer configuration", (lineBehavior) => {
+      const printerManifest = {
         ...validManifest,
         assembly: {
           ...validManifest.assembly,
           lua: {
             minify: true,
             minification: {
-              lineBehavior: "traceable",
+              lineBehavior,
             },
           },
         },
       };
       mockFs.existsSync.mockReturnValue(true);
-      mockFs.readFileSync.mockReturnValue(JSON.stringify(traceableManifest));
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(printerManifest));
 
       const result = loadManifest("/test/manifest.ticbuild.jsonc");
 
-      expect(result.manifest.assembly.lua?.minification?.lineBehavior).toBe("traceable");
+      expect(result.manifest.assembly.lua?.minification?.lineBehavior).toBe(lineBehavior);
     });
 
     it.each(["off", "opt-in", "opt-out"] as const)(

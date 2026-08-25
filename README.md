@@ -400,7 +400,8 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
         "maxIndentLevel": 1,
         // "traceable" puts each diagnostic Lua anchor on its own generated line
         // for precise source mapping of line-only runtime errors. Intended for debug builds.
-        "lineBehavior": "tight", // "pretty" | "tight" | "single-line-blocks" | "traceable";
+        // "tight2" removes all lexically optional whitespace while respecting maxLineLength.
+        "lineBehavior": "tight", // "pretty" | "tight" | "tight2" | "single-line-blocks" | "traceable";
         "maxLineLength": 180,
         "aliasRepeatedExpressions": true,
         "renameLocalVariables": true,

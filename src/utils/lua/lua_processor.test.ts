@@ -1,3 +1,4 @@
+import * as luaparse from "luaparse";
 import { processLua, OptimizationRuleOptions } from "./lua_processor";
 
 describe("Lua base language support", () => {
@@ -92,6 +93,86 @@ describe("Lua traceable printer", () => {
       "value)",
       "end",
     ]);
+  });
+});
+
+describe("Lua tight2 printer", () => {
+  const tight2Options: OptimizationRuleOptions = {
+    stripComments: false,
+    maxIndentLevel: 1,
+    lineBehavior: "tight2",
+    maxLineLength: 180,
+    renameLocalVariables: false,
+    aliasRepeatedExpressions: false,
+    aliasLiterals: false,
+    packLocalDeclarations: false,
+    simplifyExpressions: false,
+    removeUnusedLocals: false,
+    removeUnusedFunctions: false,
+    functionNamesToKeep: [],
+    renameTableFields: false,
+    tableEntryKeysToRename: [],
+  };
+
+  const lexicalTokens = (source: string): string[] => {
+    const lexer = luaparse.parse({
+      wait: true,
+      luaVersion: "5.3",
+      comments: false,
+      locations: false,
+      ranges: true,
+    });
+    const tokens: string[] = [];
+    lexer.write(source);
+    while (true) {
+      const token = lexer.lex();
+      if (token.range[0] === token.range[1]) {
+        return tokens;
+      }
+      tokens.push(`${token.type}:${source.slice(token.range[0], token.range[1])}`);
+    }
+  };
+
+  it("removes optional whitespace between statements without changing tight", () => {
+    const input = "f()\nlocal a=1\ng()";
+
+    expect(processLua(input, tight2Options)).toBe("f()local a=1g()\n");
+    expect(processLua(input, { ...tight2Options, lineBehavior: "tight" })).toBe(
+      "f() local a=1 g()\n",
+    );
+  });
+
+  it("keeps only whitespace required to preserve the Lua token stream", () => {
+    const input = [
+      "local function calculate(a,b)",
+      "  return a- -b,- -a",
+      "end",
+      "return calculate(1,2)",
+    ].join("\n");
+    const canonical = processLua(input, { ...tight2Options, lineBehavior: "pretty" });
+    const packed = processLua(input, tight2Options);
+
+    expect(packed).toBe("local function calculate(a,b)return a- -b,- -a end return calculate(1,2)\n");
+    expect(lexicalTokens(packed)).toEqual(lexicalTokens(canonical));
+  });
+
+  it("uses hard comment boundaries and wraps only between tokens", () => {
+    const input = [
+      "f()",
+      "-- keep this",
+      "local value=12345",
+      "g(value)",
+    ].join("\n");
+    const packed = processLua(input, { ...tight2Options, maxLineLength: 13 });
+
+    expect(packed).toBe([
+      "f()",
+      "-- keep this",
+      "local value=",
+      "12345g(value)",
+      "",
+    ].join("\n"));
+    expect(packed.trimEnd().split("\n").every((line) => line.length <= 13)).toBe(true);
   });
 });
 

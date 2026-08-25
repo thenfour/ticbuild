@@ -24,14 +24,15 @@ import {
   LuaTransformMapBuilder,
 } from "./lua_transform_map";
 
-export type LuaLineBehavior = "pretty" | "tight" | "single-line-blocks" | "traceable";
+export type LuaLineBehavior = "pretty" | "tight" | "tight2" | "single-line-blocks" | "traceable";
 
 export type OptimizationRuleOptions = {
   stripComments: boolean; //
   //stripDebugBlocks: boolean; //
   maxIndentLevel: number; // limits indentation to N levels; beyond that, everything is flattened
-  // Line formatting behavior: pretty preserves newlines, tight packs lines up to maxLineLength,
-  // single-line-blocks packs only when an entire block fits on one line
+  // Line formatting behavior: pretty preserves newlines, tight packs statement fragments,
+  // tight2 removes all lexically optional whitespace up to maxLineLength,
+  // single-line-blocks packs only when an entire block fits on one line.
   // traceable emits one diagnostic anchor per line so Lua's line-only runtime errors identify
   // the narrowest useful syntax without putting every structural delimiter on its own line.
   lineBehavior: LuaLineBehavior;
@@ -153,6 +154,96 @@ function getPrecedence(node: luaparse.Expression): number {
   }
 }
 
+type PrintedLuaTokenLexeme = {
+  kind: "token";
+  range: [number, number];
+  text: string;
+  token: luaparse.Token;
+};
+
+type PrintedLuaCommentLexeme = {
+  kind: "comment";
+  range: [number, number];
+  text: string;
+};
+
+type PrintedLuaLexeme = PrintedLuaTokenLexeme | PrintedLuaCommentLexeme;
+
+// @types/luaparse omits this runtime export.
+const LUA_TOKEN_TYPES = (luaparse as typeof luaparse & {
+  tokenTypes: { Identifier: number; StringLiteral: number };
+}).tokenTypes;
+
+function lexPrintedLua(
+  source: string,
+  onComment?: (comment: PrintedLuaCommentLexeme) => void,
+): PrintedLuaTokenLexeme[] {
+  const lexer = luaparse.parse({
+    wait: true,
+    luaVersion: "5.3",
+    comments: onComment !== undefined,
+    locations: false,
+    ranges: true,
+    onCreateNode: (node) => {
+      if (node.type !== "Comment" || !onComment) {
+        return;
+      }
+      const comment = node as luaparse.Comment & { range?: [number, number] };
+      if (comment.range && comment.range[1] > comment.range[0]) {
+        onComment({
+          kind: "comment",
+          range: comment.range,
+          text: source.slice(comment.range[0], comment.range[1]),
+        });
+      }
+    },
+  });
+  lexer.write(source);
+
+  const tokens: PrintedLuaTokenLexeme[] = [];
+  while (true) {
+    const token = lexer.lex();
+    if (token.range[0] === token.range[1]) {
+      return tokens;
+    }
+    tokens.push({
+      kind: "token",
+      range: token.range,
+      text: source.slice(token.range[0], token.range[1]),
+      token,
+    });
+  }
+}
+
+function collectPrintedLuaLexemes(source: string): PrintedLuaLexeme[] {
+  const comments: PrintedLuaCommentLexeme[] = [];
+  const lexemes: PrintedLuaLexeme[] = lexPrintedLua(source, (comment) => comments.push(comment));
+  lexemes.push(...comments);
+
+  lexemes.sort((a, b) => a.range[0] - b.range[0] || a.range[1] - b.range[1]);
+  return lexemes;
+}
+
+function canJoinWithoutChangingLuaTokens(
+  left: PrintedLuaTokenLexeme,
+  right: PrintedLuaTokenLexeme,
+): boolean {
+  const joined = left.text + right.text;
+  try {
+    let createsComment = false;
+    const joinedTokens = lexPrintedLua(joined, () => { createsComment = true; });
+    return !createsComment && joinedTokens.length === 2 &&
+      joinedTokens[0].range[0] === 0 &&
+      joinedTokens[0].range[1] === left.text.length &&
+      joinedTokens[1].range[0] === left.text.length &&
+      joinedTokens[1].range[1] === joined.length &&
+      joinedTokens[0].token.type === left.token.type &&
+      joinedTokens[1].token.type === right.token.type;
+  } catch {
+    return false;
+  }
+}
+
 export class LuaPrinter {
   private buf: string[] = [];
   private options: OptimizationRuleOptions;
@@ -174,6 +265,10 @@ export class LuaPrinter {
       return this.printTraceableMode(chunk);
     }
 
+    if (mode === "tight2") {
+      return this.printTight2Mode(chunk);
+    }
+
     // For tight mode, use the token-stream approach
     if (mode === "tight") {
       return this.printTightMode(chunk);
@@ -188,6 +283,82 @@ export class LuaPrinter {
     return this.buf.join("");
   }
 
+  private printCanonicalMode(chunk: luaparse.Chunk): string {
+    return new LuaPrinter(
+      { ...this.options, lineBehavior: "pretty" },
+      this.blockComments,
+    ).print(chunk);
+  }
+
+  // ===== TIGHT2 MODE: remove only lexically optional whitespace =====
+
+  private printTight2Mode(chunk: luaparse.Chunk): string {
+    const canonical = this.printCanonicalMode(chunk);
+    if (canonical.length === 0) {
+      return "";
+    }
+
+    const lexemes = collectPrintedLuaLexemes(canonical);
+    const maxLen = this.options.maxLineLength || 120;
+    const separatorCache = new Map<string, string>();
+    const lines: string[] = [];
+    let currentLine = "";
+    let previousToken: PrintedLuaTokenLexeme | undefined;
+
+    const flushLine = () => {
+      if (currentLine.length > 0) {
+        lines.push(currentLine);
+        currentLine = "";
+      }
+    };
+    const separatorBetween = (
+      left: PrintedLuaTokenLexeme,
+      right: PrintedLuaTokenLexeme,
+    ): string => {
+      const cacheKey = left.text.length + right.text.length <= 128
+        ? `${left.token.type}:${left.text.length}:${left.text}${right.token.type}:${right.text}`
+        : undefined;
+      const cached = cacheKey === undefined ? undefined : separatorCache.get(cacheKey);
+      if (cached !== undefined) {
+        return cached;
+      }
+
+      // Re-lexing the pair proves that removing whitespace preserves both token boundaries.
+      const separator = canJoinWithoutChangingLuaTokens(left, right) ? "" : " ";
+      if (cacheKey !== undefined) {
+        separatorCache.set(cacheKey, separator);
+      }
+      return separator;
+    };
+
+    for (const lexeme of lexemes) {
+      // Comments and multiline literals remain indivisible and cannot affect neighboring code.
+      if (lexeme.kind === "comment" || /[\r\n]/.test(lexeme.text)) {
+        flushLine();
+        lines.push(lexeme.text);
+        previousToken = undefined;
+        continue;
+      }
+
+      if (currentLine.length === 0) {
+        currentLine = lexeme.text;
+      } else {
+        const separator = separatorBetween(previousToken!, lexeme);
+        const candidate = currentLine + separator + lexeme.text;
+        if (candidate.length <= maxLen) {
+          currentLine = candidate;
+        } else {
+          flushLine();
+          currentLine = lexeme.text;
+        }
+      }
+      previousToken = lexeme;
+    }
+
+    flushLine();
+    return lines.join("\n") + (lines.length > 0 ? "\n" : "");
+  }
+
   // ===== TRACEABLE MODE: one diagnostic anchor per generated line =====
   //
   // Lua 5.3 records binary/unary bytecode against the operator token's line and
@@ -200,87 +371,29 @@ export class LuaPrinter {
   // comments while replacing only insignificant whitespace. maxLineLength and
   // maxIndentLevel intentionally do not apply in this diagnostic mode.
   private printTraceableMode(chunk: luaparse.Chunk): string {
-    const canonicalPrinter = new LuaPrinter(
-      { ...this.options, lineBehavior: "pretty" },
-      this.blockComments,
-    );
-    const canonical = canonicalPrinter.print(chunk);
+    const canonical = this.printCanonicalMode(chunk);
     if (canonical.length === 0) {
       return "";
     }
 
-    const parsed = luaparse.parse(canonical, {
-      luaVersion: "5.3",
-      comments: true,
-      locations: false,
-      ranges: true,
-    });
-    type TraceableTokenLexeme = {
-      kind: "token";
-      range: [number, number];
-      text: string;
-      token: luaparse.Token;
-    };
-    type TraceableCommentLexeme = {
-      kind: "comment";
-      range: [number, number];
-      text: string;
-    };
-    type TraceableLexeme = TraceableTokenLexeme | TraceableCommentLexeme;
     type ParenthesisKind = "call" | "function-parameters" | "group";
-    const lexemes: TraceableLexeme[] = [];
-
-    const lexer = luaparse.parse({
-      wait: true,
-      luaVersion: "5.3",
-      comments: false,
-      locations: false,
-      ranges: true,
-    });
-    lexer.write(canonical);
-    while (true) {
-      const token = lexer.lex();
-      if (token.range[0] === token.range[1]) {
-        break;
-      }
-      lexemes.push({
-        kind: "token",
-        range: token.range,
-        text: canonical.slice(token.range[0], token.range[1]),
-        token,
-      });
-    }
-
-    // The streaming lexer skips comments; merge the parser's ranges back into source order.
-    for (const comment of parsed.comments ?? []) {
-      const range = (comment as luaparse.Comment & { range?: [number, number] }).range;
-      if (range && range[1] > range[0]) {
-        lexemes.push({ kind: "comment", range, text: canonical.slice(range[0], range[1]) });
-      }
-    }
-
-    lexemes.sort((a, b) => a.range[0] - b.range[0] || a.range[1] - b.range[1]);
-
-    // @types/luaparse omits this runtime export.
-    const tokenTypes = (luaparse as typeof luaparse & {
-      tokenTypes: { Identifier: number; StringLiteral: number };
-    }).tokenTypes;
+    const lexemes = collectPrintedLuaLexemes(canonical);
     // Includes chained calls such as f()(), f"x"(), and f{}().
-    const canEndSuffixedExpression = (lexeme: TraceableTokenLexeme | undefined): boolean => {
+    const canEndSuffixedExpression = (lexeme: PrintedLuaTokenLexeme | undefined): boolean => {
       if (!lexeme) {
         return false;
       }
-      return lexeme.token.type === tokenTypes.Identifier ||
-        lexeme.token.type === tokenTypes.StringLiteral ||
+      return lexeme.token.type === LUA_TOKEN_TYPES.Identifier ||
+        lexeme.token.type === LUA_TOKEN_TYPES.StringLiteral ||
         lexeme.text === ")" || lexeme.text === "]" || lexeme.text === "}";
     };
     // Reuse canonical whitespace when grouping so the token stream cannot change.
-    const canonicalInlineSeparator = (left: TraceableLexeme, right: TraceableLexeme): string =>
+    const canonicalInlineSeparator = (left: PrintedLuaLexeme, right: PrintedLuaLexeme): string =>
       /\s/.test(canonical.slice(left.range[1], right.range[0])) ? " " : "";
 
     const lines: string[] = [];
     const parenthesisStack: ParenthesisKind[] = [];
-    let previousToken: TraceableTokenLexeme | undefined;
+    let previousToken: PrintedLuaTokenLexeme | undefined;
     let localPrefixAwaitingName = false;
     let insideFunctionHeader = false;
     let functionNameAwaitingFirstIdentifier = false;
@@ -294,7 +407,7 @@ export class LuaPrinter {
 
       const token = lexeme.token;
       const text = lexeme.text;
-      const isIdentifier = token.type === tokenTypes.Identifier;
+      const isIdentifier = token.type === LUA_TOKEN_TYPES.Identifier;
       const joinsLocalPrefix = localPrefixAwaitingName && (text === "function" || isIdentifier);
       const joinsFunctionName = functionNameAwaitingFirstIdentifier && isIdentifier;
       // Call/signature parens are scaffolding; grouping parens retain their own lines.
@@ -1220,7 +1333,7 @@ export class LuaPrinter {
     if (op === "not") {
       s = `not ${arg}`;
     } else {
-      s = op + arg;
+      s = op + this.operatorRightSeparator(op, arg) + arg;
     }
 
     if (prec < parentPrec) s = `(${s})`;
@@ -1235,7 +1348,7 @@ export class LuaPrinter {
     const rightRaw = node.operator === ".." ? this.concatRightExpr(node.right, prec) : this.expr(node.right, prec);
     const rightSafe = node.operator === ".." ? this.ensureConcatSafeRight(rightRaw) : rightRaw;
     const right = !isRightAssociative && getPrecedence(node.right) === prec ? `(${rightSafe})` : rightSafe;
-    let s = `${left}${node.operator}${right}`;
+    let s = `${left}${node.operator}${this.operatorRightSeparator(node.operator, right)}${right}`;
     if (prec < parentPrec) s = `(${s})`;
     return s;
   }
@@ -1259,7 +1372,7 @@ export class LuaPrinter {
       if (this.isNumericLiteralLike(bin.right)) {
         right = `(${right})`;
       }
-      let s = `${left}${bin.operator}${right}`;
+      let s = `${left}${bin.operator}${this.operatorRightSeparator(bin.operator, right)}${right}`;
       if (prec < parentPrec) s = `(${s})`;
       return s;
     }
@@ -1280,6 +1393,11 @@ export class LuaPrinter {
       }
     }
     return this.expr(node, parentPrec);
+  }
+
+  private operatorRightSeparator(operator: string, right: string): string {
+    // Prevent two minus operators from becoming Lua's line-comment opener.
+    return operator === "-" && right.startsWith("-") ? " " : "";
   }
 
   private ensureConcatSafeRight(text: string): string {

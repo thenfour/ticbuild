@@ -238,6 +238,7 @@
                   "enum": [
                     "pretty",
                     "tight",
+                    "tight2",
                     "single-line-blocks",
                     "traceable"
                   ]
