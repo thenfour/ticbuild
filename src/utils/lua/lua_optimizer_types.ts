@@ -20,6 +20,12 @@ export type OptimizationRuleOptions = LuaPrinterOptions & {
   globalSymbolRenaming?: "off" | "opt-in" | "opt-out";
   globalSymbolsToKeep?: string[];
   packLocalDeclarations: boolean;
+  // "umbrella rules" combining small rules
+  canonicalizeSyntax?: boolean;
+  simplifyControlFlow?: boolean;
+
+  // these win against above settings.
+  ruleOverrides?: Readonly<Record<string, boolean>>;
 };
 
 export interface LuaLocalIntroductionCollector {
@@ -53,6 +59,6 @@ export interface LuaOptimizationRule {
   readonly id: string;
   readonly family: string;
   readonly description: string;
-  readonly enabled: (options: OptimizationRuleOptions) => boolean;
+  readonly defaultEnabled: (options: OptimizationRuleOptions) => boolean;
   readonly hooks: LuaOptimizationHooks;
 }

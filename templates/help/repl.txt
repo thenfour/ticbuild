@@ -26,7 +26,7 @@ REPL commands:
   :end | :eof | :           End multi-line input (multi-line mode only)
   :quit                     Exit the REPL
 
-Toggleable rules:
+Toggleable option umbrellas and specialized options:
 
   stripComments
   renameLocalVariables
@@ -37,6 +37,12 @@ Toggleable rules:
   removeUnusedFunctions
   renameTableFields
   packLocalDeclarations
+  canonicalizeSyntax
+  simplifyControlFlow
+
+Granular rule IDs are also toggleable, for example:
+
+  :minify syntax.member-access off
 
 Examples:
 

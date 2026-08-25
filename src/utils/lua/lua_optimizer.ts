@@ -61,6 +61,22 @@ function validateRules(rules: readonly LuaOptimizationRule[]): void {
   }
 }
 
+function selectEnabledRules(
+  rules: readonly LuaOptimizationRule[],
+  options: OptimizationRuleOptions,
+): readonly LuaOptimizationRule[] {
+  const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+  for (const id of Object.keys(options.ruleOverrides ?? {})) {
+    if (!rulesById.has(id)) {
+      throw new Error(`Unknown Lua optimization rule override: ${id}`);
+    }
+  }
+
+  return rules.filter((rule) =>
+    options.ruleOverrides?.[rule.id] ?? rule.defaultEnabled(options)
+  );
+}
+
 function runHooks(
   rules: readonly LuaOptimizationRule[],
   context: LuaOptimizationContext,
@@ -141,7 +157,7 @@ export function optimizeLuaAst(
 
   const localIntroductions = new LocalIntroductionPlanner();
   const context: LuaOptimizationContext = { ast, options };
-  const enabledRules = rules.filter((rule) => rule.enabled(options));
+  const enabledRules = selectEnabledRules(rules, options);
 
   runHooks(enabledRules, context, (rule) => rule.hooks.normalize);
   runReductions(enabledRules, context);

@@ -244,7 +244,7 @@ export const renameLocalVariablesRule: LuaOptimizationRule = {
   id: "rename.local-variables",
   family: "symbols",
   description: "Assign compact names to lexical local bindings",
-  enabled: (options) => options.renameLocalVariables,
+  defaultEnabled: (options) => options.renameLocalVariables,
   hooks: {
     rename(context) {
       context.ast = renameLocalVariablesInAST(context.ast);

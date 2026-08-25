@@ -17,6 +17,9 @@ function options(overrides: Partial<OptimizationRuleOptions> = {}): Optimization
     functionNamesToKeep: [],
     renameTableFields: false,
     tableEntryKeysToRename: [],
+    canonicalizeSyntax: false,
+    simplifyControlFlow: false,
+    ruleOverrides: {},
     ...overrides,
   };
 }
@@ -86,6 +89,30 @@ describe("Lua optimizer source mapping", () => {
     expect(mapLuaTransformOffset(result.transformMap, foldedOffset, "right")?.offset).toBe(
       input.indexOf("(1+2)*3"),
     );
+  });
+
+  it("maps canonical member syntax to the authored string key", () => {
+    const input = 'local value=source["field"]';
+    const result = processLuaWithReport(input, options({ canonicalizeSyntax: true }));
+    const fieldOffset = result.code.indexOf(".field") + 1;
+
+    expect(result.code).toContain("source.field");
+    expect(mapLuaTransformOffset(result.transformMap, fieldOffset, "right")).toEqual({
+      offset: input.indexOf('"field"'),
+      originalName: "field",
+    });
+  });
+
+  it("maps a canonical bare table key to the authored computed key", () => {
+    const input = 'local value={["field"]=1}';
+    const result = processLuaWithReport(input, options({ canonicalizeSyntax: true }));
+    const fieldOffset = result.code.indexOf("field");
+
+    expect(result.code).toContain("{field=1}");
+    expect(mapLuaTransformOffset(result.transformMap, fieldOffset, "right")).toEqual({
+      offset: input.indexOf('"field"'),
+      originalName: "field",
+    });
   });
 
   it("does not pretend a generated alias is an authored symbol", () => {

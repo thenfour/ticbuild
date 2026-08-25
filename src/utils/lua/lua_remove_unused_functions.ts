@@ -598,7 +598,7 @@ export const removeUnusedFunctionsRule: LuaOptimizationRule = {
    id: "reduce.remove-unused-functions",
    family: "dead-code",
    description: "Remove conservatively proven unused function declarations",
-   enabled: (options) => options.removeUnusedFunctions,
+   defaultEnabled: (options) => options.removeUnusedFunctions,
    hooks: {
       reduce(context) {
          const result = removeUnusedFunctions(context.ast, {

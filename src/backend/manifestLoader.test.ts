@@ -159,6 +159,51 @@ describe("Manifest Loader", () => {
       },
     );
 
+    it("should accept optimizer umbrellas and granular rule overrides", () => {
+      const manifest = {
+        ...validManifest,
+        assembly: {
+          ...validManifest.assembly,
+          lua: {
+            minification: {
+              canonicalizeSyntax: true,
+              simplifyControlFlow: false,
+              ruleOverrides: {
+                "syntax.member-access": false,
+                "control-flow.remove-false-while": true,
+              },
+            },
+          },
+        },
+      };
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(manifest));
+
+      const result = loadManifest("/test/manifest.ticbuild.jsonc");
+
+      expect(result.manifest.assembly.lua?.minification?.ruleOverrides).toEqual(
+        manifest.assembly.lua.minification.ruleOverrides,
+      );
+    });
+
+    it("should reject unknown granular rule override IDs", () => {
+      const manifest = {
+        ...validManifest,
+        assembly: {
+          ...validManifest.assembly,
+          lua: {
+            minification: {
+              ruleOverrides: { "syntax.typo": true },
+            },
+          },
+        },
+      };
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(manifest));
+
+      expect(() => loadManifest("/test/manifest.ticbuild.jsonc")).toThrow(ManifestValidationError);
+    });
+
     it("should accept null define overrides in build configurations", () => {
       const manifestWithUndefine = {
         ...validManifest,

@@ -99,7 +99,7 @@ export const aliasLiteralsRule: LuaOptimizationRule = {
   id: "introduce.alias-literals",
   family: "aliases",
   description: "Introduce locals for profitable repeated literals",
-  enabled: (options) => options.aliasLiterals,
+  defaultEnabled: (options) => options.aliasLiterals,
   hooks: {
     introduceLocals(context) {
       context.localIntroductions.proposeAlias(literalAliasStrategy);

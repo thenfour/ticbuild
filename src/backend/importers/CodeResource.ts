@@ -40,6 +40,9 @@ export const LUA_RELEASE_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   simplifyExpressions: true,
   removeUnusedLocals: true,
   removeUnusedFunctions: false,
+  canonicalizeSyntax: true,
+  simplifyControlFlow: true,
+  ruleOverrides: {},
   functionNamesToKeep: ["TIC", "BDR", "SCN"],
   renameTableFields: false,
   tableEntryKeysToRename: [],
@@ -59,11 +62,17 @@ export const MAX_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   simplifyExpressions: true,
   removeUnusedLocals: true,
   removeUnusedFunctions: false,
+  canonicalizeSyntax: true,
+  simplifyControlFlow: true,
   functionNamesToKeep: ["TIC", "BDR", "SCN"],
   renameTableFields: false,
   tableEntryKeysToRename: [],
   globalSymbolsToRename: [],
   globalSymbolRenaming: "opt-out",
+  ruleOverrides: {
+    // currently not helpful.
+    "syntax.omit-local-nil": false,
+  },
 } as const;
 
 const zopfliMaxOptions: ZopfliOptions = {

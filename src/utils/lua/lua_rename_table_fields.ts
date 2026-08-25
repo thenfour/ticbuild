@@ -485,7 +485,7 @@ export const renameTableFieldsRule: LuaOptimizationRule = {
    id: "rename.table-fields",
    family: "symbols",
    description: "Rename fields of non-escaping local tables",
-   enabled: (options) => options.renameTableFields,
+   defaultEnabled: (options) => options.renameTableFields,
    hooks: {
       rename(context) {
          context.ast = renameTableFieldsInAST(context.ast);

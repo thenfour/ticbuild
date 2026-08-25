@@ -262,7 +262,7 @@ export const packLocalDeclarationsRule: LuaOptimizationRule = {
    id: "finalize.pack-local-declarations",
    family: "layout",
    description: "Pack compatible consecutive local declarations",
-   enabled: (options) => options.packLocalDeclarations,
+   defaultEnabled: (options) => options.packLocalDeclarations,
    hooks: {
       finalize(context) {
          context.ast = packLocalDeclarationsInAST(context.ast);

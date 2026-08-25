@@ -1,5 +1,5 @@
 import * as luaparse from "luaparse";
-import { LUA_RESERVED_WORDS } from "./lua_ast";
+import { isLuaIdentifierName } from "./lua_ast";
 import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import { collectLuaIdentifierNames, LuaSymbolAllocator } from "./lua_symbols";
 
@@ -83,10 +83,6 @@ function isIdentifier(node: unknown): node is luaparse.Identifier {
   return !!node && typeof node === "object" && (node as { type?: string }).type === "Identifier";
 }
 
-function isValidIdentifierName(name: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !LUA_RESERVED_WORDS.has(name);
-}
-
 function makeRenameMap(
   ast: luaparse.Chunk,
   mode: "opt-in" | "opt-out",
@@ -103,7 +99,7 @@ function makeRenameMap(
     ? [...analysis.definitions(), ...namesToRename]
     : namesToRename;
   const uniqueAllowedNames = Array.from(new Set(candidates))
-    .filter(isValidIdentifierName)
+    .filter(isLuaIdentifierName)
     .filter((name) => !namesToKeep.has(name));
 
   const originalOrder = new Map(uniqueAllowedNames.map((name, index) => [name, index]));
@@ -374,7 +370,7 @@ export const renameAllowedGlobalsRule: LuaOptimizationRule = {
   id: "rename.allowed-globals",
   family: "symbols",
   description: "Rename eligible globals while preserving protected names",
-  enabled: (options) => (options.globalSymbolRenaming ?? "opt-in") !== "off",
+  defaultEnabled: (options) => (options.globalSymbolRenaming ?? "opt-in") !== "off",
   hooks: {
     rename(context) {
       const options = context.options;

@@ -355,7 +355,7 @@ export const removeUnusedLocalsRule: LuaOptimizationRule = {
    id: "reduce.remove-unused-locals",
    family: "dead-code",
    description: "Remove unused locals with side-effect-free initializers",
-   enabled: (options) => options.removeUnusedLocals,
+   defaultEnabled: (options) => options.removeUnusedLocals,
    hooks: {
       reduce(context) {
          const result = removeUnusedLocals(context.ast);

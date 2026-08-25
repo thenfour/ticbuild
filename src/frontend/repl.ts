@@ -8,6 +8,7 @@ import { TicbuildProjectCore } from "../backend/projectCore";
 import * as cons from "../utils/console";
 import { printReplHelp } from "../utils/help";
 import { OptimizationRuleOptions } from "../utils/lua/lua_processor";
+import { luaOptimizationRules } from "../utils/lua/lua_optimizer_rules";
 import { CoalesceBool } from "../utils/utils";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 
@@ -44,7 +45,7 @@ type ReplCommandOptions = CommandLineOptions & {
 type ReplState = {
     multiLine: boolean;
     minifyEnabled: boolean;
-    ruleOverrides: Partial<OptimizationRuleOptions>;
+    minificationOverrides: Partial<OptimizationRuleOptions>;
 };
 
 type ParsedReplCommand = {
@@ -62,7 +63,13 @@ const toggleableRuleKeys: Record<string, keyof OptimizationRuleOptions> = {
     removeunusedfunctions: "removeUnusedFunctions",
     renametablefields: "renameTableFields",
     packlocaldeclarations: "packLocalDeclarations",
+    canonicalizesyntax: "canonicalizeSyntax",
+    simplifycontrolflow: "simplifyControlFlow",
 };
+
+const optimizationRuleIds = new Map(
+    luaOptimizationRules.map((rule) => [rule.id.toLowerCase(), rule.id]),
+);
 
 function getPrompt(state: ReplState, hasBuffer: boolean): string {
     if (!state.multiLine) {
@@ -131,10 +138,17 @@ async function handleReplCommand(
 function handleMinifyCommand(args: string[], state: ReplState): void {
     if (args.length === 0) {
         cons.info(`minify: ${state.minifyEnabled ? "on" : "off"}`);
-        const overrides = Object.entries(state.ruleOverrides);
+        const overrides = Object.entries(state.minificationOverrides)
+            .filter(([key]) => key !== "ruleOverrides");
         if (overrides.length > 0) {
             cons.info(
-                `rule overrides: ${overrides.map(([key, value]) => `${key}=${String(value)}`).join(", ")}`,
+                `option overrides: ${overrides.map(([key, value]) => `${key}=${String(value)}`).join(", ")}`,
+            );
+        }
+        const ruleOverrides = Object.entries(state.minificationOverrides.ruleOverrides ?? {});
+        if (ruleOverrides.length > 0) {
+            cons.info(
+                `rule overrides: ${ruleOverrides.map(([key, value]) => `${key}=${String(value)}`).join(", ")}`,
             );
         }
         return;
@@ -153,8 +167,9 @@ function handleMinifyCommand(args: string[], state: ReplState): void {
 
     if (args.length === 2) {
         const ruleKey = args[0].toLowerCase();
-        const rule = toggleableRuleKeys[ruleKey];
-        if (!rule) {
+        const option = toggleableRuleKeys[ruleKey];
+        const ruleId = optimizationRuleIds.get(ruleKey);
+        if (!option && !ruleId) {
             cons.error(`Unknown or non-toggleable rule: ${args[0]}`);
             return;
         }
@@ -163,8 +178,16 @@ function handleMinifyCommand(args: string[], state: ReplState): void {
             cons.error("Usage: :minify <rule> on|off");
             return;
         }
-        state.ruleOverrides[rule] = value as any;
-        cons.info(`minify ${rule}: ${value ? "on" : "off"}`);
+        if (option) {
+            state.minificationOverrides[option] = value as never;
+            cons.info(`minify ${option}: ${value ? "on" : "off"}`);
+        } else if (ruleId) {
+            state.minificationOverrides.ruleOverrides = {
+                ...state.minificationOverrides.ruleOverrides,
+                [ruleId]: value,
+            };
+            cons.info(`minify ${ruleId}: ${value ? "on" : "off"}`);
+        }
         return;
     }
 
@@ -212,10 +235,10 @@ function createReplCore(baseCore: TicbuildProjectCore, state: ReplState): Ticbui
     }
 
     manifest.assembly.lua.minify = state.minifyEnabled;
-    if (Object.keys(state.ruleOverrides).length > 0) {
+    if (Object.keys(state.minificationOverrides).length > 0) {
         manifest.assembly.lua.minification = {
             ...(manifest.assembly.lua.minification || {}),
-            ...state.ruleOverrides,
+            ...state.minificationOverrides,
         };
     }
 
@@ -239,7 +262,7 @@ export async function replCommand(manifestPath?: string, options?: ReplCommandOp
     const replState: ReplState = {
         multiLine: !!options?.multiLine,
         minifyEnabled: CoalesceBool(baseCore.manifest.assembly.lua?.minify, false),
-        ruleOverrides: {},
+        minificationOverrides: {},
     };
 
     const replFilePath = path.join(baseCore.projectDir, "__repl__.lua");

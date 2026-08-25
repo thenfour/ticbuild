@@ -267,6 +267,37 @@
                 "removeUnusedFunctions": {
                   "type": "boolean"
                 },
+                "canonicalizeSyntax": {
+                  "type": "boolean",
+                  "description": "Enable conservative syntax canonicalization rules. Explicit ruleOverrides take precedence."
+                },
+                "simplifyControlFlow": {
+                  "type": "boolean",
+                  "description": "Enable conservative control-flow simplification rules. Explicit ruleOverrides take precedence."
+                },
+                "ruleOverrides": {
+                  "type": "object",
+                  "description": "Enable or disable individual optimizer plugins by stable rule ID. Overrides each rule's umbrella or specialized option.",
+                  "properties": {
+                    "syntax.strip-comments": { "type": "boolean" },
+                    "reduce.simplify-expressions": { "type": "boolean" },
+                    "syntax.member-access": { "type": "boolean" },
+                    "syntax.bare-table-key": { "type": "boolean" },
+                    "syntax.omit-local-nil": { "type": "boolean" },
+                    "control-flow.invert-negated-if": { "type": "boolean" },
+                    "control-flow.remove-false-while": { "type": "boolean" },
+                    "reduce.remove-unused-locals": { "type": "boolean" },
+                    "reduce.remove-unused-functions": { "type": "boolean" },
+                    "introduce.alias-literals": { "type": "boolean" },
+                    "introduce.alias-repeated-expressions": { "type": "boolean" },
+                    "finalize.pack-local-declarations": { "type": "boolean" },
+                    "rename.local-variables": { "type": "boolean" },
+                    "rename.allowed-globals": { "type": "boolean" },
+                    "rename.allowed-table-keys": { "type": "boolean" },
+                    "rename.table-fields": { "type": "boolean" }
+                  },
+                  "additionalProperties": false
+                },
                 "functionNamesToKeep": {
                   "type": "array",
                   "items": {

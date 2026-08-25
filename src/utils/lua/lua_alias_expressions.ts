@@ -185,7 +185,7 @@ export const aliasRepeatedExpressionsRule: LuaOptimizationRule = {
    id: "introduce.alias-repeated-expressions",
    family: "aliases",
    description: "Introduce locals for profitable repeated expressions",
-   enabled: (options) => options.aliasRepeatedExpressions,
+   defaultEnabled: (options) => options.aliasRepeatedExpressions,
    hooks: {
       introduceLocals(context) {
          context.localIntroductions.proposeAlias(repeatedExpressionAliasStrategy);

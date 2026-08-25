@@ -1,4 +1,6 @@
 import * as luaparse from "luaparse";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { literalAliasStrategy } from "./lua_alias_literals";
 import { MAX_LUA_REDUCTION_ROUNDS, optimizeLuaAst } from "./lua_optimizer";
 import { fingerprintLuaAst } from "./lua_optimizer_fingerprint";
@@ -71,7 +73,7 @@ describe("Lua optimizer engine", () => {
         id: "test.registered-first",
         family: "test",
         description: "First test rule",
-        enabled: () => true,
+        defaultEnabled: () => true,
         hooks: {
           reduce: () => {
             events.push("first.reduce");
@@ -84,7 +86,7 @@ describe("Lua optimizer engine", () => {
         id: "test.registered-second",
         family: "test",
         description: "Second test rule",
-        enabled: () => true,
+        defaultEnabled: () => true,
         hooks: {
           normalize: () => events.push("second.normalize"),
           reduce: () => {
@@ -98,7 +100,7 @@ describe("Lua optimizer engine", () => {
         id: "test.disabled",
         family: "test",
         description: "Disabled test rule",
-        enabled: () => false,
+        defaultEnabled: () => false,
         hooks: {
           normalize: () => events.push("disabled.normalize"),
         },
@@ -122,7 +124,7 @@ describe("Lua optimizer engine", () => {
       id: "test.alias",
       family: "test",
       description: "Propose a literal alias",
-      enabled: () => true,
+      defaultEnabled: () => true,
       hooks: {
         introduceLocals(context) {
           context.localIntroductions.proposeAlias(literalAliasStrategy);
@@ -133,7 +135,7 @@ describe("Lua optimizer engine", () => {
       id: "test.finalize-observer",
       family: "test",
       description: "Observe the finalized AST",
-      enabled: () => true,
+      defaultEnabled: () => true,
       hooks: {
         finalize(context) {
           finalizeSawGeneratedLocal = context.ast.body[0]?.type === "LocalStatement";
@@ -159,7 +161,7 @@ describe("Lua optimizer engine", () => {
       id: "test.invalid-local-proposal",
       family: "test",
       description: "Propose a local at the wrong time",
-      enabled: () => true,
+      defaultEnabled: () => true,
       hooks: {
         introduceLocals(context) {
           retainedCollector = context.localIntroductions;
@@ -186,12 +188,25 @@ describe("Lua optimizer engine", () => {
     }
   });
 
+  it("keeps public rule override IDs synchronized with the manifest schema", () => {
+    const schema = JSON.parse(fs.readFileSync(
+      path.resolve(__dirname, "../../..", "ticbuild.schema.json"),
+      "utf8",
+    ));
+    const schemaRuleIds = Object.keys(
+      schema.properties.assembly.properties.lua.properties.minification
+        .properties.ruleOverrides.properties,
+    );
+
+    expect(schemaRuleIds.sort()).toEqual(luaOptimizationRules.map((rule) => rule.id).sort());
+  });
+
   it("detects a reduction cycle and identifies the changing rule", () => {
     const toggleRule: LuaOptimizationRule = {
       id: "test.toggle-number",
       family: "test",
       description: "Toggle a number",
-      enabled: () => true,
+      defaultEnabled: () => true,
       hooks: {
         reduce(context) {
           const statement = context.ast.body[0] as luaparse.ReturnStatement;
@@ -212,7 +227,7 @@ describe("Lua optimizer engine", () => {
       id: "test.increment-number",
       family: "test",
       description: "Increment a number",
-      enabled: () => true,
+      defaultEnabled: () => true,
       hooks: {
         reduce(context) {
           const statement = context.ast.body[0] as luaparse.ReturnStatement;
@@ -233,7 +248,7 @@ describe("Lua optimizer engine", () => {
       id: "test.unreported-change",
       family: "test",
       description: "Change a number without reporting it",
-      enabled: () => true,
+      defaultEnabled: () => true,
       hooks: {
         reduce(context) {
           const statement = context.ast.body[0] as luaparse.ReturnStatement;

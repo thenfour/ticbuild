@@ -8,6 +8,10 @@ export const LUA_RESERVED_WORDS = new Set([
    "in",  "local", "nil", "not",  "or",     "repeat", "return", "then", "true",     "until", "while"
 ]);
 
+export function isLuaIdentifierName(name: string): boolean {
+   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !LUA_RESERVED_WORDS.has(name);
+}
+
 
 
 // Walk all nodes in the AST, calling visitor for each node

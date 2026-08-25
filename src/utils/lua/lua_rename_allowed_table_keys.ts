@@ -205,7 +205,7 @@ export const renameAllowedTableKeysRule: LuaOptimizationRule = {
    id: "rename.allowed-table-keys",
    family: "symbols",
    description: "Rename explicitly allowed table entry keys",
-   enabled: (options) => options.tableEntryKeysToRename?.length > 0,
+   defaultEnabled: (options) => options.tableEntryKeysToRename?.length > 0,
    hooks: {
       rename(context) {
          context.ast = renameAllowedTableKeysInAST(

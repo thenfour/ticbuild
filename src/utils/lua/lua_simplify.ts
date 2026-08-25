@@ -672,7 +672,7 @@ export const simplifyExpressionsRule: LuaOptimizationRule = {
    id: "reduce.simplify-expressions",
    family: "simplify",
    description: "Fold constants and propagate simple constant locals",
-   enabled: (options) => options.simplifyExpressions,
+   defaultEnabled: (options) => options.simplifyExpressions,
    hooks: {
       reduce(context) {
          const result = simplifyExpressions(context.ast);

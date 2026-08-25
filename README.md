@@ -198,7 +198,8 @@ Commands always start with `:`.
 #### `:minify` details
 
 * `:minify on|off` toggles overall minification for the session.
-* `:minify <rule> on|off` overrides individual minification rules. rules:
+* `:minify <rule> on|off` overrides an option umbrella, specialized option, or
+  optimizer plugin. Option names:
 
 ```
 stripComments
@@ -210,7 +211,33 @@ removeUnusedLocals
 removeUnusedFunctions
 renameTableFields
 packLocalDeclarations
+canonicalizeSyntax
+simplifyControlFlow
 renameSpecifiedGlobalSymbols (legacy opt-in switch)
+```
+
+Every optimizer plugin can also be overridden by its finer rule ID, even when
+its umbrella is disabled. For example, `:minify syntax.member-access on`.
+
+The rule IDs are:
+
+```
+syntax.strip-comments
+reduce.simplify-expressions
+syntax.member-access
+syntax.bare-table-key
+syntax.omit-local-nil
+control-flow.invert-negated-if
+control-flow.remove-false-while
+reduce.remove-unused-locals
+reduce.remove-unused-functions
+introduce.alias-literals
+introduce.alias-repeated-expressions
+finalize.pack-local-declarations
+rename.local-variables
+rename.allowed-globals
+rename.allowed-table-keys
+rename.table-fields
 ```
 
 These overrides are applied on top of the manifest’s
@@ -395,7 +422,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
       "minify": true,
       "minification": {
         // options here are exactly those of OptimizationRuleOptions
-        // these are all the default values if not specified.
+        // Defaults are LUA_RELEASE_OPTIMIZATION_OPTIONS
         "stripComments": true,
         "maxIndentLevel": 1,
         // "traceable" puts each diagnostic Lua anchor on its own generated line
