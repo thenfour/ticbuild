@@ -18,6 +18,30 @@ type RenameAllowedGlobalsOptions = {
   namesToKeep?: string[] | null;
 };
 
+type GlobalIdentifierMapping = {
+  get(name: string): string | undefined;
+};
+
+class AllowedGlobalReferenceCounter implements GlobalIdentifierMapping {
+  private readonly counts = new Map<string, number>();
+
+  constructor(names: string[]) {
+    names.forEach(name => this.counts.set(name, 0));
+  }
+
+  // The scope walker calls get() only for identifiers that are not shadowed, so
+  // counting through the same interface keeps analysis and rewriting aligned.
+  get(name: string): undefined {
+    const count = this.counts.get(name);
+    if (count !== undefined) this.counts.set(name, count + 1);
+    return undefined;
+  }
+
+  count(name: string): number {
+    return this.counts.get(name) ?? 0;
+  }
+}
+
 class GlobalRenameScope {
   private parent: GlobalRenameScope | null;
   private localNames = new Set<string>();
@@ -64,6 +88,14 @@ function makeRenameMap(
     .filter(isValidIdentifierName)
     .filter((name) => !namesToKeep.has(name));
 
+  const referenceCounter = new AllowedGlobalReferenceCounter(uniqueAllowedNames);
+  processBlock(ast.body, new GlobalRenameScope(), referenceCounter);
+  const originalOrder = new Map(uniqueAllowedNames.map((name, index) => [name, index]));
+  uniqueAllowedNames.sort((a, b) => {
+    const frequencyDifference = referenceCounter.count(b) - referenceCounter.count(a);
+    return frequencyDifference || originalOrder.get(a)! - originalOrder.get(b)!;
+  });
+
   const mapping = new Map<string, string>();
   const symbolAllocator = new LuaSymbolAllocator({ reservedNames: usedNames });
   for (const name of uniqueAllowedNames) {
@@ -76,7 +108,7 @@ function makeRenameMap(
 function maybeRenameIdentifier(
   node: luaparse.Identifier,
   scope: GlobalRenameScope,
-  mapping: Map<string, string>,
+  mapping: GlobalIdentifierMapping,
 ): void {
   if (scope.isShadowed(node.name)) {
     return;
@@ -90,7 +122,7 @@ function maybeRenameIdentifier(
 function processStatement(
   stmt: luaparse.Statement,
   scope: GlobalRenameScope,
-  mapping: Map<string, string>,
+  mapping: GlobalIdentifierMapping,
 ): void {
   switch (stmt.type) {
     case "LocalStatement": {
@@ -148,10 +180,12 @@ function processStatement(
       processBlock(stmt.body, scope.createChild(), mapping);
       return;
 
-    case "RepeatStatement":
-      processBlock(stmt.body, scope.createChild(), mapping);
-      processExpression(stmt.condition, scope, mapping);
+    case "RepeatStatement": {
+      const repeatScope = scope.createChild();
+      processBlock(stmt.body, repeatScope, mapping);
+      processExpression(stmt.condition, repeatScope, mapping);
       return;
+    }
 
     case "ForNumericStatement": {
       processExpression(stmt.start, scope, mapping);
@@ -191,7 +225,7 @@ function processStatement(
 function processAssignmentTarget(
   expr: luaparse.Expression,
   scope: GlobalRenameScope,
-  mapping: Map<string, string>,
+  mapping: GlobalIdentifierMapping,
 ): void {
   switch (expr.type) {
     case "Identifier":
@@ -216,7 +250,7 @@ function processAssignmentTarget(
 function processExpression(
   expr: luaparse.Expression,
   scope: GlobalRenameScope,
-  mapping: Map<string, string>,
+  mapping: GlobalIdentifierMapping,
 ): void {
   switch (expr.type) {
     case "Identifier":
@@ -289,7 +323,7 @@ function processExpression(
 function processBlock(
   body: luaparse.Statement[],
   scope: GlobalRenameScope,
-  mapping: Map<string, string>,
+  mapping: GlobalIdentifierMapping,
 ): void {
   body.forEach((stmt) => processStatement(stmt, scope, mapping));
 }

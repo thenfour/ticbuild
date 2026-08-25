@@ -31,6 +31,25 @@ describe("lexically scoped generated local names", () => {
     expect(output).toBe(`local ${expectedNames.join(",")}`);
   });
 
+  it("gives the shortest name to the most frequently referenced binding", () => {
+    const infrequentNames = Array.from({ length: 53 }, (_, index) => `infrequentName${index}`);
+    const input = `
+local ${[...infrequentNames, "frequentName"].join(",")}
+return frequentName + frequentName + frequentName
+`;
+    const output = processLua(input, options).trim();
+    const infrequentGeneratedNames = [
+      ..."bcdefghijklmnopqrstuvwxyz",
+      ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "_",
+      "aa",
+    ];
+
+    expect(output).toBe(
+      `local ${[...infrequentGeneratedNames, "a"].join(",")} return a+a+a`,
+    );
+  });
+
   it("reuses names in sibling blocks", () => {
     const input = `
 do
@@ -73,7 +92,7 @@ return recurse(2)
 `;
 
     expect(processLua(input, options).trim()).toBe(
-      "local function a(b) if b>0 then return a(b-1) end return b end return a(2)",
+      "local function b(a) if a>0 then return b(a-1) end return a end return b(2)",
     );
   });
 
@@ -88,6 +107,21 @@ return callback(2)
 
     expect(processLua(input, options).replace(/\s+/g, " ").trim()).toBe(
       "local a=1 local b=function(b) return a+b end return b(2)",
+    );
+  });
+
+  it("tracks separate bindings when a local name is shadowed", () => {
+    const input = `
+local value = 1
+local beforeShadow = function()
+  return value
+end
+local value = 2
+return beforeShadow() + value + value + value
+`;
+
+    expect(processLua(input, options).replace(/\s+/g, " ").trim()).toBe(
+      "local b=1 local c=function() return b end local a=2 return c()+a+a+a",
     );
   });
 

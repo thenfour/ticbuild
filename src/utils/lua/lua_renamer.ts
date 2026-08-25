@@ -2,261 +2,239 @@ import * as luaparse from "luaparse";
 import { isIdentifier } from "./lua_ast";
 import { collectNamesUnavailableToLocalRenaming, LuaSymbolAllocator } from "./lua_symbols";
 
-// tracks scope hierarchy for variable rename scope
-class RenameScope {
-  private parent: RenameScope | null;
-  private mappings = new Map<string, string>();
-  private symbolAllocator: LuaSymbolAllocator;
+type RenameBinding = {
+  declaration: luaparse.Identifier;
+  references: luaparse.Identifier[];
+  conflicts: Set<RenameBinding>;
+  order: number;
+  newName?: string;
+};
 
-  constructor(parent: RenameScope | null, symbolAllocator: LuaSymbolAllocator) {
-    this.parent = parent;
-    this.symbolAllocator = symbolAllocator;
+class RenameBindingScope {
+  private readonly bindingsByName = new Map<string, RenameBinding>();
+  private readonly localBindings: RenameBinding[] = [];
+
+  constructor(private readonly parent: RenameBindingScope | null = null) {}
+
+  createChild(): RenameBindingScope {
+    return new RenameBindingScope(this);
   }
 
-  define(originalName: string, newName: string): void {
-    this.mappings.set(originalName, newName);
+  define(identifier: luaparse.Identifier, order: number): RenameBinding {
+    const binding: RenameBinding = {
+      declaration: identifier,
+      references: [],
+      conflicts: new Set<RenameBinding>(),
+      order,
+    };
+    // Active lexical bindings cannot share an emitted spelling without
+    // risking shadowing or capture. Sibling scopes never enter this set.
+    this.forEachActiveBinding(activeBinding => {
+      binding.conflicts.add(activeBinding);
+      activeBinding.conflicts.add(binding);
+    });
+    this.localBindings.push(binding);
+    this.bindingsByName.set(identifier.name, binding);
+    return binding;
   }
 
-  lookup(name: string): string | undefined {
-    const local = this.mappings.get(name);
-    if (local !== undefined) return local;
-    return this.parent?.lookup(name);
+  reference(identifier: luaparse.Identifier): void {
+    this.lookup(identifier.name)?.references.push(identifier);
   }
 
-  allocateName(): string {
-    return this.symbolAllocator.allocate();
+  private lookup(name: string): RenameBinding | undefined {
+    return this.bindingsByName.get(name) ?? this.parent?.lookup(name);
   }
 
-  createChild(): RenameScope {
-    return new RenameScope(this, this.symbolAllocator.fork());
+  private forEachActiveBinding(visitor: (binding: RenameBinding) => void): void {
+    this.parent?.forEachActiveBinding(visitor);
+    this.localBindings.forEach(visitor);
   }
 }
 
 export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
-  const rootAllocator = new LuaSymbolAllocator({ reservedNames: collectNamesUnavailableToLocalRenaming(ast) });
+  const bindings: RenameBinding[] = [];
 
-  function processScope(body: luaparse.Statement[], scope: RenameScope): void {
-    for (const stmt of body) {
-      processStatement(stmt, scope);
-    }
+  function define(identifier: luaparse.Identifier, scope: RenameBindingScope): void {
+    bindings.push(scope.define(identifier, bindings.length));
   }
 
-  function processStatement(node: any, scope: RenameScope): void {
+  function processScope(body: luaparse.Statement[], scope: RenameBindingScope): void {
+    body.forEach(stmt => processStatement(stmt, scope));
+  }
+
+  function processStatement(node: any, scope: RenameBindingScope): void {
     if (!node) return;
 
     switch (node.type) {
-      case "LocalStatement": {
-        // Evaluate init expressions with current scope
-        if (node.init) {
-          node.init.forEach((expr: any) => processExpression(expr, scope));
-        }
-        // Then declare variables in current scope
-        node.variables.forEach((v: any) => {
-          if (isIdentifier(v)) {
-            const newName = scope.allocateName();
-            scope.define(v.name, newName);
-            v.name = newName; // Mutate the AST
-          }
+      case "LocalStatement":
+        node.init?.forEach((expr: any) => processExpression(expr, scope));
+        node.variables.forEach((variable: any) => {
+          if (isIdentifier(variable)) define(variable, scope);
         });
-        break;
-      }
+        return;
 
       case "FunctionDeclaration": {
-        // Handle local function name
-        if (node.isLocal && node.identifier && isIdentifier(node.identifier)) {
-          const newName = scope.allocateName();
-          scope.define(node.identifier.name, newName);
-          node.identifier.name = newName;
+        if (node.isLocal && isIdentifier(node.identifier)) {
+          define(node.identifier, scope);
         } else if (node.identifier) {
-          // Non-local function, process identifier
           processExpression(node.identifier, scope);
         }
 
-        // Create new scope for function body
-        const funcScope = scope.createChild();
-
-        // Rename parameters
-        node.parameters.forEach((p: any) => {
-          if (isIdentifier(p)) {
-            const newName = funcScope.allocateName();
-            funcScope.define(p.name, newName);
-            p.name = newName;
-          }
+        const functionScope = scope.createChild();
+        node.parameters.forEach((parameter: any) => {
+          if (isIdentifier(parameter)) define(parameter, functionScope);
         });
-
-        // Process function body with new scope
-        processScope(node.body, funcScope);
-        break;
+        processScope(node.body, functionScope);
+        return;
       }
 
       case "ForNumericStatement": {
-        const forScope = scope.createChild();
-
-        // Evaluate bounds with outer scope
         processExpression(node.start, scope);
         processExpression(node.end, scope);
         if (node.step) processExpression(node.step, scope);
 
-        // Rename loop variable
-        if (isIdentifier(node.variable)) {
-          const newName = forScope.allocateName();
-          forScope.define(node.variable.name, newName);
-          node.variable.name = newName;
-        }
-
+        const forScope = scope.createChild();
+        if (isIdentifier(node.variable)) define(node.variable, forScope);
         processScope(node.body, forScope);
-        break;
+        return;
       }
 
       case "ForGenericStatement": {
-        // Evaluate iterators with outer scope
-        node.iterators.forEach((it: any) => processExpression(it, scope));
-
+        node.iterators.forEach((iterator: any) => processExpression(iterator, scope));
         const forScope = scope.createChild();
-
-        // Rename loop variables
-        node.variables.forEach((v: any) => {
-          if (isIdentifier(v)) {
-            const newName = forScope.allocateName();
-            forScope.define(v.name, newName);
-            v.name = newName;
-          }
+        node.variables.forEach((variable: any) => {
+          if (isIdentifier(variable)) define(variable, forScope);
         });
-
         processScope(node.body, forScope);
-        break;
+        return;
       }
 
-      case "DoStatement": {
-        const doScope = scope.createChild();
-        processScope(node.body, doScope);
-        break;
-      }
+      case "DoStatement":
+        processScope(node.body, scope.createChild());
+        return;
 
-      case "WhileStatement": {
+      case "WhileStatement":
         processExpression(node.condition, scope);
         processScope(node.body, scope.createChild());
-        break;
-      }
+        return;
 
       case "RepeatStatement": {
         const repeatScope = scope.createChild();
         processScope(node.body, repeatScope);
         processExpression(node.condition, repeatScope);
-        break;
+        return;
       }
 
-      case "IfStatement": {
+      case "IfStatement":
         node.clauses.forEach((clause: any) => {
           if (clause.condition) processExpression(clause.condition, scope);
           processScope(clause.body, scope.createChild());
         });
-        break;
-      }
+        return;
 
-      case "ReturnStatement": {
-        node.arguments.forEach((arg: any) => processExpression(arg, scope));
-        break;
-      }
+      case "ReturnStatement":
+        node.arguments.forEach((argument: any) => processExpression(argument, scope));
+        return;
 
-      case "AssignmentStatement": {
-        node.variables.forEach((v: any) => processExpression(v, scope));
-        node.init.forEach((init: any) => processExpression(init, scope));
-        break;
-      }
+      case "AssignmentStatement":
+        node.variables.forEach((variable: any) => processExpression(variable, scope));
+        node.init.forEach((expr: any) => processExpression(expr, scope));
+        return;
 
-      case "CallStatement": {
+      case "CallStatement":
         processExpression(node.expression, scope);
-        break;
-      }
+        return;
 
-      // Other statement types don't need special handling
+      default:
+        return;
     }
   }
 
-  function processExpression(node: any, scope: RenameScope): void {
+  function processExpression(node: any, scope: RenameBindingScope): void {
     if (!node) return;
 
     switch (node.type) {
-      case "Identifier": {
-        const renamed = scope.lookup(node.name);
-        if (renamed !== undefined) {
-          node.name = renamed; // Mutate the AST
-        }
-        break;
-      }
+      case "Identifier":
+        scope.reference(node);
+        return;
 
       case "FunctionDeclaration": {
-        // Anonymous function expression
-        const funcScope = scope.createChild();
-
-        node.parameters.forEach((p: any) => {
-          if (isIdentifier(p)) {
-            const newName = funcScope.allocateName();
-            funcScope.define(p.name, newName);
-            p.name = newName;
-          }
+        const functionScope = scope.createChild();
+        node.parameters.forEach((parameter: any) => {
+          if (isIdentifier(parameter)) define(parameter, functionScope);
         });
-
-        processScope(node.body, funcScope);
-        break;
+        processScope(node.body, functionScope);
+        return;
       }
 
-      case "TableConstructorExpression": {
+      case "TableConstructorExpression":
         node.fields.forEach((field: any) => {
-          if (field.type === "TableKey") {
-            if (field.key) processExpression(field.key, scope);
-          }
-          if (field.value) processExpression(field.value, scope);
+          if (field.type === "TableKey") processExpression(field.key, scope);
+          processExpression(field.value, scope);
         });
-        break;
-      }
+        return;
 
       case "BinaryExpression":
-      case "LogicalExpression": {
+      case "LogicalExpression":
         processExpression(node.left, scope);
         processExpression(node.right, scope);
-        break;
-      }
+        return;
 
-      case "UnaryExpression": {
+      case "UnaryExpression":
         processExpression(node.argument, scope);
-        break;
-      }
+        return;
 
-      case "MemberExpression": {
+      case "MemberExpression":
         processExpression(node.base, scope);
-        // Don't process identifier - it's a property name, not a variable
-        break;
-      }
+        return;
 
-      case "IndexExpression": {
+      case "IndexExpression":
         processExpression(node.base, scope);
         processExpression(node.index, scope);
-        break;
-      }
+        return;
 
       case "CallExpression":
-      case "TableCallExpression":
-      case "StringCallExpression": {
         processExpression(node.base, scope);
-        if (node.arguments) {
-          if (Array.isArray(node.arguments)) {
-            node.arguments.forEach((arg: any) => processExpression(arg, scope));
-          } else {
-            processExpression(node.arguments, scope);
-          }
-        }
-        break;
-      }
+        node.arguments.forEach((argument: any) => processExpression(argument, scope));
+        return;
 
-      // Literals don't need processing
+      case "TableCallExpression":
+        processExpression(node.base, scope);
+        processExpression(node.arguments, scope);
+        return;
+
+      case "StringCallExpression":
+        processExpression(node.base, scope);
+        processExpression(node.argument, scope);
+        return;
+
+      default:
+        return;
     }
   }
 
-  // Start with a root scope (globals are not renamed)
-  const rootScope = new RenameScope(null, rootAllocator);
-  processScope(ast.body, rootScope);
+  processScope(ast.body, new RenameBindingScope());
+
+  const unavailableNames = collectNamesUnavailableToLocalRenaming(ast);
+  // Weighted graph coloring: frequent bindings choose first, while each
+  // binding reserves only names already used by bindings it can overlap.
+  [...bindings]
+    .sort((a, b) => b.references.length - a.references.length || a.order - b.order)
+    .forEach(binding => {
+      const reservedNames = new Set(unavailableNames);
+      binding.conflicts.forEach(conflict => {
+        if (conflict.newName) reservedNames.add(conflict.newName);
+      });
+      binding.newName = new LuaSymbolAllocator({ reservedNames }).allocate();
+    });
+
+  bindings.forEach(binding => {
+    binding.declaration.name = binding.newName!;
+    binding.references.forEach(reference => {
+      reference.name = binding.newName!;
+    });
+  });
 
   return ast;
 }

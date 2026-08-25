@@ -589,6 +589,23 @@ describe("Lua allowed global symbol renaming", () => {
     };
   }
 
+  it("gives the shortest name to the most frequently referenced allowed global", () => {
+    const infrequentNames = Array.from({ length: 53 }, (_, index) => `InfrequentGlobal${index}`);
+    const namesToRename = [...infrequentNames, "FrequentGlobal"];
+    const input = `
+${namesToRename.map(name => `${name}=0`).join("\n")}
+local function useShadow(InfrequentGlobal0)
+  return InfrequentGlobal0 + InfrequentGlobal0 + InfrequentGlobal0 + InfrequentGlobal0
+end
+return FrequentGlobal + FrequentGlobal + FrequentGlobal
+`;
+    const output = processLua(input, renameGlobalOptions({ globalSymbolsToRename: namesToRename }));
+
+    expect(output).toContain("b=0 c=0");
+    expect(output).toContain("aa=0 a=0 local function useShadow(InfrequentGlobal0)");
+    expect(output).toContain("return a+a+a");
+  });
+
   it("should rename explicitly allowed global function declarations and references", () => {
     const input = `
 function Demo_LongName(n)
@@ -668,6 +685,25 @@ return Demo_LongName() + useLocal() + useParam(3)
     expect(output).toContain("local Demo_LongName=2");
     expect(output).toContain("local function useParam(Demo_LongName)");
     expect(output).toContain("return a()+useLocal()+useParam(3)");
+  });
+
+  it("should keep repeat locals shadowing an allowed global through until", () => {
+    const input = `
+function Demo_LongName()
+  return 1
+end
+repeat
+  local Demo_LongName = nextValue()
+until Demo_LongName
+return Demo_LongName()
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolsToRename: ["Demo_LongName"],
+    }));
+
+    expect(output).toContain("repeat local Demo_LongName=nextValue() until Demo_LongName");
+    expect(output).toContain("return a()");
   });
 
   it("should not rewrite table field names or member names", () => {
