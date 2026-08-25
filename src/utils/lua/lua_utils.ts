@@ -1,5 +1,4 @@
 import * as luaparse from "luaparse";
-import { LUA_RESERVED_WORDS } from "./lua_ast";
 
 // luaparse doesn't actually output value; correct the type.
 export type StringLiteralNode = luaparse.StringLiteral & { value?: string | null };
@@ -18,27 +17,6 @@ const LUA_SIMPLE_STRING_ESCAPES: Readonly<Record<string, string>> = {
    "\"": "\"",
    "'": "'",
 };
-
-
-// Short name generator (a, b, c, ..., z, aa, ab, ...), skipping Lua reserved words.
-export function generateShortName(index: number): string {
-   const alphabet = "abcdefghijklmnopqrstuvwxyz";
-   let name = "";
-   let n = index;
-   do {
-      name = alphabet[n % 26] + name;
-      n = Math.floor(n / 26) - 1;
-   } while (n >= 0);
-   return name;
-}
-
-export function nextFreeName(counter: { value: number }): string {
-   while (true) {
-      const name = generateShortName(counter.value++);
-      if (!LUA_RESERVED_WORDS.has(name))
-         return name;
-   }
-}
 
 export function isStringLiteral(node: luaparse.Expression | undefined | null): node is luaparse.StringLiteral {
    return !!node && node.type === "StringLiteral";

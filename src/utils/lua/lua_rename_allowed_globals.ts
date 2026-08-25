@@ -1,6 +1,6 @@
 import * as luaparse from "luaparse";
 import { LUA_RESERVED_WORDS } from "./lua_ast";
-import { nextFreeName } from "./lua_utils";
+import { collectLuaIdentifierNames, LuaSymbolAllocator } from "./lua_symbols";
 
 const DEFAULT_GLOBAL_NAMES_TO_KEEP = new Set([
   "TIC",
@@ -52,36 +52,12 @@ function isValidIdentifierName(name: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !LUA_RESERVED_WORDS.has(name);
 }
 
-function collectUsedIdentifierNames(node: unknown, out: Set<string>): void {
-  if (!node || typeof node !== "object") {
-    return;
-  }
-
-  if (Array.isArray(node)) {
-    node.forEach((child) => collectUsedIdentifierNames(child, out));
-    return;
-  }
-
-  if (isIdentifier(node)) {
-    out.add(node.name);
-    return;
-  }
-
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "type" || key === "range" || key === "loc" || key === "raw") {
-      continue;
-    }
-    collectUsedIdentifierNames(value, out);
-  }
-}
-
 function makeRenameMap(
   ast: luaparse.Chunk,
   namesToRename: string[],
   namesToKeep: Set<string>,
 ): Map<string, string> {
-  const usedNames = new Set<string>();
-  collectUsedIdentifierNames(ast, usedNames);
+  const usedNames = collectLuaIdentifierNames(ast);
   namesToKeep.forEach((name) => usedNames.add(name));
 
   const uniqueAllowedNames = Array.from(new Set(namesToRename))
@@ -89,14 +65,10 @@ function makeRenameMap(
     .filter((name) => !namesToKeep.has(name));
 
   const mapping = new Map<string, string>();
-  const counter = { value: 0 };
+  const symbolAllocator = new LuaSymbolAllocator({ reservedNames: usedNames });
   for (const name of uniqueAllowedNames) {
-    let nextName: string;
-    do {
-      nextName = nextFreeName(counter);
-    } while (usedNames.has(nextName));
+    const nextName = symbolAllocator.allocate();
     mapping.set(name, nextName);
-    usedNames.add(nextName);
   }
   return mapping;
 }

@@ -19,7 +19,8 @@ we would need to follow data flow across function boundaries to track that, whic
 */
 
 import * as luaparse from "luaparse";
-import {isStringLiteral, nextFreeName, stringValue} from "./lua_utils";
+import {LuaSymbolAllocator} from "./lua_symbols";
+import {isStringLiteral, stringValue} from "./lua_utils";
 
 type Candidate = {
    name: string; ctor: luaparse.TableConstructorExpression; fields: Set<string>; disqualified: boolean;
@@ -463,13 +464,13 @@ export function renameTableFieldsInAST(ast: luaparse.Chunk): luaparse.Chunk {
    ast.body.forEach(stmt => scanStatement(stmt, candidates, false));
 
    // Build mappings for survivors
-   const counter = {value: 0};
+   const symbolAllocator = new LuaSymbolAllocator();
    candidates.forEach(cand => {
       if (cand.disqualified)
          return;
       cand.fields.forEach(field => {
          if (!cand.mapping.has(field))
-            cand.mapping.set(field, nextFreeName(counter));
+            cand.mapping.set(field, symbolAllocator.allocate());
       });
    });
 

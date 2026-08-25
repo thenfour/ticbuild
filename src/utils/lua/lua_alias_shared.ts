@@ -1,22 +1,11 @@
 import * as luaparse from "luaparse";
-import { isIdentifier, LUA_RESERVED_WORDS, walkAST } from "./lua_ast";
+import { isIdentifier, walkAST } from "./lua_ast";
+import { collectLuaIdentifierNames, LuaSymbolAllocator } from "./lua_symbols";
 import { inheritLuaNodeOrigin } from "./lua_ast_provenance";
 
 // ============================================================================
 // Shared aliasing utilities
 // ============================================================================
-
-// Generate a unique alias name
-export function generateAliasName(index: number, prefix: string = "_"): string {
-  const alphabet = "abcdefghijklmnopqrstuvwxyz";
-  let name = prefix;
-  let n = index;
-  do {
-    name += alphabet[n % 26];
-    n = Math.floor(n / 26) - 1;
-  } while (n >= 0);
-  return name;
-}
 
 // Clone an expression node (shallow clone of structure)
 // CLANG FORMAT PLEASE
@@ -657,10 +646,7 @@ export function createEmptyAliasPassReport(): AliasPassReport {
 export function runAliasPasses(ast: luaparse.Chunk, strategies: AliasStrategy[]): AliasPassResult {
   if (strategies.length === 0) return { ast, report: createEmptyAliasPassReport() };
 
-  const unavailableNames = new Set<string>();
-  walkAST(ast, (node) => {
-    if (isIdentifier(node)) unavailableNames.add(node.name);
-  });
+  const unavailableNames = collectLuaIdentifierNames(ast);
 
   let nextCandidateOrder = 0;
   const strategyStates = strategies.map((strategy) => ({
@@ -879,22 +865,22 @@ export function runAliasPasses(ast: luaparse.Chunk, strategies: AliasStrategy[])
     info.targetScope = findCommonAncestor(info.scopes, scopeParents, ast);
   });
   const provisionalNames = new Set(unavailableNames);
-  const provisionalCounters = new Map<string, number>();
+  const provisionalAllocators = new Map<string, LuaSymbolAllocator>();
   const profitableCandidates: AliasInfo[] = [];
   [...allCandidates]
     .sort((a, b) => a.order - b.order)
     .forEach((info) => {
-      let counter = provisionalCounters.get(info.strategy.prefix) ?? 0;
-      let aliasName: string;
-      do {
-        aliasName = generateAliasName(counter++, info.strategy.prefix);
-      } while (LUA_RESERVED_WORDS.has(aliasName) || provisionalNames.has(aliasName));
+      let allocator = provisionalAllocators.get(info.strategy.prefix);
+      if (!allocator) {
+        allocator = new LuaSymbolAllocator({ prefix: info.strategy.prefix, reservedNames: provisionalNames });
+        provisionalAllocators.set(info.strategy.prefix, allocator);
+      }
+      const aliasName = allocator.peek();
 
       const savings = info.strategy.estimateSavings(info, aliasName.length);
       if (savings <= 0) return;
 
-      provisionalCounters.set(info.strategy.prefix, counter);
-      provisionalNames.add(aliasName);
+      allocator.allocate();
       info.aliasName = aliasName;
       info.estimatedSavings = savings;
       profitableCandidates.push(info);
@@ -944,20 +930,19 @@ export function runAliasPasses(ast: luaparse.Chunk, strategies: AliasStrategy[])
   });
 
   const assignedNames = new Set(unavailableNames);
-  const aliasCounters = new Map<string, number>();
+  const aliasAllocators = new Map<string, LuaSymbolAllocator>();
   retainedCandidates.forEach((candidate) => {
     candidate.aliasName = undefined;
   });
   [...selectedCandidates]
     .sort((a, b) => a.order - b.order)
     .forEach((candidate) => {
-      let counter = aliasCounters.get(candidate.strategy.prefix) ?? 0;
-      let aliasName: string;
-      do {
-        aliasName = generateAliasName(counter++, candidate.strategy.prefix);
-      } while (LUA_RESERVED_WORDS.has(aliasName) || assignedNames.has(aliasName));
-      aliasCounters.set(candidate.strategy.prefix, counter);
-      assignedNames.add(aliasName);
+      let allocator = aliasAllocators.get(candidate.strategy.prefix);
+      if (!allocator) {
+        allocator = new LuaSymbolAllocator({ prefix: candidate.strategy.prefix, reservedNames: assignedNames });
+        aliasAllocators.set(candidate.strategy.prefix, allocator);
+      }
+      const aliasName = allocator.allocate();
       candidate.aliasName = aliasName;
       candidate.estimatedSavings = candidate.strategy.estimateSavings(candidate, aliasName.length);
     });

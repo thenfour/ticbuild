@@ -1,6 +1,38 @@
 import * as luaparse from "luaparse";
-import {LUA_RESERVED_WORDS} from "./lua_ast";
-import {isStringLiteral, nextFreeName, stringValue} from "./lua_utils";
+import {walkAST} from "./lua_ast";
+import {LuaSymbolAllocator} from "./lua_symbols";
+import {isStringLiteral, stringValue} from "./lua_utils";
+
+function collectStaticTableKeyNames(ast: luaparse.Chunk): Set<string> {
+   const names = new Set<string>();
+   walkAST(ast, node => {
+      if (node.type === "MemberExpression" && node.identifier?.type === "Identifier") {
+         names.add(node.identifier.name);
+      } else if (node.type === "IndexExpression" && isStringLiteral(node.index)) {
+         const value = stringValue(node.index);
+         if (value != null)
+            names.add(value);
+      } else if (node.type === "TableKeyString" && node.key?.type === "Identifier") {
+         names.add(node.key.name);
+      } else if (node.type === "TableKey" && isStringLiteral(node.key)) {
+         const value = stringValue(node.key);
+         if (value != null)
+            names.add(value);
+      }
+   });
+   return names;
+}
+
+function rewriteStringLiteralKey(node: luaparse.StringLiteral, mapping: Map<string, string>): void {
+   const value = stringValue(node);
+   if (value == null)
+      return;
+   const mapped = mapping.get(value);
+   if (mapped) {
+      node.value = mapped;
+      node.raw = JSON.stringify(mapped);
+   }
+}
 
 function rewriteExpression(expr: luaparse.Expression, mapping: Map<string, string>): void {
    switch (expr.type) {
@@ -20,15 +52,8 @@ function rewriteExpression(expr: luaparse.Expression, mapping: Map<string, strin
       case "IndexExpression": {
          rewriteExpression(expr.base, mapping);
          rewriteExpression(expr.index, mapping);
-         if (isStringLiteral(expr.index)) {
-            const val = stringValue(expr.index);
-            if (val != null) {
-               const mapped = mapping.get(val);
-               if (mapped) {
-                  expr.index = {type: "StringLiteral", value: mapped, raw: JSON.stringify(mapped)} as any;
-               }
-            }
-         }
+         if (isStringLiteral(expr.index))
+            rewriteStringLiteralKey(expr.index, mapping);
          return;
       }
 
@@ -69,19 +94,14 @@ function rewriteExpression(expr: luaparse.Expression, mapping: Map<string, strin
                   if (mapped)
                      field.key.name = mapped;
                } else if (isStringLiteral(field.key)) {
-                  const val = stringValue(field.key as luaparse.StringLiteral);
-                  if (val != null) {
-                     const mapped = mapping.get(val);
-                     if (mapped) {
-                        (field.key as luaparse.StringLiteral).value = mapped;
-                        (field.key as luaparse.StringLiteral).raw = JSON.stringify(mapped);
-                     }
-                  }
+                  rewriteStringLiteralKey(field.key, mapping);
                }
                if (field.value)
                   rewriteExpression(field.value, mapping);
             } else if (field.type === "TableKey") {
-               if (field.key)
+               if (isStringLiteral(field.key))
+                  rewriteStringLiteralKey(field.key, mapping);
+               else if (field.key)
                   rewriteExpression(field.key, mapping);
                if (field.value)
                   rewriteExpression(field.value, mapping);
@@ -167,10 +187,13 @@ export function renameAllowedTableKeysInAST(ast: luaparse.Chunk, keys: string[]|
       return ast;
 
    const mapping = new Map<string, string>();
-   const counter = {value: 0};
+   const renamedKeys = new Set(allow);
+   const reservedNames = collectStaticTableKeyNames(ast);
+   renamedKeys.forEach(key => reservedNames.delete(key));
+   const symbolAllocator = new LuaSymbolAllocator({reservedNames});
    for (const key of allow) {
       if (!mapping.has(key))
-         mapping.set(key, nextFreeName(counter));
+         mapping.set(key, symbolAllocator.allocate());
    }
 
    ast.body.forEach(stmt => rewriteStatement(stmt, mapping));
