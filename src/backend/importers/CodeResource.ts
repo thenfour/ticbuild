@@ -63,7 +63,7 @@ export const MAX_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   renameTableFields: false,
   tableEntryKeysToRename: [],
   globalSymbolsToRename: [],
-  globalSymbolRenaming: "opt-in",
+  globalSymbolRenaming: "opt-out",
 } as const;
 
 const zopfliMaxOptions: ZopfliOptions = {
