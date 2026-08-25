@@ -1,8 +1,6 @@
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { CodeResourceView } from "../backend/importers/CodeResource";
-import { preprocessLuaCode } from "../backend/luaPreprocessor";
-import { Manifest } from "../backend/manifestTypes";
+import { processLuaSnippet } from "../backend/luaSnippetProcessor";
 import { TicbuildProject } from "../backend/project";
 import { TicbuildProjectCore } from "../backend/projectCore";
 import * as cons from "../utils/console";
@@ -11,10 +9,6 @@ import { OptimizationRuleOptions } from "../utils/lua/lua_processor";
 import { luaOptimizationRules } from "../utils/lua/lua_optimizer_rules";
 import { CoalesceBool } from "../utils/utils";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
-
-function deepCloneManifest(manifest: Manifest): Manifest {
-    return JSON.parse(JSON.stringify(manifest)) as Manifest;
-}
 
 function readLine(rl: readline.Interface, prompt: string): Promise<string | null> {
     return new Promise((resolve) => {
@@ -211,46 +205,21 @@ async function processInput(
     replFilePath: string,
 ): Promise<void> {
     try {
-        const core = createReplCore(baseCore, state);
-        const preprocessed = await preprocessLuaCode(core, source, replFilePath);
-        const view = new CodeResourceView(
+        const result = await processLuaSnippet(
             source,
-            preprocessed.code,
-            preprocessed.minifyAllowedGlobalNames,
-            undefined,
-            preprocessed.sourceMap,
-            preprocessed.minifyGlobalNamesToKeep,
+            baseCore,
+            {
+                minifyEnabled: state.minifyEnabled,
+                minificationOverrides: state.minificationOverrides,
+            },
+            replFilePath,
+            { parseFailure: "return-original" },
         );
-        const artifacts = view.getArtifacts(core);
-        process.stdout.write(artifacts.minifiedSource + "\n");
+        process.stdout.write(result.minifiedSource + "\n");
     } catch (error) {
         cons.error(error instanceof Error ? error.message : String(error));
     }
 }
-
-function createReplCore(baseCore: TicbuildProjectCore, state: ReplState): TicbuildProjectCore {
-    const manifest = deepCloneManifest(baseCore.manifest);
-    if (!manifest.assembly.lua) {
-        manifest.assembly.lua = {};
-    }
-
-    manifest.assembly.lua.minify = state.minifyEnabled;
-    if (Object.keys(state.minificationOverrides).length > 0) {
-        manifest.assembly.lua.minification = {
-            ...(manifest.assembly.lua.minification || {}),
-            ...state.minificationOverrides,
-        };
-    }
-
-    return new TicbuildProjectCore({
-        manifest,
-        manifestPath: baseCore.manifestPath,
-        projectDir: baseCore.projectDir,
-        buildConfigName: baseCore.selectedBuildConfig,
-        overrideVariables: baseCore.overrideVariables,
-    });
-}
-
 
 export async function replCommand(manifestPath?: string, options?: ReplCommandOptions): Promise<void> {
     cons.info("ticbuild: repl command");

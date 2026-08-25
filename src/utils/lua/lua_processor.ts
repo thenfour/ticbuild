@@ -17,16 +17,27 @@ export { LuaPrinter } from "./lua_printer";
 export { unparseLua };
 export type { LuaLineBehavior, OptimizationRuleOptions };
 
+function parseLuaOrThrow(code: string): luaparse.Chunk {
+  return luaparse.parse(code, {
+    luaVersion: "5.3", // TIC-80 is 5.3-ish
+    comments: true,
+    locations: true,
+    ranges: true,
+  });
+}
+
+export function parseLuaQuiet(code: string): luaparse.Chunk | null {
+  try {
+    return parseLuaOrThrow(code);
+  } catch {
+    return null;
+  }
+}
+
 export function parseLua(code: string): luaparse.Chunk | null {
   //console.log(code);
   try {
-    const ast = luaparse.parse(code, {
-      luaVersion: "5.3", // TIC-80 is 5.3-ish
-      comments: true,
-      locations: true,
-      ranges: true,
-    });
-    return ast;
+    return parseLuaOrThrow(code);
   } catch (error) {
     console.error("Error parsing Lua code:", error);
     console.log("Lua code:\n", code);
@@ -41,7 +52,15 @@ export type LuaProcessResult = {
   transformMap: LuaTransformMap;
 };
 
-export function processLuaWithReport(code: string, ruleOptions: OptimizationRuleOptions): LuaProcessResult {
+export type LuaProcessOptions = {
+  parseFailure?: "return-original" | "throw";
+};
+
+export function processLuaWithReport(
+  code: string,
+  ruleOptions: OptimizationRuleOptions,
+  processOptions: LuaProcessOptions = {},
+): LuaProcessResult {
   let processedCode = code;
   const preparationMap = LuaTransformMapBuilder.identity(code.length);
   processedCode = disambiguateNumericConcat(processedCode, preparationMap);
@@ -70,7 +89,12 @@ export function processLuaWithReport(code: string, ruleOptions: OptimizationRule
   }
   processedCode = disableMinify.code;
 
-  let ast = parseLua(processedCode);
+  let ast: luaparse.Chunk | null;
+  if (processOptions.parseFailure === "throw") {
+    ast = parseLuaOrThrow(processedCode);
+  } else {
+    ast = parseLua(processedCode);
+  }
   if (!ast) {
     console.error("Failed to parse Lua code; returning original code.");
     return {

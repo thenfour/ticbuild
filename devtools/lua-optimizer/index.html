@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>ticbuild Lua optimizer lab</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <div>
+          <h1>ticbuild Lua optimizer sandbox</h1>
+        </div>
+        <div class="project-summary">
+          <div id="project-name">Loading project…</div>
+          <div id="project-path"></div>
+        </div>
+      </header>
+
+      <main class="app-layout">
+        <section class="code-workspace" aria-label="Lua source and output">
+          <article class="code-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Input Lua source</h2>
+              </div>
+              <span id="input-bytes" class="metric">0 B</span>
+            </div>
+            <textarea id="source" spellcheck="false" aria-label="Lua source"></textarea>
+          </article>
+
+          <article id="output-panel" class="code-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Processed Lua</h2>
+              </div>
+              <div class="output-actions">
+                <select id="output-view" aria-label="Output view">
+                  <option value="minified">Minified</option>
+                  <option value="preprocessed">Preprocessed</option>
+                </select>
+                <button id="copy-output" type="button">Copy</button>
+              </div>
+            </div>
+            <textarea id="output" spellcheck="false" readonly aria-label="Processed Lua output"></textarea>
+          </article>
+
+          <section class="diagnostics" aria-live="polite">
+            <div id="status" class="status" data-kind="loading">Loading optimizer…</div>
+            <div id="stats" class="stats"></div>
+            <div id="report" class="report"></div>
+          </section>
+        </section>
+
+        <aside class="settings-panel" aria-label="Optimizer settings">
+          <div class="settings-heading">
+            <div>
+              <h2>Optimizer settings</h2>
+            </div>
+            <label class="master-toggle">
+              <input id="minify-enabled" type="checkbox" />
+              <span>Minify</span>
+            </label>
+          </div>
+
+          <div class="preset-row" aria-label="Optimizer presets">
+            <button type="button" data-preset="project">Project</button>
+            <button type="button" data-preset="release">Release</button>
+            <button type="button" data-preset="max">Max</button>
+          </div>
+
+          <section>
+            <h3>Pass groups</h3>
+            <div id="boolean-options" class="control-list"></div>
+          </section>
+
+          <details>
+            <summary>Printer and symbol settings</summary>
+            <div id="advanced-options" class="control-list advanced-controls"></div>
+          </details>
+
+          <details open>
+            <summary>Individual rules</summary>
+            <p class="settings-note">Inherit follows the pass-group setting. An explicit override wins.</p>
+            <div id="rule-options" class="rule-list"></div>
+          </details>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

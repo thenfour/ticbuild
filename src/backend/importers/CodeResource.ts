@@ -2,7 +2,11 @@ import { constants as zlibConstants, deflateSync } from "node:zlib";
 import { zlibAsync as zopfliZlibAsync, ZopfliOptions } from "@gfx/zopfli";
 import { toLuaStringLiteral } from "../../utils/lua/lua_fundamentals";
 import { AliasPassReport, createEmptyAliasPassReport } from "../../utils/lua/lua_alias_shared";
-import { OptimizationRuleOptions, processLuaWithReport } from "../../utils/lua/lua_processor";
+import {
+  LuaProcessOptions,
+  OptimizationRuleOptions,
+  processLuaWithReport,
+} from "../../utils/lua/lua_processor";
 import { LuaTransformMap } from "../../utils/lua/lua_transform_map";
 import { Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
 import { CoalesceBool } from "../../utils/utils";
@@ -112,6 +116,7 @@ export class CodeResourceView extends ResourceViewBase {
   private cachedCompressedSource: string | null = null;
   private cachedCompressionMode: LuaCompressionMode | null = null;
   private cachedMinifyEnabled: boolean | null = null;
+  private cachedParseFailure: NonNullable<LuaProcessOptions["parseFailure"]> | null = null;
 
   constructor(
     inputSource: string,
@@ -163,9 +168,9 @@ export class CodeResourceView extends ResourceViewBase {
     return ["CODE"];
   }
 
-  getArtifacts(project: TicbuildProjectCore): CodeArtifacts {
+  getArtifacts(project: TicbuildProjectCore, processOptions: LuaProcessOptions = {}): CodeArtifacts {
     const minifyEnabled = CoalesceBool(project.manifest.assembly.lua?.minify, true);
-    const minified = this.getMinifiedResult(project, minifyEnabled, true);
+    const minified = this.getMinifiedResult(project, minifyEnabled, true, processOptions);
     return {
       inputSource: this.inputSource,
       inputSourceMap: this.inputSourceMap,
@@ -191,9 +196,12 @@ export class CodeResourceView extends ResourceViewBase {
     project: TicbuildProjectCore,
     minifyEnabled: boolean,
     emitGlobals: boolean,
+    processOptions: LuaProcessOptions = {},
   ): { source: string; sourceMap: LuaPreprocessorSourceMap; report: AliasPassReport } {
+    const parseFailure = processOptions.parseFailure ?? "return-original";
     if (
       this.cachedMinifyEnabled === minifyEnabled &&
+      this.cachedParseFailure === parseFailure &&
       this.cachedMinifiedSource !== null &&
       this.cachedMinifiedSourceMap !== null &&
       this.cachedMinificationReport !== null &&
@@ -211,12 +219,12 @@ export class CodeResourceView extends ResourceViewBase {
     let sourceMap = prependGeneratedText(globalsHeader, this.preprocessedSource, this.preprocessedSourceMap);
     let report = createEmptyAliasPassReport();
     if (minifyEnabled) {
-      const options = buildMinificationOptions(
+      const options = resolveLuaMinificationOptions(
         project.manifest.assembly.lua?.minification,
         this.minifyAllowedGlobalNames,
         this.minifyGlobalNamesToKeep,
       );
-      const processed = processLuaWithReport(code, options);
+      const processed = processLuaWithReport(code, options, processOptions);
       code = processed.code;
       sourceMap = composeLuaTransformSourceMap(processed.transformMap, code, sourceMap);
       report = processed.report;
@@ -227,6 +235,7 @@ export class CodeResourceView extends ResourceViewBase {
 
     if (emitGlobals) {
       this.cachedMinifyEnabled = minifyEnabled;
+      this.cachedParseFailure = parseFailure;
       this.cachedMinifiedSource = code;
       this.cachedMinifiedSourceMap = sourceMap;
       this.cachedMinificationReport = report;
@@ -363,7 +372,7 @@ function composeLuaTransformSourceMap(
   return builder.toSourceMap(output);
 }
 
-function buildMinificationOptions(
+export function resolveLuaMinificationOptions(
   overrides?: LuaMinificationConfig,
   minifyAllowedGlobalNames: string[] = [],
   minifyGlobalNamesToKeep: string[] = [],

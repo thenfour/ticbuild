@@ -180,7 +180,7 @@ describe("Lua optimization rule overrides", () => {
 
   it("rejects unknown rule IDs", () => {
     expect(() => minify("return 1", {
-      ruleOverrides: { "syntax.typo": true },
+      ruleOverrides: { "syntax.typo": true } as unknown as OptimizationRuleOptions["ruleOverrides"],
     })).toThrow("Unknown Lua optimization rule override: syntax.typo");
   });
 });

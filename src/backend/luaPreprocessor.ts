@@ -8,7 +8,7 @@ import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { parseImportReference } from "./importUtils";
 import { kImportKind, PreprocessorValue } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
-import { parseLua } from "../utils/lua/lua_processor";
+import { parseLua, parseLuaQuiet } from "../utils/lua/lua_processor";
 import { collectDocCommentAbove } from "../utils/lua/lua_doc";
 import * as cons from "../utils/console";
 import {
@@ -44,6 +44,7 @@ export type LuaCodeImportResolver = (importName: string) => Promise<GeneratedLua
 export type LuaPreprocessorOptions = {
   resolveCodeImport?: LuaCodeImportResolver;
   sourceMap?: LuaPreprocessorSourceMap;
+  quietParseFailures?: boolean;
 };
 
 export type PreprocessorSymbol = {
@@ -128,7 +129,13 @@ export async function preprocessLuaCode(
   assertSourceMapMatchesSource(inputSourceMap, source);
   const rawResult = await processSource(project, source, inputSourceMap, filePath, includeKey, state, {});
   const expandedResult = expandMacros(rawResult, filePath);
-  const finalResult = await expandPreprocessorCalls(project, expandedResult, filePath, state);
+  const finalResult = await expandPreprocessorCalls(
+    project,
+    expandedResult,
+    filePath,
+    state,
+    options.quietParseFailures ?? false,
+  );
 
   return {
     code: finalResult.code,
@@ -1431,8 +1438,9 @@ async function expandPreprocessorCalls(
   result: ProcessResult,
   filePath: string,
   state: PreprocessorState,
+  quietParseFailures: boolean,
 ): Promise<ProcessResult> {
-  const chunk = parseLua(result.code)!;
+  const chunk = (quietParseFailures ? parseLuaQuiet(result.code) : parseLua(result.code))!;
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   const tasks: Promise<void>[] = [];
 

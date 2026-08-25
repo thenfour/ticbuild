@@ -65,15 +65,16 @@ function selectEnabledRules(
   rules: readonly LuaOptimizationRule[],
   options: OptimizationRuleOptions,
 ): readonly LuaOptimizationRule[] {
-  const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
-  for (const id of Object.keys(options.ruleOverrides ?? {})) {
+  const rulesById = new Map<string, LuaOptimizationRule>(rules.map((rule) => [rule.id, rule]));
+  const ruleOverrides = options.ruleOverrides as Readonly<Record<string, boolean>> | undefined;
+  for (const id of Object.keys(ruleOverrides ?? {})) {
     if (!rulesById.has(id)) {
       throw new Error(`Unknown Lua optimization rule override: ${id}`);
     }
   }
 
   return rules.filter((rule) =>
-    options.ruleOverrides?.[rule.id] ?? rule.defaultEnabled(options)
+    ruleOverrides?.[rule.id] ?? rule.defaultEnabled(options)
   );
 }
 

@@ -261,6 +261,26 @@ ticbuild repl
 ticbuild repl --multi-line
 ```
 
+### dev-only Lua optimizer sandbox
+
+```bash
+npm run dev:lua-optimizer
+```
+
+Starts a web app for exploring the Lua minification options. It's possible to operate
+the server over a specific project / build configuration:
+
+```powershell
+$env:TICBUILD_PLAYGROUND_MANIFEST = "C:\path\to\project.ticbuild.jsonc"
+$env:TICBUILD_PLAYGROUND_MODE = "release"
+npm run dev:lua-optimizer
+```
+
+Also available are:
+
+- `npm run build:lua-optimizer`
+- `npm run preview:lua-optimizer`
+
 ## TIC-80 binary location
 
 By default, `ticbuild` will use a special build of TIC-80 which allows profiling and

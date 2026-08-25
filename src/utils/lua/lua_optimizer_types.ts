@@ -88,7 +88,9 @@ export type LuaOptimizationHooks = {
 };
 
 export interface LuaOptimizationRule {
-  readonly id: OptimizationRuleId;
+  // The engine accepts injected rule sets for tests and diagnostics. The
+  // built-in/public override surface is narrowed separately by OptimizationRuleId.
+  readonly id: string;
   readonly family: string;
   readonly description: string;
   readonly defaultEnabled: (options: OptimizationRuleOptions) => boolean;
