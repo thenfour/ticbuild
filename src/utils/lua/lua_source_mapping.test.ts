@@ -105,6 +105,33 @@ describe("Lua optimizer source mapping", () => {
     );
   });
 
+  it("anchors an inlined alias name to the reference it replaces", () => {
+    const input = "local object=make()\nlocal alias=object\nuse(alias)";
+    const result = processLuaWithReport(input, options({
+      ruleOverrides: { "reduce.inline-immutable-aliases": true },
+    }));
+    const replacementOffset = result.code.indexOf("object", result.code.indexOf("use("));
+
+    expect(result.code).toContain("use(object)");
+    expect(mapLuaTransformOffset(result.transformMap, replacementOffset, "right")).toEqual({
+      offset: input.lastIndexOf("alias"),
+      originalName: "alias",
+    });
+  });
+
+  it("keeps a moved single-use expression anchored to its initializer", () => {
+    const input = "local value=left+right\nreturn value";
+    const result = processLuaWithReport(input, options({
+      ruleOverrides: { "reduce.inline-single-use-expressions": true },
+    }));
+    const expressionOffset = result.code.indexOf("left+right");
+
+    expect(result.code).toContain("return left+right");
+    expect(mapLuaTransformOffset(result.transformMap, expressionOffset, "right")?.offset).toBe(
+      input.indexOf("left+right"),
+    );
+  });
+
   it("maps canonical member syntax to the authored string key", () => {
     const input = 'local value=source["field"]';
     const result = processLuaWithReport(input, options({ canonicalizeSyntax: true }));

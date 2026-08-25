@@ -19,11 +19,21 @@ import { invertNegatedIfRule } from "./lua_control_flow_invert_negated_if";
 import { removeFalseWhileRule } from "./lua_control_flow_remove_false_while";
 import { resolveConstantIfRule } from "./lua_control_flow_resolve_constant_if";
 import { inlineImmutableScalarsRule } from "./lua_inline_immutable_scalars";
+import { inlineImmutableAliasesRule } from "./lua_inline_immutable_aliases";
+import { removeSelfAssignmentsRule } from "./lua_remove_self_assignments";
+import { removeUnusedForVariablesRule } from "./lua_remove_unused_for_variables";
+import { removeUnusedParametersRule } from "./lua_remove_unused_parameters";
+import { inlineSingleUseExpressionsRule } from "./lua_inline_single_use_expressions";
+import { removeStraightLineDeadStoresRule } from "./lua_remove_dead_stores";
 
 export const luaOptimizationRules: readonly LuaOptimizationRule[] = [
   stripCommentsRule,
   simplifyExpressionsRule,
   inlineImmutableScalarsRule,
+  inlineImmutableAliasesRule,
+  inlineSingleUseExpressionsRule,
+  removeSelfAssignmentsRule,
+  removeStraightLineDeadStoresRule,
   memberAccessSyntaxRule,
   bareTableKeySyntaxRule,
   omitLocalNilSyntaxRule,
@@ -31,6 +41,8 @@ export const luaOptimizationRules: readonly LuaOptimizationRule[] = [
   resolveConstantIfRule,
   removeFalseWhileRule,
   removeUnusedLocalsRule,
+  removeUnusedParametersRule,
+  removeUnusedForVariablesRule,
   removeUnusedFunctionsRule,
   aliasLiteralsRule,
   aliasRepeatedExpressionsRule,

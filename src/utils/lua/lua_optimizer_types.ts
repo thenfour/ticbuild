@@ -2,6 +2,35 @@ import * as luaparse from "luaparse";
 import type { AliasStrategy } from "./lua_alias_shared";
 import type { LuaPrinterOptions } from "./lua_printer_types";
 
+export const OptimizationRuleIds = [
+  "syntax.strip-comments",
+  "reduce.simplify-expressions",
+  "reduce.inline-immutable-scalars",
+  "reduce.inline-immutable-aliases",
+  "reduce.inline-single-use-expressions",
+  "reduce.remove-self-assignments",
+  "reduce.remove-straight-line-dead-stores",
+  "syntax.member-access",
+  "syntax.bare-table-key",
+  "syntax.omit-local-nil",
+  "control-flow.invert-negated-if",
+  "control-flow.resolve-constant-if",
+  "control-flow.remove-false-while",
+  "reduce.remove-unused-locals",
+  "reduce.remove-unused-parameters",
+  "reduce.remove-unused-for-variables",
+  "reduce.remove-unused-functions",
+  "introduce.alias-literals",
+  "introduce.alias-repeated-expressions",
+  "finalize.pack-local-declarations",
+  "rename.local-variables",
+  "rename.allowed-globals",
+  "rename.allowed-table-keys",
+  "rename.table-fields",
+] as const;
+
+export type OptimizationRuleId = (typeof OptimizationRuleIds)[number];
+
 export type OptimizationRuleOptions = LuaPrinterOptions & {
   stripComments: boolean;
   renameLocalVariables: boolean;
@@ -26,7 +55,7 @@ export type OptimizationRuleOptions = LuaPrinterOptions & {
   simplifyControlFlow?: boolean;
 
   // these win against above settings.
-  ruleOverrides?: Readonly<Record<string, boolean>>;
+  ruleOverrides?: Readonly<Partial<Record<OptimizationRuleId, boolean>>>;
 };
 
 export interface LuaLocalIntroductionCollector {
@@ -59,7 +88,7 @@ export type LuaOptimizationHooks = {
 };
 
 export interface LuaOptimizationRule {
-  readonly id: string;
+  readonly id: OptimizationRuleId;
   readonly family: string;
   readonly description: string;
   readonly defaultEnabled: (options: OptimizationRuleOptions) => boolean;

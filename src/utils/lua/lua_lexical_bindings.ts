@@ -3,11 +3,22 @@ import * as luaparse from "luaparse";
 export type LuaLocalBinding = {
   readonly declaration: luaparse.Identifier;
   readonly reads: luaparse.Identifier[];
+  readonly readOccurrences: LuaBindingOccurrence[];
   readonly directConditionReads: Array<{
     readonly identifier: luaparse.Identifier;
     readonly kind: "if" | "while" | "repeat";
   }>;
   readonly writes: luaparse.Identifier[];
+  readonly writeOccurrences: LuaBindingOccurrence[];
+};
+
+export type LuaBindingOccurrence = {
+  readonly identifier: luaparse.Identifier;
+  // Stable syntax traversal order, not an execution-order or reachability claim.
+  readonly traversalOrder: number;
+  readonly statement: luaparse.Statement;
+  readonly block: readonly luaparse.Statement[];
+  readonly functionOwner: luaparse.FunctionDeclaration | null;
 };
 
 export type LuaLexicalBindingAnalysis = {
@@ -28,8 +39,10 @@ class BindingScope {
     const binding: LuaLocalBinding = {
       declaration: identifier,
       reads: [],
+      readOccurrences: [],
       directConditionReads: [],
       writes: [],
+      writeOccurrences: [],
     };
     this.bindings.set(identifier.name, binding);
     return binding;
@@ -43,6 +56,21 @@ class BindingScope {
 export function analyzeLuaLexicalBindings(ast: luaparse.Chunk): LuaLexicalBindingAnalysis {
   const bindings: LuaLocalBinding[] = [];
   const bindingByIdentifier = new Map<luaparse.Identifier, LuaLocalBinding>();
+  let occurrenceOrder = 0;
+  let currentStatement: luaparse.Statement | null = null;
+  let currentBlock: readonly luaparse.Statement[] = ast.body;
+  let currentFunction: luaparse.FunctionDeclaration | null = null;
+
+  function occurrence(identifier: luaparse.Identifier): LuaBindingOccurrence {
+    if (!currentStatement) throw new Error("Lua binding occurrence found outside a statement");
+    return {
+      identifier,
+      traversalOrder: occurrenceOrder++,
+      statement: currentStatement,
+      block: currentBlock,
+      functionOwner: currentFunction,
+    };
+  }
 
   function define(scope: BindingScope, identifier: luaparse.Identifier): LuaLocalBinding {
     const binding = scope.define(identifier);
@@ -59,6 +87,7 @@ export function analyzeLuaLexicalBindings(ast: luaparse.Chunk): LuaLexicalBindin
     const binding = scope.lookup(identifier.name);
     if (!binding) return;
     binding.reads.push(identifier);
+    binding.readOccurrences.push(occurrence(identifier));
     if (conditionKind) binding.directConditionReads.push({ identifier, kind: conditionKind });
     bindingByIdentifier.set(identifier, binding);
   }
@@ -67,6 +96,7 @@ export function analyzeLuaLexicalBindings(ast: luaparse.Chunk): LuaLexicalBindin
     const binding = scope.lookup(identifier.name);
     if (!binding) return;
     binding.writes.push(identifier);
+    binding.writeOccurrences.push(occurrence(identifier));
     bindingByIdentifier.set(identifier, binding);
   }
 
@@ -138,6 +168,10 @@ export function analyzeLuaLexicalBindings(ast: luaparse.Chunk): LuaLexicalBindin
 
   function visitFunctionBody(fn: luaparse.FunctionDeclaration, outerScope: BindingScope): void {
     const functionScope = outerScope.createChild();
+    const previousFunction = currentFunction;
+    const previousBlock = currentBlock;
+    currentFunction = fn;
+    currentBlock = fn.body;
     if (fn.identifier?.type === "MemberExpression" && fn.identifier.indexer === ":") {
       // `function value:method()` has an implicit local `self` parameter which
       // luaparse does not include in the function's parameters array.
@@ -147,6 +181,8 @@ export function analyzeLuaLexicalBindings(ast: luaparse.Chunk): LuaLexicalBindin
       if (parameter.type === "Identifier") define(functionScope, parameter);
     }
     visitBlock(fn.body, functionScope);
+    currentBlock = previousBlock;
+    currentFunction = previousFunction;
   }
 
   function visitStatement(statement: luaparse.Statement, scope: BindingScope): void {
@@ -231,7 +267,15 @@ export function analyzeLuaLexicalBindings(ast: luaparse.Chunk): LuaLexicalBindin
   }
 
   function visitBlock(body: readonly luaparse.Statement[], scope: BindingScope): void {
-    body.forEach((statement) => visitStatement(statement, scope));
+    const previousBlock = currentBlock;
+    const previousStatement = currentStatement;
+    currentBlock = body;
+    body.forEach((statement) => {
+      currentStatement = statement;
+      visitStatement(statement, scope);
+    });
+    currentStatement = previousStatement;
+    currentBlock = previousBlock;
   }
 
   visitBlock(ast.body, new BindingScope());

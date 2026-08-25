@@ -85,10 +85,10 @@ describe("Lua immutable scalar inlining", () => {
     })).toBe('do print("outer")end');
   });
 
-  it("does not inline a binding assigned after its declaration", () => {
+  it("does not propagate a stale declaration value across an assignment", () => {
     expect(minify('local x="hi" x="bye" print(x)', {
       simplifyExpressions: true,
-    })).toBe('local x="hi"x="bye"print(x)');
+    })).toBe('print("bye")');
   });
 
   it("treats an omitted initializer as nil when no multi-return can supply it", () => {
