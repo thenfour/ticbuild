@@ -31,6 +31,7 @@
 
 - #28 Added support for custom importers by supporting command invoking manifestation
 - #62 Base build configuration name is clearer
+- #69 Removed support for manifest-specified Lua globals; they were not correct, unnecessary, not useful, confusing.
 
 ## v1.0.22 (2026-8-11)
 

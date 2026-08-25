@@ -1,11 +1,12 @@
 import { defineEnum } from "../enum";
 import { base85Plus1Decode, base85Plus1Encode } from "./b85";
 import { decodeHexString, encodeHexString } from "./hex";
-import { gSomaticLZDefaultConfig, lzCompress, lzDecompress } from "./lz";
+import { lzDecompress, lzRleDecompress } from "./lz";
 
 export const kSourceEncoding = defineEnum({
   raw: { value: "raw", input: "bytes" },
   lz: { value: "lz", input: "bytes" },
+  lzrle: { value: "lzrle", input: "bytes" },
   hex: { value: "hex", input: "string" },
   ascii: { value: "ascii", input: "string" },
   utf8: { value: "utf8", input: "string" },
@@ -34,6 +35,11 @@ const sourceEncodings: Record<SourceEncodingKey, SourceEncodingCodec> = {
     key: "lz",
     input: "bytes",
     decodeFromBytes: (data) => lzDecompress(data),
+  },
+  lzrle: {
+    key: "lzrle",
+    input: "bytes",
+    decodeFromBytes: (data) => lzRleDecompress(data),
   },
   hex: {
     key: "hex",

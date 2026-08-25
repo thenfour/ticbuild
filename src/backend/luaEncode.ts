@@ -16,7 +16,7 @@ import {
 } from "./luaBinaryEncoding";
 import { ImportDefinition, kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
-import { gSomaticLZDefaultConfig, lzCompress, lzDecompress } from "../utils/encoding/lz";
+import { lzCompressBest, lzDecompress, lzRleCompressBest, lzRleDecompress } from "../utils/encoding/lz";
 import { rleCompress } from "../utils/encoding/rle";
 import { rleDecompress } from "../utils/encoding/rle";
 import { toLuaStringLiteral } from "../utils/lua/lua_fundamentals";
@@ -240,6 +240,8 @@ export function encodeBytesWithDestSpec(
                 case "q":
                 case "lz":
                 case "unlz":
+                case "lzrle":
+                case "unlzrle":
                 case "rle":
                 case "unrle":
                 case "ttz":
@@ -296,6 +298,8 @@ export function encodeBytesWithDestSpec(
             }
             case "lz":
             case "unlz":
+            case "lzrle":
+            case "unlzrle":
             case "rle":
             case "unrle":
             case "ttz":
@@ -419,6 +423,8 @@ function parseTransformToken(
     switch (lower) {
         case "lz":
         case "unlz":
+        case "lzrle":
+        case "unlzrle":
         case "rle":
         case "unrle":
         case "ttz":
@@ -496,10 +502,16 @@ function applyByteTransforms(
     for (const transform of transforms) {
         switch (transform.name) {
             case "lz":
-                output = lzCompress(output, gSomaticLZDefaultConfig);
+                output = lzCompressBest(output).data;
                 break;
             case "unlz":
                 output = lzDecompress(output);
+                break;
+            case "lzrle":
+                output = lzRleCompressBest(output).data;
+                break;
+            case "unlzrle":
+                output = lzRleDecompress(output);
                 break;
             case "rle":
                 output = rleCompress(output);

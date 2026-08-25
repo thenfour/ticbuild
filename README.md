@@ -281,6 +281,98 @@ Also available are:
 - `npm run build:lua-optimizer`
 - `npm run preview:lua-optimizer`
 
+### dev-only LZ compressor sandbox
+
+```bash
+npm run dev:lz-compressor
+```
+
+Starts a web app for testing LZ/LZRLE compression and other import stream encodings. Input source binary in various encodings:
+HEX, UTF-8, BASE64, and ticbuild BASE85+1 payloads,
+and  perform the same LZ/LZRLE compression preset search used by `__IMPORT` / `__ENCODE`.
+
+Also available are:
+
+- `npm run build:lz-compressor`
+- `npm run preview:lz-compressor`
+- `npm run benchmark:lz-configs`
+
+### LZ and LZRLE stream format
+
+Both formats are byte streams made from tagged operations. Every integer field is an
+unsigned LEB128 varint. The decoder stops after consuming the complete compressed byte
+sequence; there is no terminator or decompressed-size header.
+
+| Tag  | Fields                        | Operation |
+| ---- | ----------------------------- | --------- |
+| `00` | `length`, then `length` bytes | Copy literal bytes from the stream. |
+| `80` | `length`, `distance`          | Copy from `distance` bytes behind the current output position. Overlapping copies are allowed. |
+| `81` | `length`, `value`             | Write `value` repeatedly. Only allowed for LZRLE profiles |
+
+Every LZ stream is a valid LZRLE stream. The LZRLE encoder searches both
+the base and RLE-enabled form of each numeric preset, so it emits `81` only when doing so
+actually makes the payload smaller.
+
+Runtime code using base `LZ` may omit the `81` branch; runtime code using `LZRLE` must include it.
+
+This plain Lua reference decoder accepts both profiles. It takes a dense, 1-based
+array-like table of compressed bytes and returns a new dense, 1-based byte table.
+
+```lua
+local function lz_varint(src, si)
+  local value, factor = 0, 1
+  while true do
+    local byte = src[si]
+    -- skip error checking if you're certain the payload is correct
+    if byte == nil then error("truncated LZ varint") end
+    si = si + 1
+    value = value + (byte % 0x80) * factor
+    if byte < 0x80 then return value, si end
+    factor = factor * 0x80
+  end
+end
+
+-- Decode a dense 1-based byte table into a new dense 1-based byte table.
+function unlzrle(src)
+  local dst = {}
+  local si = 1
+  while si <= #src do
+    local tag = src[si]
+    si = si + 1
+
+    if tag == 0x00 then
+      local length
+      length, si = lz_varint(src, si)
+      if si + length - 1 > #src then error("truncated LZ literal") end -- skip error checking if you're certain the payload is correct
+      for _ = 1, length do
+        dst[#dst + 1] = src[si]
+        si = si + 1
+      end
+    elseif tag == 0x80 then
+      local length, distance
+      length, si = lz_varint(src, si)
+      distance, si = lz_varint(src, si)
+      if distance < 1 or distance > #dst then error("invalid LZ distance") end
+      for _ = 1, length do
+        dst[#dst + 1] = dst[#dst - distance + 1]
+      end
+    elseif tag == 0x81 then -- this branch can be omitted if you are not using RLE
+      local length
+      length, si = lz_varint(src, si)
+      local value = src[si]
+      if value == nil then error("truncated LZRLE run") end
+      si = si + 1
+      for _ = 1, length do
+        dst[#dst + 1] = value
+      end
+    else -- again, skipping error handling is optional.
+      error("unknown LZ tag: " .. tag)
+    end
+  end
+  return dst
+end
+```
+
 ## TIC-80 binary location
 
 By default, `ticbuild` will use a special build of TIC-80 which allows profiling and
@@ -854,9 +946,9 @@ local s = __EXPAND("the project name is: $(project.name)")
 --   f16le, f16be, f32le, f32be, f64le, f64be
 --   hex, b85+1, ascii, utf8, base64
 -- Source codecs (binary input only):
---   raw, lz
+--   raw, lz, lzrle
 -- Byte transforms:
---   lz, unlz, rle, unrle, ttz, take(start,length)
+--   lz, unlz, lzrle, unlzrle, rle, unrle, ttz, take(start,length)
 --
 -- start is 0-based.
 --
@@ -891,6 +983,9 @@ local paletteValues = {873731871,1515078457,-1567793811,-1196705143,-1669088817,
 local paletteCompressed = __IMPORT("ascii,lz,b85+1", "import:creditstxt")
 -- generates:
 local paletteCompressed = "..."
+
+-- LZRLE uses the extended decoder above and can additionally emit repeat-byte runs.
+local maskCompressed = __IMPORT("raw,lzrle,b85+1", "import:mask")
 
 -- NOTE: string substitution is performed on spec strings and import/literal values.
 

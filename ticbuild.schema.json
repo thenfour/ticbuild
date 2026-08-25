@@ -201,6 +201,7 @@
             "enum": [
               "raw",
               "lz",
+              "lzrle",
               "hex",
               "ascii",
               "utf8",

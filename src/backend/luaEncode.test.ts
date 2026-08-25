@@ -2,7 +2,8 @@ import { preprocessLuaCode } from "./luaPreprocessor";
 import { Manifest } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { parseTic80Cart } from "../utils/tic80/cartLoader";
-import { encodeHexString } from "../utils/encoding/hex";
+import { decodeHexString, encodeHexString } from "../utils/encoding/hex";
+import { lzCompressBest, lzRleCompressBest } from "../utils/encoding/lz";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -87,6 +88,35 @@ describe("luaEncode __ENCODE", () => {
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain('local v = "ff00"');
+    });
+
+    it("uses the searched LZ encoder for byte transforms", async () => {
+        const projectDir = createTempDir();
+        const manifest = createManifest();
+        const sourceBytes = "00112233001122330011223300112233";
+
+        const project = makeProject(manifest, projectDir);
+        const source = `local v = __ENCODE("hex,lz,hex", "${sourceBytes}")`;
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+        const expected = encodeHexString(lzCompressBest(decodeHexString(sourceBytes)).data);
+
+        expect(result.code).toContain(`local v = "${expected}"`);
+    });
+
+    it("supports searched LZRLE transforms and their inverse", async () => {
+        const projectDir = createTempDir();
+        const manifest = createManifest();
+        const sourceBytes = "5a".repeat(4096);
+
+        const project = makeProject(manifest, projectDir);
+        const source = `local packed = __ENCODE("hex,lzrle,hex", "${sourceBytes}")\n` +
+            `local unpacked = __ENCODE("hex,lzrle,unlzrle,hex", "${sourceBytes}")`;
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+        const expected = encodeHexString(lzRleCompressBest(decodeHexString(sourceBytes)).data);
+
+        expect(expected.startsWith("81")).toBe(true);
+        expect(result.code).toContain(`local packed = "${expected}"`);
+        expect(result.code).toContain(`local unpacked = "${sourceBytes}"`);
     });
 
     it("supports unrle transform", async () => {
@@ -274,6 +304,56 @@ describe("luaEncode __IMPORT", () => {
         const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
 
         expect(result.code).toContain("local v, w = 128,255");
+    });
+
+    it("decodes LZRLE binary imports declared by the manifest", async () => {
+        const projectDir = createTempDir();
+        const binPath = path.join(projectDir, "data.lzrle");
+        const unpacked = Uint8Array.from({ length: 32 }, () => 0x5a);
+        fs.writeFileSync(binPath, lzRleCompressBest(unpacked).data);
+
+        const manifest = createManifest({
+            imports: [
+                {
+                    name: "binLzrle",
+                    kind: "binary",
+                    sourceEncoding: "lzrle",
+                    path: "./data.lzrle",
+                },
+            ],
+        });
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __IMPORT("hex", "import:binLzrle")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+
+        expect(result.code).toContain(`local v = "${"5a".repeat(32)}"`);
+    });
+
+    it("applies searched LZRLE encoding to __IMPORT payloads", async () => {
+        const projectDir = createTempDir();
+        const binPath = path.join(projectDir, "data.bin");
+        const unpacked = Uint8Array.from({ length: 4096 }, () => 0x5a);
+        fs.writeFileSync(binPath, unpacked);
+
+        const manifest = createManifest({
+            imports: [
+                {
+                    name: "binRaw",
+                    kind: "binary",
+                    sourceEncoding: "raw",
+                    path: "./data.bin",
+                },
+            ],
+        });
+
+        const project = makeProject(manifest, projectDir);
+        const source = 'local v = __IMPORT("raw,lzrle,hex", "import:binRaw")';
+        const result = await preprocessLuaCode(project, source, path.join(projectDir, "source.lua"));
+        const expected = encodeHexString(lzRleCompressBest(unpacked).data);
+
+        expect(expected.startsWith("81")).toBe(true);
+        expect(result.code).toContain(`local v = "${expected}"`);
     });
 
     it("imports text files with explicit source spec", async () => {

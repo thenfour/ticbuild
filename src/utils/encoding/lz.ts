@@ -1,55 +1,56 @@
 /*
 
-Lua reference decoder (peek - poke)
+Plain Lua table decoder sketch. This handles both LZ and LZRLE streams; LZ
+streams never contain the 0x81 branch. The checked copy/paste reference is
+documented in README.md under "LZ and LZRLE stream format".
 
-
-
--- Read unsigned LEB128 varint from memory.
--- base:   start address of encoded stream
--- si:     current offset (0-based) into the stream
--- srcLen: total length of the encoded stream (in bytes)
--- Returns: value, next_si
-local function varint(base, si, srcLen)
-	local x, f = 0, 1
-	while true do
-		local b = peek(base + si)
-		si = si + 1
-		x = x + (b % 0x80) * f
-		if b < 0x80 then
-			return x, si
-		end
-		f = f * 0x80
-	end
+local function lz_varint(src, si)
+  local value, factor = 0, 1
+  while true do
+    local byte = src[si]
+    if byte == nil then error("truncated LZ varint") end
+    si = si + 1
+    value = value + (byte % 0x80) * factor
+    if byte < 0x80 then return value, si end
+    factor = factor * 0x80
+  end
 end
 
--- LZ-Decompress from [src .. src+srcLen-1] into [dst ..).
--- Returns number of decompressed bytes written.
-local function lzdm(src, srcLen, dst)
-	local si, di = 0, 0
-	while si < srcLen do
-		local t = peek(src + si)
-		si = si + 1
-		if t == 0 then
-			local l
-			l, si = varint(src, si, srcLen)
-			for j = 1, l do
-				poke(dst + di, peek(src + si))
-				si = si + 1
-				di = di + 1
-			end
-		else
-			local l, d
-			l, si = varint(src, si, srcLen)
-			d, si = varint(src, si, srcLen)
-			for j = 1, l do
-				poke(dst + di, peek(dst + di - d))
-				di = di + 1
-			end
-		end
-	end
-	return di
+function unlzrle(src)
+  local dst = {}
+  local si = 1
+  while si <= #src do
+    local tag = src[si]
+    si = si + 1
+    if tag == 0x00 then
+      local length
+      length, si = lz_varint(src, si)
+      if si + length - 1 > #src then error("truncated LZ literal") end
+      for _ = 1, length do
+        dst[#dst + 1] = src[si]
+        si = si + 1
+      end
+    elseif tag == 0x80 then
+      local length, distance
+      length, si = lz_varint(src, si)
+      distance, si = lz_varint(src, si)
+      if distance < 1 or distance > #dst then error("invalid LZ distance") end
+      for _ = 1, length do
+        dst[#dst + 1] = dst[#dst - distance + 1]
+      end
+    elseif tag == 0x81 then
+      local length
+      length, si = lz_varint(src, si)
+      local value = src[si]
+      if value == nil then error("truncated LZRLE run") end
+      si = si + 1
+      for _ = 1, length do dst[#dst + 1] = value end
+    else
+      error("unknown LZ tag: " .. tag)
+    end
+  end
+  return dst
 end
-
 
 */
 
@@ -60,10 +61,28 @@ end
 // *
 
 export interface LZConfig {
-  windowSize: number; // how far back matches can refer (e.g. 16..4096)
-  minMatchLength: number; // emit a match only if >= this (e.g. 3..6)
-  maxMatchLength: number; // cap match length (e.g. 18..258)
-  useRLE: boolean; // enable 0x81 opcode (repeat byte)
+  readonly windowSize: number; // how far back matches can refer (e.g. 16..4096)
+  readonly minMatchLength: number; // emit a match only if >= this (e.g. 3..6)
+  readonly maxMatchLength: number; // cap match length (e.g. 18..258)
+  readonly useRLE: boolean; // enable 0x81 opcode (repeat byte)
+}
+
+export interface LZCompressionPreset {
+  readonly name: string;
+  readonly config: LZConfig;
+}
+
+export interface LZCompressionAttempt {
+  readonly presetName: string;
+  readonly config: LZConfig;
+  readonly byteLength: number;
+}
+
+export interface LZCompressionResult {
+  readonly data: Uint8Array;
+  readonly presetName: string;
+  readonly config: LZConfig;
+  readonly attempts: readonly LZCompressionAttempt[];
 }
 
 /** ---- Varint (unsigned LEB128) ---- */
@@ -144,12 +163,52 @@ export function lzDecompress(encoded: Uint8Array): Uint8Array {
 // note that the playroutine's LZ decoder may need to be modified if this changes.
 // for example it does NOT support RLE (0x81) opcodes.
 // Also the window size affects decoder memory usage.
-export const gSomaticLZDefaultConfig: LZConfig = {
+export const gTicbuildLZBaselineConfig: LZConfig = {
   windowSize: 16,
   minMatchLength: 4,
   maxMatchLength: 30,
   useRLE: false,
 };
+
+// this set was chosen based on evidence from
+// npm run benchmark:lz-configs
+// The 16383 limits stay within two unsigned LEB128 bytes;
+// candidates beyond that point cost more to encode have diminishing gains.
+// Keep the baseline first so equal-size results retain the smallest historical window.
+export const gTicbuildLZSearchPresets: readonly LZCompressionPreset[] = [
+  { name: "baseline", config: gTicbuildLZBaselineConfig },
+  {
+    name: "near",
+    config: { windowSize: 127, minMatchLength: 5, maxMatchLength: 30, useRLE: false },
+  },
+  {
+    name: "short-match",
+    config: { windowSize: 4095, minMatchLength: 3, maxMatchLength: 30, useRLE: false },
+  },
+  {
+    name: "balanced",
+    config: { windowSize: 16383, minMatchLength: 6, maxMatchLength: 1023, useRLE: false },
+  },
+  {
+    name: "broad",
+    config: { windowSize: 16383, minMatchLength: 5, maxMatchLength: 16383, useRLE: false },
+  },
+];
+
+// LZRLE is LZ with the 0x81 repeat-byte opcode
+// - a valid stream does not have to contain one.
+// Search both forms of every preset.
+// Keeping the base attempt first means
+// RLE is selected only when it makes the complete stream strictly smaller.
+export const gTicbuildLZRLESearchPresets: readonly LZCompressionPreset[] = gTicbuildLZSearchPresets.flatMap(
+  (preset) => [
+    preset,
+    {
+      name: `${preset.name}+rle`,
+      config: { ...preset.config, useRLE: true },
+    },
+  ],
+);
 
 /** ---- Compress (greedy) ---- */
 export function lzCompress(input: Uint8Array, cfg: LZConfig): Uint8Array {
@@ -161,6 +220,34 @@ export function lzCompress(input: Uint8Array, cfg: LZConfig): Uint8Array {
 
   const out: number[] = [];
   const lits: number[] = [];
+  const matchPositions = new Map<number, number[]>();
+  const matchKeyLength = Math.min(minMatchLength, 3);
+
+  function getMatchKey(position: number): number | undefined {
+    if (position + matchKeyLength > input.length) return undefined;
+    let key = 0;
+    for (let offset = 0; offset < matchKeyLength; offset++) {
+      key = (key << 8) | input[position + offset];
+    }
+    return key;
+  }
+
+  function addMatchPosition(position: number) {
+    const key = getMatchKey(position);
+    if (key === undefined) return;
+    const positions = matchPositions.get(key);
+    if (positions) {
+      positions.push(position);
+    } else {
+      matchPositions.set(key, [position]);
+    }
+  }
+
+  function addMatchPositions(start: number, length: number) {
+    for (let position = start; position < start + length; position++) {
+      addMatchPosition(position);
+    }
+  }
 
   function flushLits() {
     if (lits.length === 0) return;
@@ -206,8 +293,14 @@ export function lzCompress(input: Uint8Array, cfg: LZConfig): Uint8Array {
     const maxDist = Math.min(windowSize, i);
     const maxLenCap = Math.min(maxMatchLength, input.length - i);
 
-    // Simple brute-force search. For tuning/testing this is fine.
-    for (let dist = 1; dist <= maxDist; dist++) {
+    // Only positions with the same first 2-3 bytes can satisfy minMatchLength.
+    // Visit them nearest-first to preserve the output of the former exhaustive
+    // distance scan while avoiding work on impossible matches.
+    const key = getMatchKey(i);
+    const candidates = key === undefined ? undefined : matchPositions.get(key);
+    for (let candidateIndex = (candidates?.length ?? 0) - 1; candidateIndex >= 0; candidateIndex--) {
+      const dist = i - candidates![candidateIndex];
+      if (dist > maxDist) break;
       let len = 0;
       // Compare input[i + len] vs input[i + len - dist]
       while (len < maxLenCap && input[i + len] === input[i + len - dist]) len++;
@@ -223,6 +316,7 @@ export function lzCompress(input: Uint8Array, cfg: LZConfig): Uint8Array {
 
     if (!canMatch && !canRLE) {
       // literal byte
+      addMatchPosition(i);
       lits.push(input[i++]);
       // optional: keep literals from growing too huge (not necessary, but keeps memory tame)
       if (lits.length >= 1 << 15) flushLits();
@@ -269,17 +363,62 @@ export function lzCompress(input: Uint8Array, cfg: LZConfig): Uint8Array {
     // Emit chosen op
     flushLits();
     if (choose === "LZ") {
+      addMatchPositions(i, useLen);
       emitMatch(useLen, bestDist);
       i += useLen;
     } else if (choose === "RLE") {
+      addMatchPositions(i, useLen);
       emitRLE(useLen, input[i]);
       i += useLen;
     } else {
       // Shouldn't happen given canMatch/canRLE checks, but keep safe:
+      addMatchPosition(i);
       lits.push(input[i++]);
     }
   }
 
   flushLits();
   return Uint8Array.from(out);
+}
+
+// finds the best compression result from the preset set
+export function lzCompressBest(
+  input: Uint8Array,
+  presets: readonly LZCompressionPreset[] = gTicbuildLZSearchPresets,
+): LZCompressionResult {
+  if (presets.length === 0) {
+    throw new Error("LZ compression search requires at least one preset");
+  }
+
+  const attempts: LZCompressionAttempt[] = [];
+  let bestData: Uint8Array | undefined;
+  let bestPreset: LZCompressionPreset | undefined;
+
+  for (const preset of presets) {
+    const data = lzCompress(input, preset.config);
+    attempts.push({
+      presetName: preset.name,
+      config: preset.config,
+      byteLength: data.length,
+    });
+    if (!bestData || data.length < bestData.length) {
+      bestData = data;
+      bestPreset = preset;
+    }
+  }
+
+  return {
+    data: bestData!,
+    presetName: bestPreset!.name,
+    config: bestPreset!.config,
+    attempts,
+  };
+}
+
+export function lzRleCompressBest(input: Uint8Array): LZCompressionResult {
+  return lzCompressBest(input, gTicbuildLZRLESearchPresets);
+}
+
+export function lzRleDecompress(encoded: Uint8Array): Uint8Array {
+  return lzDecompress(encoded);
 }

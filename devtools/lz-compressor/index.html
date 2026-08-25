@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>ticbuild LZ compressor lab</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <div>
+          <h1>ticbuild LZ compressor</h1>
+          <p>Compare the bounded preset search against a text-encoded byte payload.</p>
+        </div>
+        <div class="format-control compression-control">
+          <span>Compression</span>
+          <div class="encoding-picker" role="radiogroup" aria-label="Compression method">
+            <button type="button" role="radio" data-compression-method="none">NONE</button>
+            <button type="button" role="radio" data-compression-method="lz">LZ</button>
+            <button type="button" role="radio" data-compression-method="lzrle">LZRLE</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="app-layout">
+        <section class="workspace" aria-label="LZ compressor input and output">
+          <article class="payload-panel">
+            <div class="panel-header input-header">
+              <div>
+                <h2>Input payload</h2>
+                <span id="input-summary" class="metric">0 B</span>
+              </div>
+              <div class="format-control">
+                <span>Input encoding</span>
+                <div class="encoding-picker" role="radiogroup" aria-label="Input encoding">
+                  <button type="button" role="radio" data-input-encoding="hex">HEX</button>
+                  <button type="button" role="radio" data-input-encoding="utf8">UTF-8</button>
+                  <button type="button" role="radio" data-input-encoding="base64">BASE64</button>
+                  <button type="button" role="radio" data-input-encoding="b85+1">BASE85+1</button>
+                </div>
+              </div>
+            </div>
+            <textarea id="source" spellcheck="false" aria-label="Encoded input payload"></textarea>
+          </article>
+
+          <article id="output-panel" class="payload-panel">
+            <div class="panel-header output-header">
+              <div>
+                <h2>Output payload</h2>
+                <span id="output-format" class="metric"></span>
+              </div>
+              <div class="output-actions">
+                <div class="format-control">
+                  <span>Output format</span>
+                  <div class="encoding-picker" role="radiogroup" aria-label="Output format">
+                    <button type="button" role="radio" data-output-format="hex">HEX</button>
+                    <button type="button" role="radio" data-output-format="base64">BASE64</button>
+                    <button type="button" role="radio" data-output-format="b85+1">BASE85+1</button>
+                  </div>
+                </div>
+                <div class="format-control">
+                  <span>Lua wrapper</span>
+                  <button id="lua-literal-toggle" class="toggle-button" type="button" aria-pressed="false">
+                    LUA STRING
+                  </button>
+                </div>
+                <button id="copy-output" type="button">Copy</button>
+              </div>
+            </div>
+            <textarea id="output" spellcheck="false" readonly aria-label="Encoded output payload"></textarea>
+            <p id="output-note" class="output-note"></p>
+          </article>
+
+          <section class="diagnostics" aria-live="polite">
+            <div id="status" class="status" data-kind="loading">Preparing compressor…</div>
+            <div id="stats" class="stats"></div>
+          </section>
+        </section>
+
+        <aside class="attempts-panel" aria-label="LZ preset results">
+          <div class="attempts-heading">
+            <h2>Preset search</h2>
+            <p id="attempts-note">Every row is encoded; the smallest result wins. Ties keep the earlier, more conservative preset.</p>
+          </div>
+          <div class="attempts-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Preset</th>
+                  <th>W / min / max</th>
+                  <th>Bytes</th>
+                </tr>
+              </thead>
+              <tbody id="attempts"></tbody>
+            </table>
+          </div>
+        </aside>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
