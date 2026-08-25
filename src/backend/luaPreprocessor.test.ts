@@ -395,6 +395,42 @@ local value = ID(42)`;
     expect(result.code).toContain("local value = 42");
   });
 
+  it("should expand parenthesis-less object-like macros in identifier expressions", async () => {
+    const project = makeProject(manifest);
+    const source = `local before = VALUE
+--#macro VALUE => 23
+local first = VALUE
+local keyed = { VALUE = VALUE, [VALUE] = VALUE }
+local member = object.VALUE
+--#macro VALUE => 24
+local second = VALUE`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("local before = VALUE");
+    expect(result.code).toContain("local first = 23");
+    expect(result.code).toContain("local keyed = { VALUE = 23, [23] = 23 }");
+    expect(result.code).toContain("local member = object.VALUE");
+    expect(result.code).toContain("local second = 24");
+    expect(result.preprocessorSymbols.filter((symbol) => symbol.name === "VALUE")).toMatchObject([
+      { invocationStyle: "object", params: [] },
+      { invocationStyle: "object", params: [] },
+    ]);
+  });
+
+  it("should distinguish object-like and zero-parameter function-like macros", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro OBJECT_VALUE => 1
+--#macro FUNCTION_VALUE() => 2
+local objectValue = OBJECT_VALUE
+local functionValue = FUNCTION_VALUE
+local calledValue = FUNCTION_VALUE()`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("local objectValue = 1");
+    expect(result.code).toContain("local functionValue = FUNCTION_VALUE");
+    expect(result.code).toContain("local calledValue = 2");
+  });
+
   it("should apply a macro definition only to later invocations", async () => {
     const project = makeProject(manifest);
     const source = `local before = ID(1)
@@ -475,7 +511,6 @@ local value = DOUBLE_WRAP(42)`;
 --#macro ID(x) => x
 local value = (WRAP(42))`;
     const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
-    // Hm what should we expect honestly? at least it shouldn't blow up
     expect(result.code).toContain("local value = (42)");
   });
 
@@ -566,6 +601,84 @@ local value = 42`;
     expect(result.code).toContain("local value = 42");
   });
 
+  it("should expand parameterized statement-list macros at standalone call sites", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro ASSERT(condition, message) => --
+--#macro REQUIRE_OR_RETURN(condition, returnVal)
+ASSERT(condition, "requirement failed")
+if not condition then
+  return returnVal
+end
+--#endmacro
+local function check(ok)
+  REQUIRE_OR_RETURN(ok, 17)
+  return 0
+end`;
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).not.toContain("REQUIRE_OR_RETURN(");
+    expect(result.code).not.toContain("ASSERT(");
+    expect(result.code).toContain(`if not ok then
+  return 17
+end`);
+  });
+
+  it("should reject statement-list macros in expression contexts", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro RETURN_VALUE(value)
+return value
+--#endmacro
+local value = RETURN_VALUE(1)`;
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "Statement-list macro RETURN_VALUE can only be used as a standalone call statement",
+    );
+  });
+
+  it("should reject empty macros in expression contexts", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro NOP() => --
+local value = NOP()`;
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "Empty macro NOP can only be used as a standalone call statement",
+    );
+  });
+
+  it("should require object-like macros to contain one expression", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro INVALID
+local value = 1
+--#endmacro
+local value = INVALID`;
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "Object-like macro INVALID must have exactly one Lua expression",
+    );
+  });
+
+  it("should reject invalid macro bodies even when they are not invoked", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro INVALID(value)
+if value then
+--#endmacro
+local value = 1`;
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "Failed to parse macro body",
+    );
+  });
+
+  it("should reject expansions that leave invalid Lua", async () => {
+    const project = makeProject(manifest);
+    const source = `--#macro ADD_ONE(value) => value+1
+ADD_ONE(1)`;
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "Failed to parse Lua while expanding macros",
+    );
+  });
+
   it("should not treat double dashes in strings as comments (be lexically aware generally)", async () => {
     const project = makeProject(manifest);
     const source = `
@@ -602,7 +715,6 @@ local value = (ID(42))`;
 
     const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
-    // not certain the expected result: something like this, but possibly with some whitespace / linebreak differences.
     expect(result.code).toContain(`local value = (42+1)`);
   });
 
@@ -620,7 +732,6 @@ local y = x
 
     const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
-    // todo: expected result.
     expect(result.code).toContain(`local boundWidth = 240
 local y = x`);
   });

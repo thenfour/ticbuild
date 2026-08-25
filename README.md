@@ -862,15 +862,17 @@ local scrollText = __IMPORT("", "", "import:somecart:")
 -- value but there for completeness.)
 local s = __ENCODE("ascii", "ascii", "the project name is: $(project.name)") -- effectively the same as __EXPAND
 
--- macros are handy esp for writing optimized code (avoid symbol lookups, plus give
--- the minifier the chance to simplify / reduce expressions.
--- note that the macro call site should still be valid lua. similar reasoning
--- as preprocessor directives, and for example if the call site is `@clamp`,
--- things like autocomplete & formatting just won't work.
--- so like C, just blend in as a normal symbol and it's up to developers to avoid
--- conflicts.
--- by convention i'm guessing best to go all upper-case, and/or double-underscore prefix.
---#macro CLAMP(x, lo, hi) -- or __CLAMP
+-- Macros perform compile-time source substitution at the AST level (not textual
+-- like in C macros.
+
+-- An object-like macro (no parameter list) is invoked as a bare identifier.
+-- Its body must be one Lua expression.
+--#macro TIC_WIDTH => 240
+local width = TIC_WIDTH
+local width = TIC_WIDTH() -- NOT allowed
+
+-- A function-like expression macro has a parameter list and is invoked as a call.
+--#macro CLAMP(x, lo, hi)
   ((x) < (lo) and (lo) or (x) > (hi) and (hi) or (x))
 --#endmacro
 
@@ -882,11 +884,23 @@ local y = CLAMP(x + blah(y),
 -- single-line macro syntax uses the arrow operator.
 --#macro ADD(a, b) => ((a) + (b))
 
--- point to nothing for a nop.
---#macro ADD(a, b) => -- nop
+-- Function-like bodies can be statement lists. Statement list
+-- macros must be invoked as standalone call statements.
+--#macro REQUIRE_OR_RETURN(condition, returnVal)
+  if not (condition) then
+    return (returnVal)
+  end
+--#endmacro
+REQUIRE_OR_RETURN(isReady(), nil)
 
--- parameterless syntax is possible
+-- An empty function-like body erases a standalone call, useful for nops.
+--#macro ASSERT(condition, message) => -- nop
+
+-- A zero-parameter function-like macro remains distinct and requires `()`.
 --#macro PROJECT_NAME => __EXPAND("the project name is: $(project.name)")
+--#macro PROJECT_NAME_CALL() => __EXPAND("the project name is: $(project.name)")
+local projectName = PROJECT_NAME
+local projectNameFromCall = PROJECT_NAME_CALL()
 
 -- Minifier: renaming globals
 -- Globals are not renamed by default. Renaming (minifying) them requires the
@@ -917,12 +931,61 @@ local x = b()
 
 ```
 
-## Preprocessor variable behavior (`#if` vs `#ifdef`) and what you can use in `--#macro`
+## Macro behavior
+
+- `--#macro NAME => expression` defines an object-like macro expanded from bare
+`NAME` identifiers.
+- `--#macro NAME(...)` defines a function-like macro expanded from `NAME(...)` calls.
+  `NAME` and `NAME()` are deliberately distinct.
+
+A macro body is one of:
+
+- **Empty:** erases a standalone function-like call statement.
+- **Expression:** replaces an object-like identifier or function-like call expression.
+- **Lua statement list:** replaces a standalone function-like call statement.
+
+Object-like macros must be an expression (not a statement list). The reason for
+this is because the original Lua source must be valid Lua, and the following is not:
+
+```lua
+--#macro EARLY_RETURN => return -- not allowed: object-like macro contains statements
+function MyFunc()
+  if not isReady() then
+    EARLY_RETURN -- invalid Lua; this is why it's not allowed.
+  end
+end
+```
+
+Definitions follow flattened source order, including `--#include` contents. A
+definition affects only later invocations; a redefinition affects only invocations
+after that redefinition. Nested macro calls use the definitions active where the
+outer macro was invoked.
+
+Argument substitution is C-like, not function-like: an argument can be repeated,
+reordered, or unused, so it can be evaluated multiple times or not at all. Macro
+authors should parenthesize the complete expression body and every parameter use
+where precedence matters.
+
+```lua
+--#macro DOUBLE(a) => a * b
+local c = MUL(1+2,3+4) -- hope you don't expect 3*7 = 21 here.
+-- expands to:
+-- local c = 1 + 2 * 3 + 4
+-- => 11
+```
+
+Names in a macro share the caller's scope.
+
+Expansion is syntax-aware rather than arbitrary token replacement. It does not
+replace text in strings or comments, member names such as `object.NAME`, or named
+table keys such as `{ NAME = value }`. Computed table keys such as `{ [NAME] = value }`
+are expanded.
+
+## Preprocessor variable behavior (`#if` vs `#ifdef`)
 
 Don't get confused by C/C++-like language. "Macros" are different from defines.
-Macros in C/C++ share semantics, acting both as callables and as values with no arguments.
-Ticbuild distinguishes between thos. Macros are callable, preprocessor defines are
-values.
+Macros substitute Lua tokens. Preprocessor defines are values used only by
+preprocessor directives.
 
 Preprocessor defines are used by `#if`, `#ifdef`, `#ifndef`, `defined(...)`, `#undef`.
 

@@ -48,11 +48,16 @@ export type LuaPreprocessorOptions = {
 export type PreprocessorSymbol = {
   name: string;
   kind: "macro";
+  invocationStyle: MacroInvocationStyle;
   sourceFile: string;
   offset: number;
   params: string[];
   docLines?: string[];
 };
+
+export type MacroInvocationStyle = "object" | "function";
+
+type MacroBodyKind = "empty" | "expression" | "statements";
 
 type PreprocessorState = {
   defines: Map<string, LuaPreprocessorValue>;
@@ -71,8 +76,12 @@ type PendingMinifyAllowRename = {
 
 type MacroDefinition = {
   name: string;
+  invocationStyle: MacroInvocationStyle;
   params: string[];
   body: string;
+  bodyKind: MacroBodyKind;
+  bodyAst: luaparse.Node | null;
+  bodyRangeOffset: number;
   sourceFile: string;
   lineNumber: number;
 };
@@ -112,7 +121,7 @@ export async function preprocessLuaCode(
   const inputSourceMap = options.sourceMap ?? createIdentitySourceMap(source, filePath);
   assertSourceMapMatchesSource(inputSourceMap, source);
   const rawResult = await processSource(project, source, inputSourceMap, filePath, includeKey, state, {});
-  const expandedResult = expandMacros(project, rawResult, filePath);
+  const expandedResult = expandMacros(rawResult, filePath);
   const finalResult = await expandPreprocessorCalls(project, expandedResult, filePath, state);
 
   return {
@@ -237,19 +246,20 @@ async function processSource(
         const docLines = collectDocCommentAbove(lineTexts, i);
         if (macroHeader.inlineBody !== undefined) {
           if (isActive()) {
+            const definition = createMacroDefinition(
+              macroHeader,
+              macroHeader.inlineBody,
+              authoredFilePath,
+              authoredLineNumber,
+            );
             macroDefinitions.push({
               offset: output.length,
-              definition: {
-                name: macroHeader.name,
-                params: macroHeader.params,
-                body: macroHeader.inlineBody,
-                sourceFile: authoredFilePath,
-                lineNumber: authoredLineNumber,
-              },
+              definition,
             });
             state.macroSymbols.push({
               name: macroHeader.name,
               kind: "macro",
+              invocationStyle: macroHeader.invocationStyle,
               sourceFile: nameOrigin?.file ?? authoredFilePath,
               offset: nameOrigin?.offset ?? nameOffset,
               params: macroHeader.params,
@@ -263,19 +273,20 @@ async function processSource(
         i = bodyResult.endIndex;
         if (isActive()) {
           const strippedBody = stripLuaCommentsPreserveNewlines(bodyResult.body);
+          const definition = createMacroDefinition(
+            macroHeader,
+            strippedBody,
+            authoredFilePath,
+            authoredLineNumber,
+          );
           macroDefinitions.push({
             offset: output.length,
-            definition: {
-              name: macroHeader.name,
-              params: macroHeader.params,
-              body: strippedBody,
-              sourceFile: authoredFilePath,
-              lineNumber: authoredLineNumber,
-            },
+            definition,
           });
           state.macroSymbols.push({
             name: macroHeader.name,
             kind: "macro",
+            invocationStyle: macroHeader.invocationStyle,
             sourceFile: nameOrigin?.file ?? authoredFilePath,
             offset: nameOrigin?.offset ?? nameOffset,
             params: macroHeader.params,
@@ -1064,6 +1075,7 @@ function formatError(filePath: string, lineNumber: number, message: string): str
 
 type MacroHeader = {
   name: string;
+  invocationStyle: MacroInvocationStyle;
   params: string[];
   inlineBody?: string;
 };
@@ -1076,6 +1088,7 @@ function parseMacroHeader(rest: string, filePath: string, lineNumber: number): M
     throw new Error(formatError(filePath, lineNumber, `Invalid --#macro syntax: ${rest}`));
   }
   const name = headerMatch[1];
+  const invocationStyle: MacroInvocationStyle = headerMatch[2] === undefined ? "object" : "function";
   const paramList = headerMatch[3];
   const inlineBody = headerMatch[4];
   const params = paramList
@@ -1088,9 +1101,81 @@ function parseMacroHeader(rest: string, filePath: string, lineNumber: number): M
     inlineBody !== undefined ? stripLuaCommentsPreserveNewlines(inlineBody).trim() : undefined;
   return {
     name,
+    invocationStyle,
     params,
     inlineBody: sanitizedInlineBody,
   };
+}
+
+function createMacroDefinition(
+  header: MacroHeader,
+  body: string,
+  sourceFile: string,
+  lineNumber: number,
+): MacroDefinition {
+  const parsedBody = parseMacroBody(body, sourceFile, lineNumber);
+  if (header.invocationStyle === "object" && parsedBody.kind !== "expression") {
+    throw new Error(
+      formatError(sourceFile, lineNumber, `Object-like macro ${header.name} must have exactly one Lua expression`),
+    );
+  }
+  return {
+    name: header.name,
+    invocationStyle: header.invocationStyle,
+    params: header.params,
+    body,
+    bodyKind: parsedBody.kind,
+    bodyAst: parsedBody.ast,
+    bodyRangeOffset: parsedBody.rangeOffset,
+    sourceFile,
+    lineNumber,
+  };
+}
+
+type ParsedMacroBody = {
+  kind: MacroBodyKind;
+  ast: luaparse.Node | null;
+  rangeOffset: number;
+};
+
+function parseMacroBody(body: string, filePath: string, lineNumber: number): ParsedMacroBody {
+  if (body.trim().length === 0) {
+    return { kind: "empty", ast: null, rangeOffset: 0 };
+  }
+
+  const expressionPrefix = "return ";
+  try {
+    const expressionChunk = parseLuaChunkWithRanges(expressionPrefix + body);
+    if (
+      expressionChunk.body.length === 1
+      && expressionChunk.body[0].type === "ReturnStatement"
+      && expressionChunk.body[0].arguments.length === 1
+    ) {
+      return {
+        kind: "expression",
+        ast: expressionChunk.body[0].arguments[0],
+        rangeOffset: expressionPrefix.length,
+      };
+    }
+  } catch {
+    // A statement list is the other supported non-empty body form.
+  }
+
+  try {
+    return { kind: "statements", ast: parseLuaChunkWithRanges(body), rangeOffset: 0 };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(formatError(filePath, lineNumber, `Failed to parse macro body: ${message}`));
+  }
+}
+
+function parseLuaChunkWithRanges(code: string): luaparse.Chunk {
+  return luaparse.parse(code, {
+    luaVersion: "5.3",
+    comments: true,
+    locations: true,
+    ranges: true,
+  });
 }
 
 function readMacroBody(
@@ -1119,7 +1204,6 @@ function readMacroBody(
 }
 
 function expandMacros(
-  project: TicbuildProjectCore,
   result: ProcessResult,
   filePath: string,
 ): ProcessResult {
@@ -1130,7 +1214,7 @@ function expandMacros(
   let current = result;
   const maxPasses = 25;
   for (let pass = 0; pass < maxPasses; pass++) {
-    const passResult = applyMacroPass(project, current, filePath);
+    const passResult = applyMacroPass(current, filePath);
     if (!passResult.changed) {
       return current;
     }
@@ -1145,14 +1229,30 @@ function expandMacros(
 }
 
 function applyMacroPass(
-  project: TicbuildProjectCore,
   result: ProcessResult,
   filePath: string,
 ): ProcessResult & { changed: boolean } {
-  const chunk = parseLua(result.code)!;
+  const chunk = parseLuaForMacroExpansion(result.code, filePath);
   const replacements: Array<{ start: number; end: number; text: string }> = [];
 
   walkLuaAst(chunk, (node, parent) => {
+    if (node.type === "Identifier") {
+      if (isIdentifierKeyPosition(node, parent)) {
+        return;
+      }
+      const range = getRange(node, filePath);
+      const macroDef = findMacroDefinitionAtOffset(result.macroDefinitions, node.name, range[0]);
+      if (!macroDef || macroDef.invocationStyle !== "object") {
+        return;
+      }
+      replacements.push({
+        start: range[0],
+        end: range[1],
+        text: expandMacroBody(macroDef, []),
+      });
+      return;
+    }
+
     if (node.type !== "CallExpression") {
       return;
     }
@@ -1162,11 +1262,21 @@ function applyMacroPass(
     }
     const range = getRange(callNode, filePath);
     const macroDef = findMacroDefinitionAtOffset(result.macroDefinitions, callNode.base.name, range[0]);
-    if (!macroDef) {
+    if (!macroDef || macroDef.invocationStyle !== "function") {
       return;
     }
 
     const lineNumber = getLineNumber(callNode, 1);
+    if (macroDef.bodyKind !== "expression" && parent?.type !== "CallStatement") {
+      const bodyLabel = macroDef.bodyKind === "empty" ? "Empty" : "Statement-list";
+      throw new Error(
+        formatError(
+          filePath,
+          lineNumber,
+          `${bodyLabel} macro ${macroDef.name} can only be used as a standalone call statement`,
+        ),
+      );
+    }
     const args = callNode.arguments || [];
     if (args.length !== macroDef.params.length) {
       throw new Error(
@@ -1181,7 +1291,7 @@ function applyMacroPass(
     const argTexts = args.map((arg) =>
       stripLuaCommentsPreserveNewlines(sliceRange(result.code, getRange(arg, filePath))),
     );
-    const expanded = expandMacroBody(project, macroDef, argTexts, filePath, lineNumber);
+    const expanded = expandMacroBody(macroDef, argTexts);
     replacements.push({ start: range[0], end: range[1], text: expanded });
   });
 
@@ -1208,6 +1318,17 @@ function applyMacroPass(
   return { ...updated, changed: true };
 }
 
+function parseLuaForMacroExpansion(code: string, filePath: string): luaparse.Chunk {
+  try {
+    return parseLuaChunkWithRanges(code);
+  } catch (error) {
+    const errorWithLine = error as { line?: unknown };
+    const lineNumber = typeof errorWithLine.line === "number" ? errorWithLine.line : 1;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(formatError(filePath, lineNumber, `Failed to parse Lua while expanding macros: ${message}`));
+  }
+}
+
 function findMacroDefinitionAtOffset(
   events: MacroDefinitionEvent[],
   name: string,
@@ -1226,11 +1347,8 @@ function findMacroDefinitionAtOffset(
 }
 
 function expandMacroBody(
-  project: TicbuildProjectCore,
   macro: MacroDefinition,
   argTexts: string[],
-  filePath: string,
-  lineNumber: number,
 ): string {
   const wrappedBody = wrapMacroBody(macro.body);
   if (wrappedBody.length === 0) {
@@ -1242,11 +1360,12 @@ function expandMacroBody(
     return wrappedBody;
   }
 
-  const parsed = parseExpressionWithRanges(macro.body, macro.sourceFile, macro.lineNumber);
-  const offset = "return ".length;
+  if (!macro.bodyAst) {
+    throw new Error(formatError(macro.sourceFile, macro.lineNumber, `Macro ${macro.name} has no parsed body`));
+  }
   const replacements: Array<{ start: number; end: number; text: string }> = [];
 
-  walkLuaAst(parsed, (node, parent) => {
+  walkLuaAst(macro.bodyAst, (node, parent) => {
     if (node.type !== "Identifier") {
       return;
     }
@@ -1259,8 +1378,8 @@ function expandMacroBody(
     }
     const range = getRange(node, macro.sourceFile);
     replacements.push({
-      start: range[0] - offset,
-      end: range[1] - offset,
+      start: range[0] - macro.bodyRangeOffset,
+      end: range[1] - macro.bodyRangeOffset,
       // #14 we don't need overly aggressive parens, but here's where you'd put it if you wanted to (also see other #14 instances)
       text: `${argTexts[index]}`,
     });
@@ -1533,23 +1652,6 @@ function findMacroNameOffset(line: string, lineStartOffset: number, name: string
   return lineStartOffset + index;
 }
 
-function parseExpressionWithRanges(body: string, filePath: string, lineNumber: number): luaparse.Node {
-  try {
-    const chunk = parseLua(`return ${body}`)!;
-    if (chunk.body.length === 0 || chunk.body[0].type !== "ReturnStatement") {
-      throw new Error("Invalid expression");
-    }
-    const returnStmt = chunk.body[0] as luaparse.ReturnStatement;
-    if (returnStmt.arguments.length !== 1) {
-      throw new Error("Expected single expression");
-    }
-    return returnStmt.arguments[0];
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(formatError(filePath, lineNumber, `Failed to parse macro body: ${message}`));
-  }
-}
-
 function getRange(node: luaparse.Node, filePath: string): [number, number] {
   const withRange = node as { range?: [number, number] };
   if (!withRange.range) {
@@ -1603,10 +1705,6 @@ function isIdentifierKeyPosition(node: luaparse.Identifier, parent: luaparse.Nod
   }
   if (parent.type === "TableKeyString") {
     const tableKey = parent as luaparse.TableKeyString;
-    return tableKey.key === node;
-  }
-  if (parent.type === "TableKey") {
-    const tableKey = parent as luaparse.TableKey;
     return tableKey.key === node;
   }
   if (parent.type === "MemberExpression") {

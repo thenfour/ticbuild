@@ -809,10 +809,10 @@ function addPreprocessorSymbols(
             scopeId: scope.scopeId,
             visibility: "global",
             doc,
-            callable: {
+            callable: symbol.invocationStyle === "function" ? {
                 isColonMethod: false,
                 params: symbol.params,
-            },
+            } : undefined,
         };
         builder.updateFileLength(filePath, span);
         builder.addSymbol(filePath, info, span, scope.scopeId, 0);

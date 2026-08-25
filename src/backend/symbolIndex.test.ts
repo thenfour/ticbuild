@@ -168,7 +168,7 @@ end`;
 
     it("should emit macro symbols", async () => {
         const projectDir = makeTempDir();
-        const source = `--- Clamp value\n-- @param x number value\n-- @param lo number min\n-- @param hi number max\n--#macro CLAMP(x, lo, hi) => x\nlocal y = CLAMP(1, 0, 2)`;
+        const source = `--- Clamp value\n-- @param x number value\n-- @param lo number min\n-- @param hi number max\n--#macro CLAMP(x, lo, hi) => x\nlocal y = CLAMP(1, 0, 2)\n--#macro WIDTH => 240\nlocal width = WIDTH`;
 
         const index = await buildIndexFromFile(projectDir, "main.lua", source);
         const fileIndex = getFileIndex(index, "main.lua");
@@ -178,6 +178,11 @@ end`;
         expect(macroSymbols[0].callable?.params).toEqual(["x", "lo", "hi"]);
         expect(macroSymbols[0].doc?.description).toBe("Clamp value");
         expect(macroSymbols[0].doc?.params?.[0].name).toBe("x");
+
+        const widthSymbols = findSymbolsByName(fileIndex, "WIDTH");
+        expect(widthSymbols).toHaveLength(1);
+        expect(widthSymbols[0].kind).toBe("macro");
+        expect(widthSymbols[0].callable).toBeUndefined();
     });
 
     it("should attach doc comments to symbols", async () => {
