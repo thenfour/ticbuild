@@ -2,6 +2,7 @@ import * as luaparse from "luaparse";
 import { runAliasPasses } from "./lua_alias_shared";
 import type { AliasPassReport, AliasStrategy } from "./lua_alias_shared";
 import { luaOptimizationRules } from "./lua_optimizer_rules";
+import { fingerprintLuaAst } from "./lua_optimizer_fingerprint";
 import type {
   LuaLocalIntroductionCollector,
   LuaOptimizationContext,
@@ -9,6 +10,10 @@ import type {
   LuaOptimizationRule,
   OptimizationRuleOptions,
 } from "./lua_optimizer_types";
+
+// number of passes we can run over the Lua source to reduce feedback-style,
+// before we give up and assume cyclic.
+export const MAX_LUA_REDUCTION_ROUNDS = 100;
 
 class LocalIntroductionPlanner implements LuaLocalIntroductionCollector {
   private readonly aliasStrategies: AliasStrategy[] = [];
@@ -66,6 +71,67 @@ function runHooks(
   }
 }
 
+function changedRuleSummary(rounds: readonly string[][]): string {
+  return [...new Set(rounds.flat())].join(", ") || "none";
+}
+
+function runReductions(
+  rules: readonly LuaOptimizationRule[],
+  context: LuaOptimizationContext,
+): void {
+  const reductionRules = rules.filter((rule) => rule.hooks.reduce !== undefined);
+  if (reductionRules.length === 0) return;
+
+  const fingerprints = new Map<string, number>();
+  const changedRulesByRound: string[][] = [];
+
+  for (let round = 0; round < MAX_LUA_REDUCTION_ROUNDS; round++) {
+    const startFingerprint = fingerprintLuaAst(context.ast);
+    const repeatedRound = fingerprints.get(startFingerprint);
+    if (repeatedRound !== undefined) {
+      const cycleRules = changedRulesByRound.slice(repeatedRound);
+      throw new Error(
+        `Lua reduction cycle: round ${round} repeats round ${repeatedRound}; ` +
+        `changing rules: ${changedRuleSummary(cycleRules)}`,
+      );
+    }
+    fingerprints.set(startFingerprint, round);
+
+    const changedRules: string[] = [];
+    for (const rule of reductionRules) {
+      if (rule.hooks.reduce?.(context).changed) {
+        changedRules.push(rule.id);
+      }
+    }
+    changedRulesByRound.push(changedRules);
+
+    if (changedRules.length === 0) {
+      if (fingerprintLuaAst(context.ast) !== startFingerprint) {
+        throw new Error(
+          "A Lua reduction rule changed the AST without reporting a change; " +
+          `checked rules: ${reductionRules.map((rule) => rule.id).join(", ")}`,
+        );
+      }
+      return;
+    }
+  }
+
+  const finalFingerprint = fingerprintLuaAst(context.ast);
+  const repeatedRound = fingerprints.get(finalFingerprint);
+  if (repeatedRound !== undefined) {
+    const cycleRules = changedRulesByRound.slice(repeatedRound);
+    throw new Error(
+      `Lua reduction cycle: round ${MAX_LUA_REDUCTION_ROUNDS} repeats round ${repeatedRound}; ` +
+      `changing rules: ${changedRuleSummary(cycleRules)}`,
+    );
+  }
+
+  throw new Error(
+    `Lua reductions did not converge after ${MAX_LUA_REDUCTION_ROUNDS} rounds; ` +
+    `changing rules: ${changedRuleSummary(changedRulesByRound)}`,
+  );
+}
+
 export function optimizeLuaAst(
   ast: luaparse.Chunk,
   options: OptimizationRuleOptions,
@@ -78,7 +144,7 @@ export function optimizeLuaAst(
   const enabledRules = rules.filter((rule) => rule.enabled(options));
 
   runHooks(enabledRules, context, (rule) => rule.hooks.normalize);
-  runHooks(enabledRules, context, (rule) => rule.hooks.reduce);
+  runReductions(enabledRules, context);
 
   localIntroductions.collect(() => {
     const introductionContext = { ast: context.ast, options, localIntroductions };

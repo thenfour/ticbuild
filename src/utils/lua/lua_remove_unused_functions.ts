@@ -5,6 +5,8 @@ export type RemoveUnusedFunctionsOptions = {
    functionNamesToKeep?: string[];
 };
 
+type RemovalState = { changed: boolean };
+
 const DEFAULT_KEEP_GLOBALS = new Set<string>([
    // TIC-80 lifecycle hooks / entrypoints
    "TIC",
@@ -354,13 +356,22 @@ function computeClosure(
    return keep;
 }
 
-function filterBody(body: luaparse.Statement[], toRemove: Set<luaparse.Statement>): luaparse.Statement[] {
+function filterBody(
+   body: luaparse.Statement[],
+   toRemove: Set<luaparse.Statement>,
+   state: RemovalState,
+): luaparse.Statement[] {
    if (toRemove.size === 0)
       return body;
+   state.changed = true;
    return body.filter(st => !toRemove.has(st));
 }
 
-function removeUnusedLocalFunctionsInBody(body: luaparse.Statement[], keepNames: Set<string>): luaparse.Statement[] {
+function removeUnusedLocalFunctionsInBody(
+   body: luaparse.Statement[],
+   keepNames: Set<string>,
+   state: RemovalState,
+): luaparse.Statement[] {
    const localCandidatesByName = new Map<string, FnDecl[]>();
    const candidateStatements = new Set<luaparse.Statement>();
 
@@ -427,7 +438,7 @@ function removeUnusedLocalFunctionsInBody(body: luaparse.Statement[], keepNames:
       decls.forEach(d => toRemove.add(d.node as unknown as luaparse.Statement));
    }
 
-   return filterBody(body, toRemove);
+   return filterBody(body, toRemove, state);
 }
 
 function collectGlobalFunctionDecls(body: luaparse.Statement[], out: FnDecl[]): void {
@@ -486,8 +497,11 @@ function removeStatementsRecursively(stmt: luaparse.Statement, toRemove: Set<lua
    }
 }
 
-export function removeUnusedFunctionsInAST(
-   ast: luaparse.Chunk, options: RemoveUnusedFunctionsOptions = {}): luaparse.Chunk {
+function removeUnusedFunctions(
+   ast: luaparse.Chunk,
+   options: RemoveUnusedFunctionsOptions = {},
+): { ast: luaparse.Chunk; changed: boolean } {
+   const state: RemovalState = { changed: false };
    const keepNames = new Set<string>([...DEFAULT_KEEP_GLOBALS]);
    (options.functionNamesToKeep || []).forEach(n => keepNames.add(n));
 
@@ -537,12 +551,14 @@ export function removeUnusedFunctionsInAST(
    }
 
    // Remove global statements across the entire tree.
+   if (removeGlobalStatements.size > 0)
+      state.changed = true;
    ast.body = ast.body.filter(st => !removeGlobalStatements.has(st));
    ast.body = ast.body.map(st => removeStatementsRecursively(st, removeGlobalStatements));
 
    // === Local functions: process each block recursively ===
    const rewriteBlock = (body: luaparse.Statement[]): luaparse.Statement[] => {
-      let out = removeUnusedLocalFunctionsInBody(body, keepNames);
+      let out = removeUnusedLocalFunctionsInBody(body, keepNames, state);
       out = out.map(st => {
          switch (st.type) {
             case "IfStatement":
@@ -568,7 +584,14 @@ export function removeUnusedFunctionsInAST(
    };
 
    ast.body = rewriteBlock(ast.body);
-   return ast;
+   return { ast, changed: state.changed };
+}
+
+export function removeUnusedFunctionsInAST(
+   ast: luaparse.Chunk,
+   options: RemoveUnusedFunctionsOptions = {},
+): luaparse.Chunk {
+   return removeUnusedFunctions(ast, options).ast;
 }
 
 export const removeUnusedFunctionsRule: LuaOptimizationRule = {
@@ -578,9 +601,11 @@ export const removeUnusedFunctionsRule: LuaOptimizationRule = {
    enabled: (options) => options.removeUnusedFunctions,
    hooks: {
       reduce(context) {
-         context.ast = removeUnusedFunctionsInAST(context.ast, {
+         const result = removeUnusedFunctions(context.ast, {
             functionNamesToKeep: context.options.functionNamesToKeep,
          });
+         context.ast = result.ast;
+         return { changed: result.changed };
       },
    },
 };

@@ -10,6 +10,20 @@ type PropScope = {
    env: ConstEnv; locals: Set<string>;
 };
 
+type SimplificationState = { changed: boolean };
+
+function trackReplacement<T>(before: T, after: T, state: SimplificationState): T {
+   if (before !== after)
+      state.changed = true;
+   return after;
+}
+
+function trackArrayReplacements<T>(before: readonly T[], after: T[], state: SimplificationState): T[] {
+   if (before.length !== after.length || before.some((value, index) => value !== after[index]))
+      state.changed = true;
+   return after;
+}
+
 // Collect identifiers that are written/introduced within a statement.
 // We only track plain identifiers (not table fields) because we propagate
 // only plain locals; member/index writes are treated conservatively later.
@@ -279,7 +293,11 @@ function foldBinary(
    }
 }
 
-function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luaparse.Expression {
+function simplifyExpression(
+   expr: luaparse.Expression,
+   scope: PropScope,
+   state: SimplificationState,
+): luaparse.Expression {
    switch (expr.type) {
       case "Identifier": {
          const replacement = scope.env.get(expr.name);
@@ -287,7 +305,7 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
       }
 
       case "UnaryExpression": {
-         expr.argument = simplifyExpression(expr.argument, scope);
+         expr.argument = trackReplacement(expr.argument, simplifyExpression(expr.argument, scope, state), state);
          if (isLiteral(expr.argument)) {
             if (expr.operator === "-") {
                const n = toNumber(expr.argument);
@@ -301,8 +319,8 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
       }
 
       case "BinaryExpression": {
-         expr.left = simplifyExpression(expr.left, scope);
-         expr.right = simplifyExpression(expr.right, scope);
+         expr.left = trackReplacement(expr.left, simplifyExpression(expr.left, scope, state), state);
+         expr.right = trackReplacement(expr.right, simplifyExpression(expr.right, scope, state), state);
          if (isLiteral(expr.left) && isLiteral(expr.right)) {
             const folded = foldBinary(expr.operator, expr.left, expr.right, expr);
             if (folded)
@@ -312,21 +330,21 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
       }
 
       case "LogicalExpression": {
-         expr.left = simplifyExpression(expr.left, scope);
+         expr.left = trackReplacement(expr.left, simplifyExpression(expr.left, scope, state), state);
          if (isLiteral(expr.left)) {
             if (expr.operator === "and") {
                if (!isTruthy(expr.left))
                   return cloneLiteral(expr.left, expr);
-               expr.right = simplifyExpression(expr.right, scope);
+               expr.right = trackReplacement(expr.right, simplifyExpression(expr.right, scope, state), state);
                return expr.right;
             } else if (expr.operator === "or") {
                if (isTruthy(expr.left))
                   return cloneLiteral(expr.left, expr);
-               expr.right = simplifyExpression(expr.right, scope);
+               expr.right = trackReplacement(expr.right, simplifyExpression(expr.right, scope, state), state);
                return expr.right;
             }
          }
-         expr.right = simplifyExpression(expr.right, scope);
+         expr.right = trackReplacement(expr.right, simplifyExpression(expr.right, scope, state), state);
          if (isLiteral(expr.left) && isLiteral(expr.right)) {
             const result = expr.operator === "and" ? (isTruthy(expr.left) ? expr.right : expr.left) :
                                                      (isTruthy(expr.left) ? expr.left : expr.right);
@@ -336,30 +354,38 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
       }
 
       case "CallExpression": {
-         expr.base = simplifyExpression(expr.base, scope);
-         expr.arguments = expr.arguments.map(arg => simplifyExpression(arg, scope));
+         expr.base = trackReplacement(expr.base, simplifyExpression(expr.base, scope, state), state);
+         expr.arguments = trackArrayReplacements(
+            expr.arguments,
+            expr.arguments.map(arg => simplifyExpression(arg, scope, state)),
+            state,
+         );
          return expr;
       }
 
       case "TableCallExpression": {
-         expr.base = simplifyExpression(expr.base, scope);
-         expr.arguments = simplifyExpression(expr.arguments, scope) as luaparse.TableConstructorExpression;
+         expr.base = trackReplacement(expr.base, simplifyExpression(expr.base, scope, state), state);
+         expr.arguments = trackReplacement(
+            expr.arguments,
+            simplifyExpression(expr.arguments, scope, state) as luaparse.TableConstructorExpression,
+            state,
+         );
          return expr;
       }
 
       case "StringCallExpression": {
-         expr.base = simplifyExpression(expr.base, scope);
+         expr.base = trackReplacement(expr.base, simplifyExpression(expr.base, scope, state), state);
          return expr;
       }
 
       case "MemberExpression": {
-         expr.base = simplifyExpression(expr.base, scope);
+         expr.base = trackReplacement(expr.base, simplifyExpression(expr.base, scope, state), state);
          return expr;
       }
 
       case "IndexExpression": {
-         expr.base = simplifyExpression(expr.base, scope);
-         expr.index = simplifyExpression(expr.index, scope);
+         expr.base = trackReplacement(expr.base, simplifyExpression(expr.base, scope, state), state);
+         expr.index = trackReplacement(expr.index, simplifyExpression(expr.index, scope, state), state);
          return expr;
       }
 
@@ -367,14 +393,14 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
          expr.fields.forEach(field => {
             if (field.type === "TableKey") {
                if (field.key)
-                  field.key = simplifyExpression(field.key, scope);
+                  field.key = trackReplacement(field.key, simplifyExpression(field.key, scope, state), state);
                if (field.value)
-                  field.value = simplifyExpression(field.value, scope);
+                  field.value = trackReplacement(field.value, simplifyExpression(field.value, scope, state), state);
             } else if (field.type === "TableKeyString") {
                if (field.value)
-                  field.value = simplifyExpression(field.value, scope);
+                  field.value = trackReplacement(field.value, simplifyExpression(field.value, scope, state), state);
             } else if (field.type === "TableValue" && field.value) {
-               field.value = simplifyExpression(field.value, scope);
+               field.value = trackReplacement(field.value, simplifyExpression(field.value, scope, state), state);
             }
          });
          return expr;
@@ -386,7 +412,7 @@ function simplifyExpression(expr: luaparse.Expression, scope: PropScope): luapar
             if (param.type === "Identifier")
                bodyScope.locals.add(param.name);
          }
-         simplifyBlock(expr.body, bodyScope);
+         simplifyBlock(expr.body, bodyScope, state);
          return expr;
       }
 
@@ -431,10 +457,17 @@ function referencesIdentifier(expr: luaparse.Expression, name: string): boolean 
    }
 }
 
-function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
+function simplifyStatement(stmt: luaparse.Statement, scope: PropScope, state: SimplificationState): void {
    switch (stmt.type) {
       case "LocalStatement": {
-         const simplifiedInit = stmt.init ? stmt.init.map(expr => simplifyExpression(expr, scope)) : undefined;
+         const originalInit = stmt.init;
+         const simplifiedInit = originalInit
+            ? trackArrayReplacements(
+               originalInit,
+               originalInit.map(expr => simplifyExpression(expr, scope, state)),
+               state,
+            )
+            : undefined;
          if (simplifiedInit)
             stmt.init = simplifiedInit;
          const defaultMissingToNil = missingInitDefaultsToNil(simplifiedInit);
@@ -463,12 +496,12 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
                if (rhsUsesLhs) {
                   const scoped = cloneScope(scope);
                   scoped.env.delete(variable.name);
-                  return simplifyExpression(expr, scoped);
+                   return simplifyExpression(expr, scoped, state);
                }
             }
-            return simplifyExpression(expr, scope);
+            return simplifyExpression(expr, scope, state);
          });
-         stmt.init = simplifiedInit;
+         stmt.init = trackArrayReplacements(originalInit, simplifiedInit, state);
          const defaultMissingToNil = missingInitDefaultsToNil(simplifiedInit);
          stmt.variables.forEach((variable, idx) => {
             if (variable.type !== "Identifier")
@@ -493,13 +526,21 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
       }
 
       case "CallStatement": {
-         stmt.expression = simplifyExpression(stmt.expression, scope) as luaparse.CallExpression |
-            luaparse.TableCallExpression | luaparse.StringCallExpression;
+         stmt.expression = trackReplacement(
+            stmt.expression,
+            simplifyExpression(stmt.expression, scope, state) as luaparse.CallExpression |
+               luaparse.TableCallExpression | luaparse.StringCallExpression,
+            state,
+         );
          break;
       }
 
       case "ReturnStatement": {
-         stmt.arguments = stmt.arguments.map(arg => simplifyExpression(arg, scope));
+         stmt.arguments = trackArrayReplacements(
+            stmt.arguments,
+            stmt.arguments.map(arg => simplifyExpression(arg, scope, state)),
+            state,
+         );
          break;
       }
 
@@ -507,9 +548,13 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
          const writes = new Set<string>();
          for (const clause of stmt.clauses) {
             if (clause.type !== "ElseClause" && clause.condition)
-               clause.condition = simplifyExpression(clause.condition, scope);
+               clause.condition = trackReplacement(
+                  clause.condition,
+                  simplifyExpression(clause.condition, scope, state),
+                  state,
+               );
             const innerScope = cloneScope(scope);
-            simplifyBlock(clause.body, innerScope);
+            simplifyBlock(clause.body, innerScope, state);
             clause.body.forEach(s => collectWrites(s, writes));
          }
          writes.forEach(name => scope.env.delete(name));
@@ -521,9 +566,13 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
          bodyWrites.forEach(name => scope.env.delete(name));
          const condScope = cloneScope(scope);
          condScope.env = new Map(); // avoid propagating locals into loop conditions
-         stmt.condition = simplifyExpression(stmt.condition, condScope);
+         stmt.condition = trackReplacement(
+            stmt.condition,
+            simplifyExpression(stmt.condition, condScope, state),
+            state,
+         );
          const inner = cloneScope(scope);
-         simplifyBlock(stmt.body, inner);
+         simplifyBlock(stmt.body, inner, state);
          bodyWrites.forEach(name => scope.env.delete(name));
          break;
       }
@@ -532,10 +581,14 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
          const bodyWrites = collectBlockWrites(stmt.body);
          bodyWrites.forEach(name => scope.env.delete(name));
          const inner = cloneScope(scope);
-         simplifyBlock(stmt.body, inner);
+         simplifyBlock(stmt.body, inner, state);
          const condScope = cloneScope(scope);
          condScope.env = new Map();
-         stmt.condition = simplifyExpression(stmt.condition, condScope);
+         stmt.condition = trackReplacement(
+            stmt.condition,
+            simplifyExpression(stmt.condition, condScope, state),
+            state,
+         );
          bodyWrites.forEach(name => scope.env.delete(name));
          break;
       }
@@ -543,17 +596,17 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
       case "ForNumericStatement": {
          const bodyWrites = collectBlockWrites(stmt.body);
          bodyWrites.forEach(name => scope.env.delete(name));
-         stmt.start = simplifyExpression(stmt.start, scope);
-         stmt.end = simplifyExpression(stmt.end, scope);
+         stmt.start = trackReplacement(stmt.start, simplifyExpression(stmt.start, scope, state), state);
+         stmt.end = trackReplacement(stmt.end, simplifyExpression(stmt.end, scope, state), state);
          if (stmt.step)
-            stmt.step = simplifyExpression(stmt.step, scope);
+            stmt.step = trackReplacement(stmt.step, simplifyExpression(stmt.step, scope, state), state);
          const bodyScope = cloneScope(scope);
          if (stmt.variable.type === "Identifier") {
             bodyScope.locals.add(stmt.variable.name);
             bodyScope.env.delete(stmt.variable.name);
             scope.env.delete(stmt.variable.name); // do not treat loop var as const outside
          }
-         simplifyBlock(stmt.body, bodyScope);
+         simplifyBlock(stmt.body, bodyScope, state);
          bodyWrites.forEach(name => scope.env.delete(name));
          break;
       }
@@ -561,7 +614,11 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
       case "ForGenericStatement": {
          const bodyWrites = collectBlockWrites(stmt.body);
          bodyWrites.forEach(name => scope.env.delete(name));
-         stmt.iterators = stmt.iterators.map(it => simplifyExpression(it, scope));
+         stmt.iterators = trackArrayReplacements(
+            stmt.iterators,
+            stmt.iterators.map(it => simplifyExpression(it, scope, state)),
+            state,
+         );
          const bodyScope = cloneScope(scope);
          stmt.variables.forEach(v => {
             if (v.type === "Identifier") {
@@ -570,7 +627,7 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
                scope.env.delete(v.name);
             }
          });
-         simplifyBlock(stmt.body, bodyScope);
+         simplifyBlock(stmt.body, bodyScope, state);
          bodyWrites.forEach(name => scope.env.delete(name));
          break;
       }
@@ -581,12 +638,12 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
             if (param.type === "Identifier")
                bodyScope.locals.add(param.name);
          });
-         simplifyBlock(stmt.body, bodyScope);
+         simplifyBlock(stmt.body, bodyScope, state);
          break;
       }
 
       case "DoStatement": {
-         simplifyBlock(stmt.body, cloneScope(scope));
+         simplifyBlock(stmt.body, cloneScope(scope), state);
          break;
       }
 
@@ -595,15 +652,20 @@ function simplifyStatement(stmt: luaparse.Statement, scope: PropScope): void {
    }
 }
 
-function simplifyBlock(body: luaparse.Statement[], scope: PropScope): void {
+function simplifyBlock(body: luaparse.Statement[], scope: PropScope, state: SimplificationState): void {
    for (const stmt of body) {
-      simplifyStatement(stmt, scope);
+      simplifyStatement(stmt, scope, state);
    }
 }
 
+function simplifyExpressions(ast: luaparse.Chunk): { ast: luaparse.Chunk; changed: boolean } {
+   const state: SimplificationState = { changed: false };
+   simplifyBlock(ast.body, freshScope(), state);
+   return { ast, changed: state.changed };
+}
+
 export function simplifyExpressionsInAST(ast: luaparse.Chunk): luaparse.Chunk {
-   simplifyBlock(ast.body, freshScope());
-   return ast;
+   return simplifyExpressions(ast).ast;
 }
 
 export const simplifyExpressionsRule: LuaOptimizationRule = {
@@ -613,7 +675,9 @@ export const simplifyExpressionsRule: LuaOptimizationRule = {
    enabled: (options) => options.simplifyExpressions,
    hooks: {
       reduce(context) {
-         context.ast = simplifyExpressionsInAST(context.ast);
+         const result = simplifyExpressions(context.ast);
+         context.ast = result.ast;
+         return { changed: result.changed };
       },
    },
 };

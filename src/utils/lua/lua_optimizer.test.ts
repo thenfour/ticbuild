@@ -1,6 +1,7 @@
 import * as luaparse from "luaparse";
 import { literalAliasStrategy } from "./lua_alias_literals";
-import { optimizeLuaAst } from "./lua_optimizer";
+import { MAX_LUA_REDUCTION_ROUNDS, optimizeLuaAst } from "./lua_optimizer";
+import { fingerprintLuaAst } from "./lua_optimizer_fingerprint";
 import { luaOptimizationRules } from "./lua_optimizer_rules";
 import type { LuaOptimizationRule, OptimizationRuleOptions } from "./lua_optimizer_types";
 
@@ -32,6 +33,37 @@ function parse(code: string): luaparse.Chunk {
 }
 
 describe("Lua optimizer engine", () => {
+  it("repeats reductions until removing a function releases its captured local", () => {
+    const result = optimizeLuaAst(
+      parse("local x=1\nlocal function f() return x end"),
+      { ...options, removeUnusedLocals: true, removeUnusedFunctions: true },
+    );
+
+    expect(result.ast.body).toEqual([]);
+  });
+
+  it("keeps a captured local when its function remains reachable", () => {
+    const result = optimizeLuaAst(
+      parse("local x=1\nlocal function f() return x end\nreturn f()"),
+      { ...options, removeUnusedLocals: true, removeUnusedFunctions: true },
+    );
+
+    expect(result.ast.body.map((statement) => statement.type)).toEqual([
+      "LocalStatement",
+      "FunctionDeclaration",
+      "ReturnStatement",
+    ]);
+  });
+
+  it("keeps side effects after their dependent function is removed", () => {
+    const result = optimizeLuaAst(
+      parse("local x=time()\nlocal function f() return x end"),
+      { ...options, removeUnusedLocals: true, removeUnusedFunctions: true },
+    );
+
+    expect(result.ast.body.map((statement) => statement.type)).toEqual(["LocalStatement"]);
+  });
+
   it("executes stages in engine order and rules in registry order", () => {
     const events: string[] = [];
     const rules: LuaOptimizationRule[] = [
@@ -41,7 +73,10 @@ describe("Lua optimizer engine", () => {
         description: "First test rule",
         enabled: () => true,
         hooks: {
-          reduce: () => events.push("first.reduce"),
+          reduce: () => {
+            events.push("first.reduce");
+            return { changed: false };
+          },
           rename: () => events.push("first.rename"),
         },
       },
@@ -52,7 +87,10 @@ describe("Lua optimizer engine", () => {
         enabled: () => true,
         hooks: {
           normalize: () => events.push("second.normalize"),
-          reduce: () => events.push("second.reduce"),
+          reduce: () => {
+            events.push("second.reduce");
+            return { changed: false };
+          },
           finalize: () => events.push("second.finalize"),
         },
       },
@@ -146,5 +184,75 @@ describe("Lua optimizer engine", () => {
       expect(rule.description.length).toBeGreaterThan(0);
       expect(Object.keys(rule.hooks).length).toBeGreaterThan(0);
     }
+  });
+
+  it("detects a reduction cycle and identifies the changing rule", () => {
+    const toggleRule: LuaOptimizationRule = {
+      id: "test.toggle-number",
+      family: "test",
+      description: "Toggle a number",
+      enabled: () => true,
+      hooks: {
+        reduce(context) {
+          const statement = context.ast.body[0] as luaparse.ReturnStatement;
+          const literal = statement.arguments[0] as luaparse.NumericLiteral;
+          literal.value = literal.value === 1 ? 2 : 1;
+          literal.raw = String(literal.value);
+          return { changed: true };
+        },
+      },
+    };
+
+    expect(() => optimizeLuaAst(parse("return 1"), options, [toggleRule]))
+      .toThrow(/round 2 repeats round 0.*test\.toggle-number/);
+  });
+
+  it("caps reductions whose states never repeat", () => {
+    const incrementRule: LuaOptimizationRule = {
+      id: "test.increment-number",
+      family: "test",
+      description: "Increment a number",
+      enabled: () => true,
+      hooks: {
+        reduce(context) {
+          const statement = context.ast.body[0] as luaparse.ReturnStatement;
+          const literal = statement.arguments[0] as luaparse.NumericLiteral;
+          literal.value += 1;
+          literal.raw = String(literal.value);
+          return { changed: true };
+        },
+      },
+    };
+
+    expect(() => optimizeLuaAst(parse("return 1"), options, [incrementRule]))
+      .toThrow(`did not converge after ${MAX_LUA_REDUCTION_ROUNDS} rounds`);
+  });
+
+  it("rejects an AST mutation reported as unchanged", () => {
+    const dishonestRule: LuaOptimizationRule = {
+      id: "test.unreported-change",
+      family: "test",
+      description: "Change a number without reporting it",
+      enabled: () => true,
+      hooks: {
+        reduce(context) {
+          const statement = context.ast.body[0] as luaparse.ReturnStatement;
+          const literal = statement.arguments[0] as luaparse.NumericLiteral;
+          literal.value = 2;
+          literal.raw = "2";
+          return { changed: false };
+        },
+      },
+    };
+
+    expect(() => optimizeLuaAst(parse("return 1"), options, [dishonestRule]))
+      .toThrow("changed the AST without reporting a change");
+  });
+
+  it("excludes comments and source locations from structural fingerprints", () => {
+    const compact = parse("-- first\nreturn 1");
+    const shifted = parse("\n\n-- second\nreturn 1");
+
+    expect(fingerprintLuaAst(compact)).toBe(fingerprintLuaAst(shifted));
   });
 });

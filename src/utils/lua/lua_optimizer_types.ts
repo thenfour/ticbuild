@@ -33,6 +33,8 @@ export type LuaOptimizationContext = {
 };
 
 export type LuaOptimizationHook = (context: LuaOptimizationContext) => void;
+export type LuaReductionResult = { changed: boolean };
+export type LuaReductionHook = (context: LuaOptimizationContext) => LuaReductionResult;
 export type LuaLocalIntroductionHook = (
   context: Readonly<LuaOptimizationContext> & {
     readonly localIntroductions: LuaLocalIntroductionCollector;
@@ -41,7 +43,7 @@ export type LuaLocalIntroductionHook = (
 
 export type LuaOptimizationHooks = {
   normalize?: LuaOptimizationHook;
-  reduce?: LuaOptimizationHook;
+  reduce?: LuaReductionHook;
   introduceLocals?: LuaLocalIntroductionHook;
   finalize?: LuaOptimizationHook;
   rename?: LuaOptimizationHook;

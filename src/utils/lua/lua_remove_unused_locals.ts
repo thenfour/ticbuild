@@ -1,6 +1,8 @@
 import * as luaparse from "luaparse";
 import type { LuaOptimizationRule } from "./lua_optimizer_types";
 
+type RemovalState = { changed: boolean };
+
 function exprHasSideEffects(expr: luaparse.Expression): boolean {
    switch (expr.type) {
       case "CallExpression":
@@ -226,42 +228,42 @@ function collectDefsFromStatement(stmt: luaparse.Statement, out: Set<string>): v
    }
 }
 
-function rewriteChildBlocks(stmt: luaparse.Statement): luaparse.Statement {
+function rewriteChildBlocks(stmt: luaparse.Statement, state: RemovalState): luaparse.Statement {
    switch (stmt.type) {
       case "IfStatement":
          stmt.clauses.forEach(clause => {
-            clause.body = removeUnusedLocalsInBlock(clause.body);
+            clause.body = removeUnusedLocalsInBlock(clause.body, state);
          });
          return stmt;
       case "WhileStatement":
-         stmt.body = removeUnusedLocalsInBlock(stmt.body);
+         stmt.body = removeUnusedLocalsInBlock(stmt.body, state);
          return stmt;
       case "RepeatStatement":
-         stmt.body = removeUnusedLocalsInBlock(stmt.body);
+         stmt.body = removeUnusedLocalsInBlock(stmt.body, state);
          return stmt;
       case "ForNumericStatement":
-         stmt.body = removeUnusedLocalsInBlock(stmt.body);
+         stmt.body = removeUnusedLocalsInBlock(stmt.body, state);
          return stmt;
       case "ForGenericStatement":
-         stmt.body = removeUnusedLocalsInBlock(stmt.body);
+         stmt.body = removeUnusedLocalsInBlock(stmt.body, state);
          return stmt;
       case "FunctionDeclaration":
-         stmt.body = removeUnusedLocalsInBlock(stmt.body);
+         stmt.body = removeUnusedLocalsInBlock(stmt.body, state);
          return stmt;
       case "DoStatement":
-         stmt.body = removeUnusedLocalsInBlock(stmt.body);
+         stmt.body = removeUnusedLocalsInBlock(stmt.body, state);
          return stmt;
       default:
          return stmt;
    }
 }
 
-function removeUnusedLocalsInBlock(body: luaparse.Statement[]): luaparse.Statement[] {
+function removeUnusedLocalsInBlock(body: luaparse.Statement[], state: RemovalState): luaparse.Statement[] {
    const used = new Set<string>();
    const kept: luaparse.Statement[] = [];
 
    for (let i = body.length - 1; i >= 0; i--) {
-      const stmt = rewriteChildBlocks(body[i]);
+      const stmt = rewriteChildBlocks(body[i], state);
 
       const reads = new Set<string>();
       collectReadsFromStatement(stmt, reads);
@@ -304,7 +306,7 @@ function removeUnusedLocalsInBlock(body: luaparse.Statement[]): luaparse.Stateme
          const liveDefs = [...defs].some(name => usedAfter.has(name));
 
          if (!liveDefs && !hasSideEffects) {
-            // Drop the local entirely; since it is removed, do not add its reads.
+            state.changed = true;
             continue;
          }
 
@@ -339,9 +341,14 @@ function removeUnusedLocalsInBlock(body: luaparse.Statement[]): luaparse.Stateme
    return kept;
 }
 
+function removeUnusedLocals(ast: luaparse.Chunk): { ast: luaparse.Chunk; changed: boolean } {
+   const state: RemovalState = { changed: false };
+   ast.body = removeUnusedLocalsInBlock(ast.body, state);
+   return { ast, changed: state.changed };
+}
+
 export function removeUnusedLocalsInAST(ast: luaparse.Chunk): luaparse.Chunk {
-   ast.body = removeUnusedLocalsInBlock(ast.body);
-   return ast;
+   return removeUnusedLocals(ast).ast;
 }
 
 export const removeUnusedLocalsRule: LuaOptimizationRule = {
@@ -351,7 +358,9 @@ export const removeUnusedLocalsRule: LuaOptimizationRule = {
    enabled: (options) => options.removeUnusedLocals,
    hooks: {
       reduce(context) {
-         context.ast = removeUnusedLocalsInAST(context.ast);
+         const result = removeUnusedLocals(context.ast);
+         context.ast = result.ast;
+         return { changed: result.changed };
       },
    },
 };
