@@ -14,40 +14,8 @@ function makeProject(manifest: Manifest): TicbuildProjectCore {
   });
 }
 
-describe("CodeResourceView emitGlobals", () => {
-  it("should respect code.emitGlobals=false", async () => {
-    const manifest: Manifest = {
-      project: {
-        name: "test",
-        binDir: "./bin",
-        objDir: "./obj",
-        outputCartName: "test.tic",
-      },
-      variables: {},
-      imports: [],
-      assembly: {
-        lua: {
-          minify: false,
-          globals: {
-            PROJECT_NAME: "Demo",
-          },
-        },
-        blocks: [],
-      },
-    };
-
-    const project = makeProject(manifest);
-    const view = new CodeResourceView("print('hello')", "print('hello')");
-
-    const withGlobals = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
-    expect(withGlobals).toContain('local PROJECT_NAME = "Demo"');
-
-    const withoutGlobals = new TextDecoder().decode(await view.getDataForChunk(project, "CODE", { emitGlobals: false }));
-    expect(withoutGlobals).not.toContain('local PROJECT_NAME = "Demo"');
-    expect(withoutGlobals).toContain("print('hello')");
-  });
-
-  it("should emit metadata before globals in insertion order", async () => {
+describe("CodeResourceView output", () => {
+  it("should emit metadata before code in insertion order", async () => {
     const manifest: Manifest = {
       project: {
         name: "test",
@@ -67,9 +35,6 @@ describe("CodeResourceView emitGlobals", () => {
       assembly: {
         lua: {
           minify: false,
-          globals: {
-            PROJECT_NAME: "Demo",
-          },
         },
         blocks: [],
       },
@@ -80,7 +45,7 @@ describe("CodeResourceView emitGlobals", () => {
 
     const output = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
     expect(output.startsWith(
-      "-- title:  test\n-- author: Carl\n-- menu:   MENU1 MENU2 MENU3\n\nlocal PROJECT_NAME = \"Demo\"\n\nprint('hello')",
+      "-- title:  test\n-- author: Carl\n-- menu:   MENU1 MENU2 MENU3\n\nprint('hello')",
     )).toBe(true);
   });
 

@@ -393,23 +393,6 @@
                 }
               },
               "description": "Minification options (OptimizationRuleOptions)"
-            },
-            "globals": {
-              "type": "object",
-              "additionalProperties": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "boolean"
-                  }
-                ]
-              },
-              "description": "Global variables to emit as local declarations at the top of Lua code"
             }
           }
         },
@@ -476,10 +459,6 @@
               "code": {
                 "type": "object",
                 "properties": {
-                  "emitGlobals": {
-                    "type": "boolean",
-                    "description": "Whether to emit assembly.lua.globals for this code block"
-                  },
                   "compressionMode": {
                     "type": "string",
                     "enum": [

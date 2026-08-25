@@ -46,11 +46,6 @@
       "minification": {
         "lineBehavior": "pretty",
         //"stripComments": false,
-      },
-      "globals": {
-        "AUTHOR": "$(author)",
-        "SHOW_HUD": true,
-        "GROUND_POSITION": 99
       }
     },
     "blocks": [

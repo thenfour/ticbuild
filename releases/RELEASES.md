@@ -1,3 +1,37 @@
+## v1.0.23
+
+**TypeScript Support**
+
+- #64 Added support for TypeScript transpilation, and a lot of supporting features for that.
+
+**Lua preprocessor improvements**
+
+- #71 Fixed: `--#macro` shadows previous definitions
+- #45 #72 Hardened design of macros, added parameterless shorthand and statement list support, fixes.
+- #63 Added ability to undefine a preprocessor directive in the project manifest
+
+**Better watch, terminal, debugging facilities**
+
+- #68 Fixed: awkward terminal handling of incoming messages
+- #67 `watch` now exposes a terminal
+- #66 TIC-80 script errors are now exposed, with source mapping and local variable dumps
+- #65 Fixed: source mappings survive minification
+- #77 Added `traceable` Lua output format, making symbol lookup more accurate
+
+**Better Lua minifier**
+
+- #58 Lua optimizer: bracketed string representation when it's shorter
+- #70 Lua short name generation improvements (more chars, scope-aware, some fixes)
+- #73 Lua optimizer: global symbols can now be renamed with opt-in or opt-out behavior
+- #74 Lua optimizer: many small optimizations which combine to remove a lot of dead code and inlining consts
+- #76 Lua optimizer does multiple passes and supports a better options archeticture
+- #78 Added `tight2` lua output format which improves on existing `tight` by removing a lot of unnecessary whitespace.
+
+**Other**
+
+- #28 Added support for custom importers by supporting command invoking manifestation
+- #62 Base build configuration name is clearer
+
 ## v1.0.22 (2026-8-11)
 
 - #59 new tic-80 build with HMR support

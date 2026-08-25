@@ -488,17 +488,6 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
         "globalSymbolsToRename": [],
         "globalSymbolsToKeep": [],
       },
-
-      // optional global variables to emit in lua code.
-      // they are written out as `local variableName = xyz` at the top of the code.
-      // you cannot specify where it gets emitted.
-      // what datatype though? string, number, or boolean?
-      "globals": {
-        "PROJECT_NAME": "$(project.name)", // by default everything is a string.
-        "ENABLE_HUD": true, // this can be a boolean to emit as boolean.
-        "PI": 3.14159, // emits as a number.
-        // no way currently to emit substituted variables as anything but strings.
-      },
     },
     "blocks": [
       {
@@ -509,8 +498,6 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
         "bank": 0,
         "asset": "maincode",
         "code": { // optional code assemblyl options
-          // if true, emits the globals defined in assembly.lua.globals.
-          "emitGlobals": true,
           // when applicable (currently only CODE_COMPRESSED), high-level compression options.
           "compressionMode": "default", // "default" | "zlib-max" | "zopfli"
           // private TIC-80 extension: allow uncompressed CODE to span up to 16 banks.

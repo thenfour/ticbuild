@@ -1,7 +1,6 @@
 import { constants as zlibConstants, deflateSync } from "node:zlib";
 import * as path from "node:path";
 import { zlibAsync as zopfliZlibAsync, ZopfliOptions } from "@gfx/zopfli";
-import { toLuaStringLiteral } from "../../utils/lua/lua_fundamentals";
 import { AliasPassReport, createEmptyAliasPassReport } from "../../utils/lua/lua_alias_shared";
 import {
   LuaProcessOptions,
@@ -149,8 +148,7 @@ export class CodeResourceView extends ResourceViewBase {
       throw new Error(`CodeResourceView only supports CODE or CODE_COMPRESSED chunks.`);
     }
     const minifyEnabled = CoalesceBool(project.manifest.assembly.lua?.minify, true);
-    const emitGlobals = options?.emitGlobals !== false;
-    const minifiedSource = this.getMinifiedResult(project, minifyEnabled, emitGlobals).source;
+    const minifiedSource = this.getMinifiedResult(project, minifyEnabled).source;
 
     if (chunkType === "CODE_COMPRESSED") {
       const compressionMode = normalizeCompressionMode(options?.compressionMode);
@@ -174,7 +172,7 @@ export class CodeResourceView extends ResourceViewBase {
 
   getArtifacts(project: TicbuildProjectCore, processOptions: LuaProcessOptions = {}): CodeArtifacts {
     const minifyEnabled = CoalesceBool(project.manifest.assembly.lua?.minify, true);
-    const minified = this.getMinifiedResult(project, minifyEnabled, true, processOptions);
+    const minified = this.getMinifiedResult(project, minifyEnabled, processOptions);
     return {
       inputSource: this.inputSource,
       inputSourceMap: this.inputSourceMap,
@@ -199,7 +197,6 @@ export class CodeResourceView extends ResourceViewBase {
   private getMinifiedResult(
     project: TicbuildProjectCore,
     minifyEnabled: boolean,
-    emitGlobals: boolean,
     processOptions: LuaProcessOptions = {},
   ): { source: string; sourceMap: LuaPreprocessorSourceMap; report: AliasPassReport } {
     const parseFailure = processOptions.parseFailure ?? "return-original";
@@ -208,8 +205,7 @@ export class CodeResourceView extends ResourceViewBase {
       this.cachedParseFailure === parseFailure &&
       this.cachedMinifiedSource !== null &&
       this.cachedMinifiedSourceMap !== null &&
-      this.cachedMinificationReport !== null &&
-      emitGlobals
+      this.cachedMinificationReport !== null
     ) {
       return {
         source: this.cachedMinifiedSource,
@@ -218,9 +214,8 @@ export class CodeResourceView extends ResourceViewBase {
       };
     }
 
-    const globalsHeader = emitGlobals ? this.createGlobalsHeader(project) : "";
-    let code = globalsHeader + this.preprocessedSource;
-    let sourceMap = prependGeneratedText(globalsHeader, this.preprocessedSource, this.preprocessedSourceMap);
+    let code = this.preprocessedSource;
+    let sourceMap = this.preprocessedSourceMap;
     let report = createEmptyAliasPassReport();
     if (minifyEnabled) {
       const options = resolveLuaMinificationOptions(
@@ -237,16 +232,14 @@ export class CodeResourceView extends ResourceViewBase {
     sourceMap = prependGeneratedText(metadataHeader, code, sourceMap);
     code = metadataHeader + code;
 
-    if (emitGlobals) {
-      this.cachedMinifyEnabled = minifyEnabled;
-      this.cachedParseFailure = parseFailure;
-      this.cachedMinifiedSource = code;
-      this.cachedMinifiedSourceMap = sourceMap;
-      this.cachedMinificationReport = report;
-      this.cachedCompressedBytes = null;
-      this.cachedCompressedSource = null;
-      this.cachedCompressionMode = null;
-    }
+    this.cachedMinifyEnabled = minifyEnabled;
+    this.cachedParseFailure = parseFailure;
+    this.cachedMinifiedSource = code;
+    this.cachedMinifiedSourceMap = sourceMap;
+    this.cachedMinificationReport = report;
+    this.cachedCompressedBytes = null;
+    this.cachedCompressedSource = null;
+    this.cachedCompressionMode = null;
     return { source: code, sourceMap, report };
   }
 
@@ -279,30 +272,6 @@ export class CodeResourceView extends ResourceViewBase {
     this.cachedCompressedSource = minifiedSource;
     this.cachedCompressionMode = compressionMode;
     return this.cachedCompressedBytes;
-  }
-
-  private createGlobalsHeader(project: TicbuildProjectCore): string {
-    let header = "";
-    if (project.manifest.assembly.lua?.globals) {
-      const globals = project.manifest.assembly.lua.globals;
-      for (const [varName, varValue] of Object.entries(globals)) {
-        let luaValue: string;
-        if (typeof varValue === "string") {
-          luaValue = toLuaStringLiteral(project.substituteVariables(varValue));
-        } else if (typeof varValue === "boolean") {
-          luaValue = varValue ? "true" : "false";
-        } else if (typeof varValue === "number") {
-          luaValue = String(varValue);
-        } else {
-          throw new Error(`Unsupported global variable type for ${varName}: ${typeof varValue}`);
-        }
-        header += `local ${varName} = ${luaValue}\n`;
-      }
-      if (header) {
-        header += "\n";
-      }
-    }
-    return header;
   }
 
   private createMetadataHeader(project: TicbuildProjectCore): string {

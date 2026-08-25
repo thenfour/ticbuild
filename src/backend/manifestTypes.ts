@@ -80,7 +80,6 @@ export interface AssemblyBlock {
 export type LuaCompressionMode = "default" | "zlib-max" | "zopfli";
 
 export type CodeAssemblyOptions = {
-  emitGlobals?: boolean;
   compressionMode?: LuaCompressionMode;
   extendedCodeBanks?: boolean;
   multiBankCompressedCode?: boolean;
@@ -106,7 +105,6 @@ export type LuaMinificationConfig = Partial<OptimizationRuleOptions> & {
 export interface LuaAssemblyConfig {
   minify?: boolean;
   minification?: LuaMinificationConfig;
-  globals?: Record<string, string | number | boolean>;
 }
 
 export interface AssemblyConfig {
