@@ -6,9 +6,11 @@ import { collectNamesUnavailableToLocalRenaming, LuaSymbolAllocator } from "./lu
 class RenameScope {
   private parent: RenameScope | null;
   private mappings = new Map<string, string>();
+  private symbolAllocator: LuaSymbolAllocator;
 
-  constructor(parent: RenameScope | null = null) {
+  constructor(parent: RenameScope | null, symbolAllocator: LuaSymbolAllocator) {
     this.parent = parent;
+    this.symbolAllocator = symbolAllocator;
   }
 
   define(originalName: string, newName: string): void {
@@ -21,13 +23,17 @@ class RenameScope {
     return this.parent?.lookup(name);
   }
 
+  allocateName(): string {
+    return this.symbolAllocator.allocate();
+  }
+
   createChild(): RenameScope {
-    return new RenameScope(this);
+    return new RenameScope(this, this.symbolAllocator.fork());
   }
 }
 
 export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
-  const symbolAllocator = new LuaSymbolAllocator({ reservedNames: collectNamesUnavailableToLocalRenaming(ast) });
+  const rootAllocator = new LuaSymbolAllocator({ reservedNames: collectNamesUnavailableToLocalRenaming(ast) });
 
   function processScope(body: luaparse.Statement[], scope: RenameScope): void {
     for (const stmt of body) {
@@ -47,7 +53,7 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
         // Then declare variables in current scope
         node.variables.forEach((v: any) => {
           if (isIdentifier(v)) {
-            const newName = symbolAllocator.allocate();
+            const newName = scope.allocateName();
             scope.define(v.name, newName);
             v.name = newName; // Mutate the AST
           }
@@ -58,7 +64,7 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
       case "FunctionDeclaration": {
         // Handle local function name
         if (node.isLocal && node.identifier && isIdentifier(node.identifier)) {
-          const newName = symbolAllocator.allocate();
+          const newName = scope.allocateName();
           scope.define(node.identifier.name, newName);
           node.identifier.name = newName;
         } else if (node.identifier) {
@@ -72,7 +78,7 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
         // Rename parameters
         node.parameters.forEach((p: any) => {
           if (isIdentifier(p)) {
-            const newName = symbolAllocator.allocate();
+            const newName = funcScope.allocateName();
             funcScope.define(p.name, newName);
             p.name = newName;
           }
@@ -93,7 +99,7 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
 
         // Rename loop variable
         if (isIdentifier(node.variable)) {
-          const newName = symbolAllocator.allocate();
+          const newName = forScope.allocateName();
           forScope.define(node.variable.name, newName);
           node.variable.name = newName;
         }
@@ -111,7 +117,7 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
         // Rename loop variables
         node.variables.forEach((v: any) => {
           if (isIdentifier(v)) {
-            const newName = symbolAllocator.allocate();
+            const newName = forScope.allocateName();
             forScope.define(v.name, newName);
             v.name = newName;
           }
@@ -129,20 +135,21 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
 
       case "WhileStatement": {
         processExpression(node.condition, scope);
-        processScope(node.body, scope);
+        processScope(node.body, scope.createChild());
         break;
       }
 
       case "RepeatStatement": {
-        processScope(node.body, scope);
-        processExpression(node.condition, scope);
+        const repeatScope = scope.createChild();
+        processScope(node.body, repeatScope);
+        processExpression(node.condition, repeatScope);
         break;
       }
 
       case "IfStatement": {
         node.clauses.forEach((clause: any) => {
           if (clause.condition) processExpression(clause.condition, scope);
-          processScope(clause.body, scope);
+          processScope(clause.body, scope.createChild());
         });
         break;
       }
@@ -185,7 +192,7 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
 
         node.parameters.forEach((p: any) => {
           if (isIdentifier(p)) {
-            const newName = symbolAllocator.allocate();
+            const newName = funcScope.allocateName();
             funcScope.define(p.name, newName);
             p.name = newName;
           }
@@ -248,7 +255,7 @@ export function renameLocalVariablesInAST(ast: luaparse.Chunk): luaparse.Chunk {
   }
 
   // Start with a root scope (globals are not renamed)
-  const rootScope = new RenameScope(null);
+  const rootScope = new RenameScope(null, rootAllocator);
   processScope(ast.body, rootScope);
 
   return ast;

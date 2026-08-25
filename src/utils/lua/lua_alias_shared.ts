@@ -289,6 +289,57 @@ export type AliasPassResult = {
 
 export const LUA_MAX_ACTIVE_LOCALS = 200;
 
+class ScopedAliasSymbolAllocators {
+  private readonly allocators = new Map<string, LuaSymbolAllocator>();
+
+  constructor(private readonly reservedNames: Set<string>) {}
+
+  peek(prefix: string): string {
+    return this.getAllocator(prefix).peek();
+  }
+
+  allocate(prefix: string): string {
+    return this.getAllocator(prefix).allocate();
+  }
+
+  fork(): ScopedAliasSymbolAllocators {
+    return new ScopedAliasSymbolAllocators(new Set(this.reservedNames));
+  }
+
+  private getAllocator(prefix: string): LuaSymbolAllocator {
+    let allocator = this.allocators.get(prefix);
+    if (!allocator) {
+      allocator = new LuaSymbolAllocator({ prefix, reservedNames: this.reservedNames });
+      this.allocators.set(prefix, allocator);
+    }
+    return allocator;
+  }
+}
+
+function visitAliasesInLexicalScopeOrder(
+  candidates: AliasInfo[],
+  rootScope: AliasScopeNode,
+  scopeChildren: Map<AliasScopeNode, AliasScopeNode[]>,
+  unavailableNames: Set<string>,
+  visitor: (candidate: AliasInfo, allocators: ScopedAliasSymbolAllocators) => void,
+): void {
+  const candidatesByScope = new Map<AliasScopeNode, AliasInfo[]>();
+  candidates.forEach(candidate => {
+    const scope = candidate.targetScope!;
+    const scopedCandidates = candidatesByScope.get(scope) ?? [];
+    scopedCandidates.push(candidate);
+    candidatesByScope.set(scope, scopedCandidates);
+  });
+  candidatesByScope.forEach(scopedCandidates => scopedCandidates.sort((a, b) => a.order - b.order));
+
+  function visitScope(scope: AliasScopeNode, allocators: ScopedAliasSymbolAllocators): void {
+    candidatesByScope.get(scope)?.forEach(candidate => visitor(candidate, allocators));
+    scopeChildren.get(scope)?.forEach(child => visitScope(child, allocators.fork()));
+  }
+
+  visitScope(rootScope, new ScopedAliasSymbolAllocators(new Set(unavailableNames)));
+}
+
 type FunctionScopeNode = luaparse.Chunk | luaparse.FunctionDeclaration;
 
 type LocalCounts = {
@@ -655,9 +706,13 @@ export function runAliasPasses(ast: luaparse.Chunk, strategies: AliasStrategy[])
   }));
   const candidatesByNode = new WeakMap<luaparse.Expression, AliasInfo[]>();
   const scopeParents = new WeakMap<AliasScopeNode, AliasScopeNode>();
+  const scopeChildren = new Map<AliasScopeNode, AliasScopeNode[]>();
 
   function registerScope(scope: AliasScopeNode, parentScope: AliasScopeNode): void {
     scopeParents.set(scope, parentScope);
+    const children = scopeChildren.get(parentScope) ?? [];
+    children.push(scope);
+    scopeChildren.set(parentScope, children);
   }
 
   function countExpression(
@@ -864,27 +919,24 @@ export function runAliasPasses(ast: luaparse.Chunk, strategies: AliasStrategy[])
   allCandidates.forEach((info) => {
     info.targetScope = findCommonAncestor(info.scopes, scopeParents, ast);
   });
-  const provisionalNames = new Set(unavailableNames);
-  const provisionalAllocators = new Map<string, LuaSymbolAllocator>();
   const profitableCandidates: AliasInfo[] = [];
-  [...allCandidates]
-    .sort((a, b) => a.order - b.order)
-    .forEach((info) => {
-      let allocator = provisionalAllocators.get(info.strategy.prefix);
-      if (!allocator) {
-        allocator = new LuaSymbolAllocator({ prefix: info.strategy.prefix, reservedNames: provisionalNames });
-        provisionalAllocators.set(info.strategy.prefix, allocator);
-      }
-      const aliasName = allocator.peek();
+  visitAliasesInLexicalScopeOrder(
+    allCandidates,
+    ast,
+    scopeChildren,
+    unavailableNames,
+    (info, allocators) => {
+      const aliasName = allocators.peek(info.strategy.prefix);
 
       const savings = info.strategy.estimateSavings(info, aliasName.length);
       if (savings <= 0) return;
 
-      allocator.allocate();
+      allocators.allocate(info.strategy.prefix);
       info.aliasName = aliasName;
       info.estimatedSavings = savings;
       profitableCandidates.push(info);
-    });
+    },
+  );
   if (profitableCandidates.length === 0) {
     return { ast, report: createEmptyAliasPassReport() };
   }
@@ -929,23 +981,20 @@ export function runAliasPasses(ast: luaparse.Chunk, strategies: AliasStrategy[])
     candidate.selected = selectedCandidates.has(candidate);
   });
 
-  const assignedNames = new Set(unavailableNames);
-  const aliasAllocators = new Map<string, LuaSymbolAllocator>();
   retainedCandidates.forEach((candidate) => {
     candidate.aliasName = undefined;
   });
-  [...selectedCandidates]
-    .sort((a, b) => a.order - b.order)
-    .forEach((candidate) => {
-      let allocator = aliasAllocators.get(candidate.strategy.prefix);
-      if (!allocator) {
-        allocator = new LuaSymbolAllocator({ prefix: candidate.strategy.prefix, reservedNames: assignedNames });
-        aliasAllocators.set(candidate.strategy.prefix, allocator);
-      }
-      const aliasName = allocator.allocate();
+  visitAliasesInLexicalScopeOrder(
+    [...selectedCandidates],
+    ast,
+    scopeChildren,
+    unavailableNames,
+    (candidate, allocators) => {
+      const aliasName = allocators.allocate(candidate.strategy.prefix);
       candidate.aliasName = aliasName;
       candidate.estimatedSavings = candidate.strategy.estimateSavings(candidate, aliasName.length);
-    });
+    },
+  );
 
   const declarationsByScope = new Map<AliasScopeNode, AliasInfo[]>();
   [...selectedCandidates]

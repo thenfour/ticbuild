@@ -114,8 +114,22 @@ end
     const result = processLuaWithReport(input, options());
 
     expect(result.code).toContain("do local _a=time");
-    expect(result.code).toContain("do local _b=math.sin");
+    expect(result.code).toContain("do local _a=math.sin");
     expect(result.report.constrainedFunctions).toEqual([]);
+  });
+
+  it("keeps an ancestor alias name reserved in descendant scopes", () => {
+    const input = `
+${calls("time")}
+do
+  ${calls("math.sin")}
+end
+`;
+
+    const result = processLuaWithReport(input, options());
+
+    expect(result.code).toContain("local _a=time");
+    expect(result.code).toContain("do local _b=math.sin");
   });
 
   it("counts implicit method parameters and hidden loop-control locals", () => {

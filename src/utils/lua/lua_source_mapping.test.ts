@@ -43,6 +43,17 @@ describe("Lua optimizer source mapping", () => {
     },
   );
 
+  it("retains distinct authored names when sibling scopes reuse a generated name", () => {
+    const input = "do\nlocal first=1\nprint(first)\nend\ndo\nlocal second=2\nprint(second)\nend";
+    const result = processLuaWithReport(input, options({ renameLocalVariables: true }));
+    const firstOffset = result.code.indexOf("local a") + "local ".length;
+    const secondOffset = result.code.indexOf("local a", firstOffset + 1) + "local ".length;
+
+    expect(secondOffset).toBeGreaterThan(firstOffset);
+    expect(mapLuaTransformOffset(result.transformMap, firstOffset, "right")?.originalName).toBe("first");
+    expect(mapLuaTransformOffset(result.transformMap, secondOffset, "right")?.originalName).toBe("second");
+  });
+
   it("maps a traceable operator line to its authored expression", () => {
     const input = "local x=lut[9]\npoke(x+1,42)";
     const result = processLuaWithReport(input, options({ lineBehavior: "traceable" }));

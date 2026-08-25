@@ -43,6 +43,13 @@ export class LuaSymbolAllocator {
     return next.name;
   }
 
+  fork(): LuaSymbolAllocator {
+    return new LuaSymbolAllocator({
+      prefix: this.prefix,
+      reservedNames: new Set(this.reservedNames),
+    });
+  }
+
   private findNextAvailable(): { name: string; nextIndex: number } {
     let index = this.nextIndex;
     while (true) {

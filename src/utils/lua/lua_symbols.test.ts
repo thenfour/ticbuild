@@ -39,4 +39,15 @@ describe("Lua symbol allocation", () => {
     expect(first.allocate()).toBe("a");
     expect(second.allocate()).toBe("b");
   });
+
+  it("forks inherited reservations without sharing child allocations", () => {
+    const root = new LuaSymbolAllocator();
+    expect(root.allocate()).toBe("a");
+
+    const firstChild = root.fork();
+    const secondChild = root.fork();
+    expect(firstChild.allocate()).toBe("b");
+    expect(firstChild.allocate()).toBe("c");
+    expect(secondChild.allocate()).toBe("b");
+  });
 });
