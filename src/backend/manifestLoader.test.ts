@@ -138,6 +138,27 @@ describe("Manifest Loader", () => {
       expect(result.manifest.assembly.lua?.minification?.lineBehavior).toBe("traceable");
     });
 
+    it.each(["off", "opt-in", "opt-out"] as const)(
+      "should accept globalSymbolRenaming=%s",
+      (globalSymbolRenaming) => {
+        const manifest = {
+          ...validManifest,
+          assembly: {
+            ...validManifest.assembly,
+            lua: {
+              minification: { globalSymbolRenaming },
+            },
+          },
+        };
+        mockFs.existsSync.mockReturnValue(true);
+        mockFs.readFileSync.mockReturnValue(JSON.stringify(manifest));
+
+        const result = loadManifest("/test/manifest.ticbuild.jsonc");
+
+        expect(result.manifest.assembly.lua?.minification?.globalSymbolRenaming).toBe(globalSymbolRenaming);
+      },
+    );
+
     it("should accept null define overrides in build configurations", () => {
       const manifestWithUndefine = {
         ...validManifest,

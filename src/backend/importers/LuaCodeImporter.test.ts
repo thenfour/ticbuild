@@ -115,7 +115,7 @@ describe("CodeResourceView emitGlobals", () => {
     expect(output).not.toContain("throwaway");
   });
 
-  it("should apply preprocessor-collected allowed global renames during minification", async () => {
+  it("should normalize renameSpecifiedGlobalSymbols=true to opt-in", async () => {
     const manifest: Manifest = {
       project: {
         name: "test",
@@ -130,6 +130,7 @@ describe("CodeResourceView emitGlobals", () => {
           minify: true,
           minification: {
             renameLocalVariables: false,
+            renameSpecifiedGlobalSymbols: true,
           },
         },
         blocks: [],
@@ -192,7 +193,7 @@ describe("CodeResourceView emitGlobals", () => {
     )?.name).toBeUndefined();
   });
 
-  it("should respect renameSpecifiedGlobalSymbols=false for preprocessor-collected globals", async () => {
+  it("should normalize renameSpecifiedGlobalSymbols=false to off", async () => {
     const manifest: Manifest = {
       project: {
         name: "test",
@@ -222,6 +223,50 @@ describe("CodeResourceView emitGlobals", () => {
     expect(output).toContain("function Demo_LongName()");
     expect(output).toContain("return Demo_LongName()");
     expect(output).not.toContain("function a()");
+  });
+
+  it("should let an explicit opt-out mode override the legacy boolean", async () => {
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: {},
+      imports: [],
+      assembly: {
+        lua: {
+          minify: true,
+          minification: {
+            globalSymbolRenaming: "opt-out",
+            renameSpecifiedGlobalSymbols: false,
+          },
+        },
+        blocks: [],
+      },
+    };
+
+    const project = makeProject(manifest);
+    const source = [
+      "function Public_LongApi() return Internal_LongHelper() end",
+      "function Internal_LongHelper() return 1 end",
+      "return Public_LongApi()",
+    ].join("\n");
+    const view = new CodeResourceView(
+      source,
+      source,
+      [],
+      undefined,
+      undefined,
+      ["Public_LongApi"],
+    );
+
+    const output = new TextDecoder().decode(await view.getDataForChunk(project, "CODE"));
+
+    expect(output).toContain("function Public_LongApi()");
+    expect(output).toContain("return Public_LongApi()");
+    expect(output).not.toContain("Internal_LongHelper");
   });
 
   it("should reject multi-line metadata values", () => {

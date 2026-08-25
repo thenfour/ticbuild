@@ -589,6 +589,125 @@ describe("Lua allowed global symbol renaming", () => {
     };
   }
 
+  it("should remain opt-in when no global renaming mode is specified", () => {
+    const input = `
+function Demo_LongName()
+  return 1
+end
+return Demo_LongName()
+`;
+
+    const output = processLua(input, renameGlobalOptions());
+
+    expect(output).toContain("function Demo_LongName()");
+    expect(output).toContain("return Demo_LongName()");
+  });
+
+  it("should automatically rename globals defined in opt-out mode", () => {
+    const input = `
+function Internal_LongFunction()
+  return Internal_LongValue
+end
+Internal_LongValue = 3
+return Internal_LongFunction()
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolRenaming: "opt-out",
+    }));
+
+    expect(output).not.toContain("Internal_LongFunction");
+    expect(output).not.toContain("Internal_LongValue");
+    expect(output).toMatch(/function [A-Za-z_][A-Za-z0-9_]*\(\)/);
+  });
+
+  it("should not rename read-only runtime globals in opt-out mode", () => {
+    const input = `
+function Internal_LongHelper()
+  return math.floor(time())
+end
+return Internal_LongHelper() + cls()
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolRenaming: "opt-out",
+    }));
+
+    expect(output).not.toContain("Internal_LongHelper");
+    expect(output).toContain("math.floor(time())");
+    expect(output).toContain("cls()");
+  });
+
+  it("should preserve selected globals in opt-out mode", () => {
+    const input = `
+function Public_LongApi()
+  return Internal_LongHelper()
+end
+function Internal_LongHelper()
+  return 1
+end
+return Public_LongApi()
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolRenaming: "opt-out",
+      globalSymbolsToKeep: ["Public_LongApi"],
+    }));
+
+    expect(output).toContain("function Public_LongApi()");
+    expect(output).toContain("return Public_LongApi()");
+    expect(output).not.toContain("Internal_LongHelper");
+  });
+
+  it("should keep protected callbacks in opt-out mode", () => {
+    const input = `
+function TIC()
+  Internal_LongHelper()
+end
+function Internal_LongHelper() end
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolRenaming: "opt-out",
+    }));
+
+    expect(output).toContain("function TIC()");
+    expect(output).not.toContain("Internal_LongHelper");
+  });
+
+  it("should not rename globals when global symbol renaming is off", () => {
+    const input = `
+function Demo_LongName()
+  return 1
+end
+return Demo_LongName()
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolRenaming: "off",
+      globalSymbolsToRename: ["Demo_LongName"],
+    }));
+
+    expect(output).toContain("function Demo_LongName()");
+    expect(output).toContain("return Demo_LongName()");
+  });
+
+  it("should not treat assignments to locals as global definitions in opt-out mode", () => {
+    const input = `
+local Local_LongName = 0
+Local_LongName = 1
+Global_LongName = 2
+return Local_LongName + Global_LongName
+`;
+
+    const output = processLua(input, renameGlobalOptions({
+      globalSymbolRenaming: "opt-out",
+    }));
+
+    expect(output).toContain("local Local_LongName=0 Local_LongName=1");
+    expect(output).not.toContain("Global_LongName");
+  });
+
   it("gives the shortest name to the most frequently referenced allowed global", () => {
     const infrequentNames = Array.from({ length: 53 }, (_, index) => `InfrequentGlobal${index}`);
     const namesToRename = [...infrequentNames, "FrequentGlobal"];
@@ -642,24 +761,6 @@ return Demo_AssignedLongName()
     expect(output).toContain("a=function()");
     expect(output).toContain("return a()");
     expect(output).not.toContain("Demo_AssignedLongName");
-  });
-
-  it("should not rename allowed globals when renameSpecifiedGlobalSymbols is disabled", () => {
-    const input = `
-function Demo_LongName()
-  return 1
-end
-return Demo_LongName()
-`;
-
-    const output = processLua(input, renameGlobalOptions({
-      renameSpecifiedGlobalSymbols: false,
-      globalSymbolsToRename: ["Demo_LongName"],
-    }));
-
-    expect(output).toContain("function Demo_LongName()");
-    expect(output).toContain("return Demo_LongName()");
-    expect(output).not.toContain("function a()");
   });
 
   it("should respect local and parameter shadowing", () => {

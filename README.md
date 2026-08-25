@@ -210,7 +210,7 @@ removeUnusedLocals
 removeUnusedFunctions
 renameTableFields
 packLocalDeclarations
-renameSpecifiedGlobalSymbols
+renameSpecifiedGlobalSymbols (legacy opt-in switch)
 ```
 
 These overrides are applied on top of the manifest’s
@@ -412,6 +412,12 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
         "functionNamesToKeep": ["TIC", "BDR", "SCN"], // TIC-80 constants by default
         "renameTableFields": false,
         "tableEntryKeysToRename": [],
+        // default "opt-in" when this is omitted. New
+        // projects use "opt-out" so globals defined by the final Lua file are
+        // renamed unless explicitly preserved.
+        "globalSymbolRenaming": "opt-in", // "off" | "opt-in" | "opt-out"
+        "globalSymbolsToRename": [],
+        "globalSymbolsToKeep": [],
       },
 
       // optional global variables to emit in lua code.
@@ -903,31 +909,33 @@ local projectName = PROJECT_NAME
 local projectNameFromCall = PROJECT_NAME_CALL()
 
 -- Minifier: renaming globals
--- Globals are not renamed by default. Renaming (minifying) them requires the
--- renameSpecifiedGlobalSymbols minification option to be set (on by default in
--- release), and you need to specify individually which symbols are allowed to be
--- renamed. This is done via the --#minify allow_rename directive.
--- `--#minify allow_rename` will mark the following global symbol name as
--- renameable.
+-- Global renaming is controlled by assembly.lua.minification.globalSymbolRenaming
+--   "off"    leaves every global name unchanged
+--   "opt-in" renames only names listed in globalSymbolsToRename or marked with
+--             --#minify allow_rename (the default for existing manifests);
+--   "opt-out" renames global symbols defined in the final preprocessed Lua file,
+--             except names listed in globalSymbolsToKeep or marked with
+--             --#minify no_rename.
+--
+-- Automatic opt-out discovery considers plain global function declarations and
+-- assignments. Read-only runtime globals such as print, math, and cls are not
+-- renamed. TIC-80 callbacks and _G/_ENV are always protected.
+--
+-- Use no_rename for names accessed externally or dynamically (for example through
+-- _G["PublicApi"]), because string contents cannot be rewritten with identifiers.
 
 -- e.g.,
 
---#minify allow_rename
+--#minify no_rename
 -- a regular comment can sit between the annotation and declaration
-function Demo_LongName() end
+function PublicApi() end
 
-local y = Demo_LongName() -- call it
+function Internal_LongName() end
+local y = Internal_LongName()
 
+-- In opt-in mode...
 --#minify allow_rename
 Demo_AssignedLongName = function() end
-
-local x = Demo_AssignedLongName() -- call it
-
--- both of these examples are eligible for minification and will end up like,
-function a() end
-local y = a()
-function b() end
-local x = b()
 
 ```
 

@@ -190,7 +190,14 @@ async function processInput(
     try {
         const core = createReplCore(baseCore, state);
         const preprocessed = await preprocessLuaCode(core, source, replFilePath);
-        const view = new CodeResourceView(source, preprocessed.code);
+        const view = new CodeResourceView(
+            source,
+            preprocessed.code,
+            preprocessed.minifyAllowedGlobalNames,
+            undefined,
+            preprocessed.sourceMap,
+            preprocessed.minifyGlobalNamesToKeep,
+        );
         const artifacts = view.getArtifacts(core);
         process.stdout.write(artifacts.minifiedSource + "\n");
     } catch (error) {

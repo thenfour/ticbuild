@@ -36,6 +36,7 @@ export type LuaPreprocessResult = {
   sourceMap: LuaPreprocessorSourceMap;
   preprocessorSymbols: PreprocessorSymbol[];
   minifyAllowedGlobalNames: string[];
+  minifyGlobalNamesToKeep: string[];
 };
 
 export type LuaCodeImportResolver = (importName: string) => Promise<GeneratedLuaSource | undefined>;
@@ -66,10 +67,14 @@ type PreprocessorState = {
   includeStack: string[];
   macroSymbols: PreprocessorSymbol[];
   minifyAllowedGlobalNames: string[];
+  minifyGlobalNamesToKeep: string[];
   resolveCodeImport?: LuaCodeImportResolver;
 };
 
-type PendingMinifyAllowRename = {
+type MinifyRenameDirective = "allow_rename" | "no_rename";
+
+type PendingMinifyRename = {
+  option: MinifyRenameDirective;
   filePath: string;
   lineNumber: number;
 };
@@ -114,6 +119,7 @@ export async function preprocessLuaCode(
     includeStack: [],
     macroSymbols: [],
     minifyAllowedGlobalNames: [],
+    minifyGlobalNamesToKeep: [],
     resolveCodeImport: options.resolveCodeImport,
   };
 
@@ -130,6 +136,7 @@ export async function preprocessLuaCode(
     sourceMap: finalResult.map.toSourceMap(finalResult.code),
     preprocessorSymbols: state.macroSymbols,
     minifyAllowedGlobalNames: Array.from(new Set(state.minifyAllowedGlobalNames)),
+    minifyGlobalNamesToKeep: Array.from(new Set(state.minifyGlobalNamesToKeep)),
   };
 }
 
@@ -188,7 +195,7 @@ async function processSource(
   const macroDefinitions: MacroDefinitionEvent[] = [];
   let output = "";
   let lastEmittedOrigin: { file: string; offset: number } | null = null;
-  let pendingMinifyAllowRename: PendingMinifyAllowRename | null = null;
+  let pendingMinifyRename: PendingMinifyRename | null = null;
 
   // helper to check if current line is in active conditional block
   const isActive = (): boolean => {
@@ -211,17 +218,21 @@ async function processSource(
     const directiveMatch = line.match(/^\s*--#\s*(\w+)\s*(.*)$/);
     if (!directiveMatch) {
       if (isActive()) {
-        if (pendingMinifyAllowRename && !isIgnorableMinifyTargetLine(line)) {
-          const targetName = parseMinifyAllowRenameTarget(line);
+        if (pendingMinifyRename && !isIgnorableMinifyTargetLine(line)) {
+          const targetName = parseMinifyRenameTarget(line);
           if (!targetName) {
             throw new Error(formatError(
-              pendingMinifyAllowRename.filePath,
-              pendingMinifyAllowRename.lineNumber,
-              `--#minify allow_rename must be followed by a simple global function or assignment`,
+              pendingMinifyRename.filePath,
+              pendingMinifyRename.lineNumber,
+              minifyTargetError(pendingMinifyRename.option),
             ));
           }
-          state.minifyAllowedGlobalNames.push(targetName);
-          pendingMinifyAllowRename = null;
+          if (pendingMinifyRename.option === "allow_rename") {
+            state.minifyAllowedGlobalNames.push(targetName);
+          } else {
+            state.minifyGlobalNamesToKeep.push(targetName);
+          }
+          pendingMinifyRename = null;
         }
         if (output.length > 0) {
           output += "\n";
@@ -303,17 +314,21 @@ async function processSource(
           break;
         }
         const minifyOption = stripTrailingLineComment(rest).trim();
-        if (minifyOption !== "allow_rename") {
+        if (minifyOption !== "allow_rename" && minifyOption !== "no_rename") {
           throw new Error(formatError(authoredFilePath, authoredLineNumber, `Unsupported --#minify option: ${minifyOption}`));
         }
-        if (pendingMinifyAllowRename) {
+        if (pendingMinifyRename) {
           throw new Error(formatError(
             authoredFilePath,
             authoredLineNumber,
-            `--#minify allow_rename cannot be repeated before a target declaration`,
+            `--#minify ${pendingMinifyRename.option} cannot be repeated before a target declaration`,
           ));
         }
-        pendingMinifyAllowRename = { filePath: authoredFilePath, lineNumber: authoredLineNumber };
+        pendingMinifyRename = {
+          option: minifyOption,
+          filePath: authoredFilePath,
+          lineNumber: authoredLineNumber,
+        };
         break;
       }
       case "define": {
@@ -517,11 +532,11 @@ async function processSource(
     throw new Error(formatError(filePath, lines.length, `Unclosed --#if block`));
   }
 
-  if (pendingMinifyAllowRename) {
+  if (pendingMinifyRename) {
     throw new Error(formatError(
-      pendingMinifyAllowRename.filePath,
-      pendingMinifyAllowRename.lineNumber,
-      `--#minify allow_rename must be followed by a simple global function or assignment`,
+      pendingMinifyRename.filePath,
+      pendingMinifyRename.lineNumber,
+      minifyTargetError(pendingMinifyRename.option),
     ));
   }
 
@@ -538,7 +553,11 @@ function stripTrailingLineComment(text: string): string {
   return text.replace(/\s*--.*$/, "");
 }
 
-function parseMinifyAllowRenameTarget(line: string): string | null {
+function minifyTargetError(option: MinifyRenameDirective): string {
+  return `--#minify ${option} must be followed by a simple global function or assignment`;
+}
+
+function parseMinifyRenameTarget(line: string): string | null {
   const functionMatch = line.match(/^\s*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/);
   if (functionMatch) {
     return functionMatch[1];

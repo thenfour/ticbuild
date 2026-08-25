@@ -89,7 +89,11 @@ export interface BuildPreprocessorConfig {
   defines?: Record<string, PreprocessorValue | null>;
 }
 
-export type LuaMinificationConfig = Partial<OptimizationRuleOptions>;
+export type LuaMinificationConfig = Partial<OptimizationRuleOptions> & {
+  // old manifests may have this switch; it's been deprecated in favor of
+  // globalSymbolRenaming but keep compat here.
+  renameSpecifiedGlobalSymbols?: boolean;
+};
 
 export interface LuaAssemblyConfig {
   minify?: boolean;

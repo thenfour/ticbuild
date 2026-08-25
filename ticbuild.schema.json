@@ -283,12 +283,30 @@
                 },
                 "globalSymbolsToRename": {
                   "type": "array",
+                  "description": "Global names explicitly eligible for renaming. Used as the candidate set in opt-in mode and added to automatically discovered candidates in opt-out mode.",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "globalSymbolRenaming": {
+                  "type": "string",
+                  "description": "Global renaming mode. Defaults to conservative opt-in when omitted; opt-out automatically considers plain globals defined in the final preprocessed Lua file.",
+                  "enum": [
+                    "off",
+                    "opt-in",
+                    "opt-out"
+                  ]
+                },
+                "globalSymbolsToKeep": {
+                  "type": "array",
+                  "description": "Global names that must retain their authored spelling. Takes precedence over explicit or automatically discovered rename candidates.",
                   "items": {
                     "type": "string"
                   }
                 },
                 "renameSpecifiedGlobalSymbols": {
-                  "type": "boolean"
+                  "type": "boolean",
+                  "description": "Deprecated manifest compatibility option. true maps to globalSymbolRenaming=opt-in and false maps to off; an explicit globalSymbolRenaming value takes precedence."
                 }
               },
               "description": "Minification options (OptimizationRuleOptions)"

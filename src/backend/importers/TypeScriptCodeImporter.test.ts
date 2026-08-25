@@ -437,6 +437,39 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
+  it("lets TypeScript globals opt out of automatic Lua global renaming", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-global-no-rename-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        "//#minify no_rename",
+        "export function PublicTypeScriptApi(): number { return InternalTypeScriptHelper(); }",
+        "export function InternalTypeScriptHelper(): number { return 7; }",
+        "export function TIC(): void { print(PublicTypeScriptApi()); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+    project.manifest.assembly.lua = {
+      minify: true,
+      minification: { globalSymbolRenaming: "opt-out" },
+    };
+
+    try {
+      const resources = await loadAllImports(project);
+      const resource = getTypeScriptResource(resources, "main");
+      const artifacts = resource.getCodeArtifacts(project);
+      expect(resource.getPreprocessResult().minifyGlobalNamesToKeep).toContain("PublicTypeScriptApi");
+      expect(artifacts.minifiedSource).toContain("function PublicTypeScriptApi()");
+      expect(artifacts.minifiedSource).not.toContain("InternalTypeScriptHelper");
+      expect(artifacts.minifiedSource).toContain("function TIC()");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("resolves relative Lua includes from the TypeScript module that authored the directive", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-relative-include-"));
     const featureDir = path.join(projectDir, "feature");

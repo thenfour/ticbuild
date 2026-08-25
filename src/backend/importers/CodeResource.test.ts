@@ -70,6 +70,8 @@ describe("CodeResource Lua pipeline", () => {
         "function TypedCode()",
         '  print("typed")',
         "end",
+        "--#minify no_rename",
+        "function TypedPublicApi() end",
         "--#endif",
       ].join("\n"),
       ["C:/test/typed.ts", "C:/test/typed-helper.ts"],
@@ -85,6 +87,7 @@ describe("CodeResource Lua pipeline", () => {
     expect(preprocess.code).toContain("function TypedCode()");
     expect(preprocess.code).toContain('print("main")');
     expect(preprocess.minifyAllowedGlobalNames).toContain("TypedCode");
+    expect(preprocess.minifyGlobalNamesToKeep).toContain("TypedPublicApi");
     expect(main.getDependencyList().map((dependency) => dependency.path)).toEqual([
       "C:/test/main.lua",
       "C:/test/typed.ts",

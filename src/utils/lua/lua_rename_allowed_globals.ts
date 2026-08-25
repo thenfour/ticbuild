@@ -14,31 +14,41 @@ const DEFAULT_GLOBAL_NAMES_TO_KEEP = new Set([
 ]);
 
 type RenameAllowedGlobalsOptions = {
+  mode?: "opt-in" | "opt-out";
   namesToRename?: string[] | null;
   namesToKeep?: string[] | null;
 };
 
 type GlobalIdentifierMapping = {
   get(name: string): string | undefined;
+  recordDefinition?(name: string): void;
 };
 
-class AllowedGlobalReferenceCounter implements GlobalIdentifierMapping {
+class GlobalSymbolAnalysis implements GlobalIdentifierMapping {
   private readonly counts = new Map<string, number>();
+  private readonly definedNames: string[] = [];
+  private readonly definedNameSet = new Set<string>();
 
-  constructor(names: string[]) {
-    names.forEach(name => this.counts.set(name, 0));
+  recordDefinition(name: string): void {
+    if (!this.definedNameSet.has(name)) {
+      this.definedNameSet.add(name);
+      this.definedNames.push(name);
+    }
   }
 
   // The scope walker calls get() only for identifiers that are not shadowed, so
   // counting through the same interface keeps analysis and rewriting aligned.
   get(name: string): undefined {
-    const count = this.counts.get(name);
-    if (count !== undefined) this.counts.set(name, count + 1);
+    this.counts.set(name, (this.counts.get(name) ?? 0) + 1);
     return undefined;
   }
 
   count(name: string): number {
     return this.counts.get(name) ?? 0;
+  }
+
+  definitions(): string[] {
+    return this.definedNames;
   }
 }
 
@@ -78,21 +88,26 @@ function isValidIdentifierName(name: string): boolean {
 
 function makeRenameMap(
   ast: luaparse.Chunk,
+  mode: "opt-in" | "opt-out",
   namesToRename: string[],
   namesToKeep: Set<string>,
 ): Map<string, string> {
   const usedNames = collectLuaIdentifierNames(ast);
   namesToKeep.forEach((name) => usedNames.add(name));
 
-  const uniqueAllowedNames = Array.from(new Set(namesToRename))
+  const analysis = new GlobalSymbolAnalysis();
+  processBlock(ast.body, new GlobalRenameScope(), analysis);
+
+  const candidates = mode === "opt-out"
+    ? [...analysis.definitions(), ...namesToRename]
+    : namesToRename;
+  const uniqueAllowedNames = Array.from(new Set(candidates))
     .filter(isValidIdentifierName)
     .filter((name) => !namesToKeep.has(name));
 
-  const referenceCounter = new AllowedGlobalReferenceCounter(uniqueAllowedNames);
-  processBlock(ast.body, new GlobalRenameScope(), referenceCounter);
   const originalOrder = new Map(uniqueAllowedNames.map((name, index) => [name, index]));
   uniqueAllowedNames.sort((a, b) => {
-    const frequencyDifference = referenceCounter.count(b) - referenceCounter.count(a);
+    const frequencyDifference = analysis.count(b) - analysis.count(a);
     return frequencyDifference || originalOrder.get(a)! - originalOrder.get(b)!;
   });
 
@@ -109,9 +124,13 @@ function maybeRenameIdentifier(
   node: luaparse.Identifier,
   scope: GlobalRenameScope,
   mapping: GlobalIdentifierMapping,
+  isDefinition = false,
 ): void {
   if (scope.isShadowed(node.name)) {
     return;
+  }
+  if (isDefinition) {
+    mapping.recordDefinition?.(node.name);
   }
   const mapped = mapping.get(node.name);
   if (mapped) {
@@ -229,7 +248,7 @@ function processAssignmentTarget(
 ): void {
   switch (expr.type) {
     case "Identifier":
-      maybeRenameIdentifier(expr, scope, mapping);
+      maybeRenameIdentifier(expr, scope, mapping, true);
       return;
 
     case "MemberExpression":
@@ -333,14 +352,15 @@ export function renameAllowedGlobalsInAST(
   options: RenameAllowedGlobalsOptions,
 ): luaparse.Chunk {
   const namesToRename = options.namesToRename ?? [];
-  if (namesToRename.length === 0) {
+  const mode = options.mode ?? "opt-in";
+  if (mode === "opt-in" && namesToRename.length === 0) {
     return ast;
   }
 
   const namesToKeep = new Set<string>([...DEFAULT_GLOBAL_NAMES_TO_KEEP]);
   (options.namesToKeep ?? []).forEach((name) => namesToKeep.add(name));
 
-  const mapping = makeRenameMap(ast, namesToRename, namesToKeep);
+  const mapping = makeRenameMap(ast, mode, namesToRename, namesToKeep);
   if (mapping.size === 0) {
     return ast;
   }

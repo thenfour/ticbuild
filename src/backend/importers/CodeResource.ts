@@ -44,7 +44,7 @@ const releaseOptions: OptimizationRuleOptions = {
   renameTableFields: false,
   tableEntryKeysToRename: [],
   globalSymbolsToRename: [],
-  renameSpecifiedGlobalSymbols: true,
+  globalSymbolRenaming: "opt-in",
 } as const;
 
 const zopfliMaxOptions: ZopfliOptions = {
@@ -79,6 +79,7 @@ export class CodeResourceView extends ResourceViewBase {
   preprocessedSource: string;
   preprocessedSourceMap: LuaPreprocessorSourceMap;
   minifyAllowedGlobalNames: string[];
+  minifyGlobalNamesToKeep: string[];
   private cachedMinifiedSource: string | null = null;
   private cachedMinifiedSourceMap: LuaPreprocessorSourceMap | null = null;
   private cachedMinificationReport: AliasPassReport | null = null;
@@ -93,6 +94,7 @@ export class CodeResourceView extends ResourceViewBase {
     minifyAllowedGlobalNames: string[] = [],
     inputSourceMap: LuaPreprocessorSourceMap = createIdentitySourceMap(inputSource, "<generated>"),
     preprocessedSourceMap: LuaPreprocessorSourceMap = createIdentitySourceMap(preprocessedSource, "<generated>"),
+    minifyGlobalNamesToKeep: string[] = [],
   ) {
     super();
     this.inputSource = inputSource;
@@ -100,6 +102,7 @@ export class CodeResourceView extends ResourceViewBase {
     this.preprocessedSource = preprocessedSource;
     this.preprocessedSourceMap = preprocessedSourceMap;
     this.minifyAllowedGlobalNames = minifyAllowedGlobalNames;
+    this.minifyGlobalNamesToKeep = minifyGlobalNamesToKeep;
   }
 
   getDataForChunk(
@@ -186,6 +189,7 @@ export class CodeResourceView extends ResourceViewBase {
       const options = buildMinificationOptions(
         project.manifest.assembly.lua?.minification,
         this.minifyAllowedGlobalNames,
+        this.minifyGlobalNamesToKeep,
       );
       const processed = processLuaWithReport(code, options);
       code = processed.code;
@@ -337,14 +341,22 @@ function composeLuaTransformSourceMap(
 function buildMinificationOptions(
   overrides?: LuaMinificationConfig,
   minifyAllowedGlobalNames: string[] = [],
+  minifyGlobalNamesToKeep: string[] = [],
 ): OptimizationRuleOptions {
-  if (!overrides) {
-    return { ...releaseOptions, globalSymbolsToRename: [...minifyAllowedGlobalNames] };
-  }
-  const options: OptimizationRuleOptions = { ...releaseOptions, ...overrides };
+  const {
+    renameSpecifiedGlobalSymbols,
+    ...canonicalOverrides
+  } = overrides ?? {};
+  const options: OptimizationRuleOptions = { ...releaseOptions, ...canonicalOverrides };
+  options.globalSymbolRenaming = canonicalOverrides.globalSymbolRenaming
+    ?? (renameSpecifiedGlobalSymbols === false ? "off" : "opt-in");
   options.globalSymbolsToRename = [
-    ...(overrides.globalSymbolsToRename ?? releaseOptions.globalSymbolsToRename ?? []),
+    ...(canonicalOverrides.globalSymbolsToRename ?? releaseOptions.globalSymbolsToRename ?? []),
     ...minifyAllowedGlobalNames,
+  ];
+  options.globalSymbolsToKeep = [
+    ...(canonicalOverrides.globalSymbolsToKeep ?? releaseOptions.globalSymbolsToKeep ?? []),
+    ...minifyGlobalNamesToKeep,
   ];
   return options;
 }
@@ -488,6 +500,7 @@ export abstract class CodeResource extends ImportedResourceBase {
       preprocessResult.minifyAllowedGlobalNames,
       generatedLuaSourceMap,
       preprocessResult.sourceMap,
+      preprocessResult.minifyGlobalNamesToKeep,
     );
   }
 }

@@ -337,6 +337,25 @@ Demo_AssignedLongName = function() end
     expect(result.minifyAllowedGlobalNames).toEqual(["Demo_LongName", "Demo_AssignedLongName"]);
   });
 
+  it("should collect no_rename targets from simple global declarations", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#minify no_rename -- public API
+-- a regular comment can sit between the annotation and declaration
+function Public_LongName() end
+
+--#minify no_rename
+Public_AssignedLongName = function() end
+`;
+
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.code).toContain("function Public_LongName() end");
+    expect(result.code).toContain("Public_AssignedLongName = function() end");
+    expect(result.code).not.toContain("--#minify no_rename");
+    expect(result.minifyGlobalNamesToKeep).toEqual(["Public_LongName", "Public_AssignedLongName"]);
+  });
+
   it("should ignore inactive allow_rename directives", async () => {
     const project = makeProject(manifest);
     const source = `
@@ -350,6 +369,22 @@ function Demo_ActiveButUnmarked() end
     const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
     expect(result.minifyAllowedGlobalNames).toEqual([]);
+    expect(result.code).not.toContain("Demo_Inactive");
+  });
+
+  it("should ignore inactive no_rename directives", async () => {
+    const project = makeProject(manifest);
+    const source = `
+--#if false
+--#minify no_rename
+function Demo_Inactive() end
+--#endif
+function Demo_ActiveButUnmarked() end
+`;
+
+    const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
+
+    expect(result.minifyGlobalNamesToKeep).toEqual([]);
     expect(result.code).not.toContain("Demo_Inactive");
   });
 
@@ -368,6 +403,15 @@ function Demo_ActiveButUnmarked() end
 
     await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
       "--#minify allow_rename must be followed by a simple global function or assignment",
+    );
+  });
+
+  it("should reject no_rename when the next code line is not a simple global declaration", async () => {
+    const project = makeProject(manifest);
+    const source = "--#minify no_rename\nlocal function Demo_LocalName() end";
+
+    await expect(preprocessLuaCode(project, source, "C:/test/source.lua")).rejects.toThrow(
+      "--#minify no_rename must be followed by a simple global function or assignment",
     );
   });
 });

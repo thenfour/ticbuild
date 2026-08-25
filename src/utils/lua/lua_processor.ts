@@ -67,12 +67,15 @@ export type OptimizationRuleOptions = {
   // Intended for callers that know these keys are safe to minify even when the table escapes.
   tableEntryKeysToRename: string[];
 
-  // Explicitly allowed globals that may be renamed. This is opt-in because global names can be
-  // externally referenced by TIC-80 or dynamic Lua code.
+  // Explicit global names eligible for renaming in opt-in or opt-out mode.
   globalSymbolsToRename?: string[];
 
-  // Applies globalSymbolsToRename when enabled.
-  renameSpecifiedGlobalSymbols?: boolean;
+  // Controls whether global renaming is disabled, uses only the explicit allow-list, or
+  // automatically renames globals defined in this code unless they are kept.
+  globalSymbolRenaming?: "off" | "opt-in" | "opt-out";
+
+  // Globals that must retain their authored names. Takes precedence over rename candidates.
+  globalSymbolsToKeep?: string[];
 
   // Merge consecutive local declarations into one using packing.
   // e.g.,
@@ -102,7 +105,7 @@ export type OptimizationRuleOptions = {
   // simple tiny case has side-effects we can't guarantee won't break.
 };
 
-// Precedence tables, low → high
+// Precedence tables, low -> high
 const LOGICAL_PRECEDENCE: Record<string, number> = {
   or: 1,
   and: 2,
@@ -1202,14 +1205,14 @@ export class LuaPrinter {
   }
 
   private tableCallExpr(node: luaparse.TableCallExpression): string {
-    // sugar: f{...}  → f({ ... })
+    // sugar: f{...}  -> f({ ... })
     const base = this.prefixBase(node.base);
     const arg = this.expr(node.arguments);
     return `${base}(${arg})`;
   }
 
   private stringCallExpr(node: luaparse.StringCallExpression): string {
-    // sugar: f"str" → f("str")
+    // sugar: f"str" -> f("str")
     const base = this.prefixBase(node.base);
     const arg = this.stringLiteral(node.argument as luaparse.StringLiteral);
     return `${base}(${arg})`;
@@ -1494,14 +1497,15 @@ export function processLuaWithReport(code: string, ruleOptions: OptimizationRule
     ast = renameLocalVariablesInAST(ast);
   }
 
-  if (
-    ruleOptions.renameSpecifiedGlobalSymbols !== false &&
-    ruleOptions.globalSymbolsToRename &&
-    ruleOptions.globalSymbolsToRename.length > 0
-  ) {
+  const globalSymbolRenaming = ruleOptions.globalSymbolRenaming ?? "opt-in";
+  if (globalSymbolRenaming !== "off") {
     ast = renameAllowedGlobalsInAST(ast, {
+      mode: globalSymbolRenaming,
       namesToRename: ruleOptions.globalSymbolsToRename,
-      namesToKeep: ruleOptions.functionNamesToKeep,
+      namesToKeep: [
+        ...(ruleOptions.functionNamesToKeep ?? []),
+        ...(ruleOptions.globalSymbolsToKeep ?? []),
+      ],
     });
   }
 
