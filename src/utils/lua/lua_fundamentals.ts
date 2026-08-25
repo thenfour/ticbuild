@@ -1,9 +1,34 @@
 import { assert } from "../errorHandling";
 
-// takes string contents, returns Lua string literal with quotes and escapes.
-export function toLuaStringLiteral(str: string): string {
+function toLuaQuotedStringLiteral(str: string): string {
   const escaped = str.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
   return `"${escaped}"`;
+}
+
+function toLuaLongBracketStringLiteral(str: string): string | null {
+  // https://www.lua.org/manual/5.3/manual.html#3.1
+  // Lua normalizes line endings in long strings and discards an initial newline.
+  // Restrict this compact form to single-line data so this helper remains exact.
+  if (/[\r\n]/.test(str)) return null;
+
+  // Find the first delimiter whose closing marker occurs only after the full
+  // payload. Searching the combined text also catches a marker assembled from
+  // a suffix of the payload and the appended closing delimiter.
+  for (let equalsCount = 0; ; equalsCount++) {
+    const equals = "=".repeat(equalsCount);
+    const close = `]${equals}]`;
+    if ((str + close).indexOf(close) === str.length) {
+      return `[${equals}[${str}${close}`;
+    }
+  }
+}
+
+// Return the shortest exact Lua representation. Strings containing quotes and
+// backslashes can avoid escape overhead by using a long-bracket literal.
+export function toLuaStringLiteral(str: string): string {
+  const quoted = toLuaQuotedStringLiteral(str);
+  const longBracket = toLuaLongBracketStringLiteral(str);
+  return longBracket !== null && longBracket.length < quoted.length ? longBracket : quoted;
 }
 
 // Replace one or more Lua "blocks" delimited by begin/end marker lines.

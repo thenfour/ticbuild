@@ -18,6 +18,7 @@ import { renameAllowedGlobalsInAST } from "./lua_rename_allowed_globals";
 import { extractLuaBlocks, replaceLuaBlock, toLuaStringLiteral } from "./lua_fundamentals";
 import { annotateLuaAstOrigins } from "./lua_ast_provenance";
 import { createLuaPrintTransformMap } from "./lua_print_trace";
+import { stringValue } from "./lua_utils";
 import {
   LuaTransformMap,
   LuaTransformMapBuilder,
@@ -988,8 +989,16 @@ export class LuaPrinter {
   }
 
   private stringLiteral(node: luaparse.StringLiteral): string {
-    if (node.raw) return node.raw;
-    return toLuaStringLiteral(node.value);
+    const value = stringValue(node);
+    if (value === null) return node.raw ?? '""';
+
+    const compact = toLuaStringLiteral(value);
+    if (!node.raw) return compact;
+
+    // Keep escaped control bytes in their original spelling. Long brackets
+    // would require embedding those bytes directly in the generated source.
+    if (/[\x00-\x1f\x7f]/.test(value)) return node.raw;
+    return compact.length < node.raw.length ? compact : node.raw;
   }
 
   private numericLiteral(node: luaparse.NumericLiteral, options?: { forceLeadingZero?: boolean }): string {
