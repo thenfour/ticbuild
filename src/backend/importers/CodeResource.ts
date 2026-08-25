@@ -27,7 +27,7 @@ import {
   SourceMapBuilder,
 } from "../sourceMap";
 
-const releaseOptions: OptimizationRuleOptions = {
+export const LUA_RELEASE_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   stripComments: true,
   //stripDebugBlocks: true,
   maxIndentLevel: 1,
@@ -347,15 +347,22 @@ function buildMinificationOptions(
     renameSpecifiedGlobalSymbols,
     ...canonicalOverrides
   } = overrides ?? {};
-  const options: OptimizationRuleOptions = { ...releaseOptions, ...canonicalOverrides };
+  const options: OptimizationRuleOptions = {
+    ...LUA_RELEASE_OPTIMIZATION_OPTIONS,
+    ...canonicalOverrides,
+  };
   options.globalSymbolRenaming = canonicalOverrides.globalSymbolRenaming
     ?? (renameSpecifiedGlobalSymbols === false ? "off" : "opt-in");
   options.globalSymbolsToRename = [
-    ...(canonicalOverrides.globalSymbolsToRename ?? releaseOptions.globalSymbolsToRename ?? []),
+    ...(canonicalOverrides.globalSymbolsToRename
+      ?? LUA_RELEASE_OPTIMIZATION_OPTIONS.globalSymbolsToRename
+      ?? []),
     ...minifyAllowedGlobalNames,
   ];
   options.globalSymbolsToKeep = [
-    ...(canonicalOverrides.globalSymbolsToKeep ?? releaseOptions.globalSymbolsToKeep ?? []),
+    ...(canonicalOverrides.globalSymbolsToKeep
+      ?? LUA_RELEASE_OPTIMIZATION_OPTIONS.globalSymbolsToKeep
+      ?? []),
     ...minifyGlobalNamesToKeep,
   ];
   return options;
