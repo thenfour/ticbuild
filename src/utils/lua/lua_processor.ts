@@ -32,7 +32,8 @@ export type OptimizationRuleOptions = {
   maxIndentLevel: number; // limits indentation to N levels; beyond that, everything is flattened
   // Line formatting behavior: pretty preserves newlines, tight packs lines up to maxLineLength,
   // single-line-blocks packs only when an entire block fits on one line
-  // traceable emits one token per line so Lua's line-only runtime errors identify the narrowest useful syntax.
+  // traceable emits one diagnostic anchor per line so Lua's line-only runtime errors identify
+  // the narrowest useful syntax without putting every structural delimiter on its own line.
   lineBehavior: LuaLineBehavior;
   maxLineLength: number;
   renameLocalVariables: boolean;
@@ -187,12 +188,12 @@ export class LuaPrinter {
     return this.buf.join("");
   }
 
-  // ===== TRACEABLE MODE: one lexical token per generated line =====
+  // ===== TRACEABLE MODE: one diagnostic anchor per generated line =====
   //
   // Lua 5.3 records binary/unary bytecode against the operator token's line and
-  // function calls against the opening argument token's line. Giving every
-  // token a line of its own therefore lets a line-only runtime location select
-  // a narrowly mapped AST region without changing the Lua token stream.
+  // ordinary function calls against the start of the suffixed expression. Keep
+  // those anchors distinct while grouping structural punctuation that cannot
+  // introduce another useful source-map choice on the same line.
   //
   // Generate canonical pretty output first instead of maintaining a second AST
   // serializer. Re-lexing that valid output preserves literal spellings and
@@ -214,7 +215,20 @@ export class LuaPrinter {
       locations: false,
       ranges: true,
     });
-    const ranges: Array<[number, number]> = [];
+    type TraceableTokenLexeme = {
+      kind: "token";
+      range: [number, number];
+      text: string;
+      token: luaparse.Token;
+    };
+    type TraceableCommentLexeme = {
+      kind: "comment";
+      range: [number, number];
+      text: string;
+    };
+    type TraceableLexeme = TraceableTokenLexeme | TraceableCommentLexeme;
+    type ParenthesisKind = "call" | "function-parameters" | "group";
+    const lexemes: TraceableLexeme[] = [];
 
     const lexer = luaparse.parse({
       wait: true,
@@ -229,18 +243,121 @@ export class LuaPrinter {
       if (token.range[0] === token.range[1]) {
         break;
       }
-      ranges.push(token.range);
+      lexemes.push({
+        kind: "token",
+        range: token.range,
+        text: canonical.slice(token.range[0], token.range[1]),
+        token,
+      });
     }
 
+    // The streaming lexer skips comments; merge the parser's ranges back into source order.
     for (const comment of parsed.comments ?? []) {
       const range = (comment as luaparse.Comment & { range?: [number, number] }).range;
       if (range && range[1] > range[0]) {
-        ranges.push(range);
+        lexemes.push({ kind: "comment", range, text: canonical.slice(range[0], range[1]) });
       }
     }
 
-    ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    return ranges.map(([begin, end]) => canonical.slice(begin, end)).join("\n") + "\n";
+    lexemes.sort((a, b) => a.range[0] - b.range[0] || a.range[1] - b.range[1]);
+
+    // @types/luaparse omits this runtime export.
+    const tokenTypes = (luaparse as typeof luaparse & {
+      tokenTypes: { Identifier: number; StringLiteral: number };
+    }).tokenTypes;
+    // Includes chained calls such as f()(), f"x"(), and f{}().
+    const canEndSuffixedExpression = (lexeme: TraceableTokenLexeme | undefined): boolean => {
+      if (!lexeme) {
+        return false;
+      }
+      return lexeme.token.type === tokenTypes.Identifier ||
+        lexeme.token.type === tokenTypes.StringLiteral ||
+        lexeme.text === ")" || lexeme.text === "]" || lexeme.text === "}";
+    };
+    // Reuse canonical whitespace when grouping so the token stream cannot change.
+    const canonicalInlineSeparator = (left: TraceableLexeme, right: TraceableLexeme): string =>
+      /\s/.test(canonical.slice(left.range[1], right.range[0])) ? " " : "";
+
+    const lines: string[] = [];
+    const parenthesisStack: ParenthesisKind[] = [];
+    let previousToken: TraceableTokenLexeme | undefined;
+    let localPrefixAwaitingName = false;
+    let insideFunctionHeader = false;
+    let functionNameAwaitingFirstIdentifier = false;
+
+    for (const lexeme of lexemes) {
+      if (lexeme.kind === "comment") {
+        lines.push(lexeme.text);
+        previousToken = undefined;
+        continue;
+      }
+
+      const token = lexeme.token;
+      const text = lexeme.text;
+      const isIdentifier = token.type === tokenTypes.Identifier;
+      const joinsLocalPrefix = localPrefixAwaitingName && (text === "function" || isIdentifier);
+      const joinsFunctionName = functionNameAwaitingFirstIdentifier && isIdentifier;
+      // Call/signature parens are scaffolding; grouping parens retain their own lines.
+      const openingParenthesisKind: ParenthesisKind | undefined = text === "("
+        ? insideFunctionHeader
+          ? "function-parameters"
+          : canEndSuffixedExpression(previousToken)
+            ? "call"
+            : "group"
+        : undefined;
+      const closingParenthesisKind = text === ")"
+        ? parenthesisStack[parenthesisStack.length - 1]
+        : undefined;
+      const followsMemberPrefix = previousToken?.text === "." || previousToken?.text === ":";
+      const isTrailingScaffolding = text === "," || text === ";" || text === "=";
+      // "[" can share its base; "]" stays separate because Lua may report its line.
+      const isIndexOpener = text === "[" && canEndSuffixedExpression(previousToken);
+      const isGroupedCallOrParameterParen = openingParenthesisKind === "call" ||
+        openingParenthesisKind === "function-parameters" ||
+        closingParenthesisKind === "call" ||
+        closingParenthesisKind === "function-parameters";
+      const appendToPreviousLine = !!previousToken && (
+        joinsLocalPrefix ||
+        joinsFunctionName ||
+        followsMemberPrefix ||
+        isTrailingScaffolding ||
+        isIndexOpener ||
+        isGroupedCallOrParameterParen
+      );
+
+      if (appendToPreviousLine) {
+        lines[lines.length - 1] += canonicalInlineSeparator(previousToken!, lexeme) + text;
+      } else {
+        lines.push(text);
+      }
+
+      if (text === ")") {
+        parenthesisStack.pop();
+      }
+      if (openingParenthesisKind) {
+        parenthesisStack.push(openingParenthesisKind);
+        if (openingParenthesisKind === "function-parameters") {
+          insideFunctionHeader = false;
+          functionNameAwaitingFirstIdentifier = false;
+        }
+      }
+      if (joinsLocalPrefix) {
+        localPrefixAwaitingName = false;
+      }
+      if (joinsFunctionName) {
+        functionNameAwaitingFirstIdentifier = false;
+      }
+      if (text === "local") {
+        localPrefixAwaitingName = true;
+      }
+      if (text === "function") {
+        insideFunctionHeader = true;
+        functionNameAwaitingFirstIdentifier = true;
+      }
+      previousToken = lexeme;
+    }
+
+    return lines.join("\n") + "\n";
   }
 
   // ===== TIGHT MODE: Token-stream based packing =====
@@ -1611,9 +1728,8 @@ function reinsertDisableMinificationBlocksWithMap(
       ? block.placeholder.slice(0, -2)
       : null;
     const placeholderPattern = placeholderIdentifier
-      // Traceable output puts the call's identifier and parentheses on separate
-      // lines. They remain the same token sequence and must still be replaced as
-      // one placeholder statement.
+      // Printer modes may place whitespace between the placeholder call tokens.
+      // Match the token sequence as one placeholder statement in every mode.
       ? `${escapeRegExp(placeholderIdentifier)}\\s*\\(\\s*\\)`
       : escapeRegExp(block.placeholder);
     const pattern = new RegExp(`[\\t ]*${placeholderPattern}[\\t ]*`, "g");

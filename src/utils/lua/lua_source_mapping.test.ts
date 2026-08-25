@@ -28,11 +28,11 @@ describe("Lua optimizer source mapping", () => {
       const input = "local playerPosition=time()\nprint(playerPosition)";
       const result = processLuaWithReport(input, options({ renameLocalVariables: true, lineBehavior }));
       const renamedOffset = lineBehavior === "traceable"
-        ? result.code.indexOf("\na\n") + 1
+        ? result.code.indexOf("local a=") + "local ".length
         : result.code.indexOf("local a") + "local ".length;
 
       if (lineBehavior === "traceable") {
-        expect(result.code).toContain("local\na\n=\ntime\n(\n)");
+        expect(result.code).toContain("local a=\ntime()");
       } else {
         expect(result.code).toContain("local a=time()");
       }
@@ -62,6 +62,18 @@ describe("Lua optimizer source mapping", () => {
     expect(operatorOffset).toBeGreaterThan(0);
     expect(mapLuaTransformOffset(result.transformMap, operatorOffset, "right")?.offset).toBe(
       input.indexOf("x+1"),
+    );
+  });
+
+  it("keeps a traceable closing index delimiter mapped to the indexed expression", () => {
+    const input = "local x=lut[9]";
+    const result = processLuaWithReport(input, options({ lineBehavior: "traceable" }));
+    const closingBracketOffset = result.code.indexOf("\n]\n") + 1;
+
+    expect(result.code).toContain("local x=\nlut[\n9\n]");
+    expect(closingBracketOffset).toBeGreaterThan(0);
+    expect(mapLuaTransformOffset(result.transformMap, closingBracketOffset, "right")?.offset).toBe(
+      input.indexOf("lut[9]"),
     );
   });
 

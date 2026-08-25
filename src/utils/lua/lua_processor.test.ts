@@ -44,10 +44,10 @@ describe("Lua traceable printer", () => {
     tableEntryKeysToRename: [],
   };
 
-  it("emits every lexical token on a separate line while preserving comments", () => {
+  it("keeps one diagnostic anchor per line while grouping structural punctuation", () => {
     const input = [
       "-- keep this",
-      "function TIC()",
+      "function TIC(a,b)",
       "  local x=lut[9]",
       "  poke(x+1,42)",
       "end",
@@ -55,25 +55,41 @@ describe("Lua traceable printer", () => {
 
     expect(processLua(input, traceableOptions).trimEnd().split("\n")).toEqual([
       "-- keep this",
-      "function",
-      "TIC",
-      "(",
-      ")",
-      "local",
-      "x",
-      "=",
-      "lut",
-      "[",
+      "function TIC(",
+      "a,",
+      "b)",
+      "local x=",
+      "lut[",
       "9",
       "]",
-      "poke",
-      "(",
+      "poke(",
       "x",
       "+",
+      "1,",
+      "42)",
+      "end",
+    ]);
+  });
+
+  it("groups call and member scaffolding without grouping parenthesized expressions", () => {
+    const input = [
+      "local function apply(value)",
+      "  return (value+1).field:method(value)",
+      "end",
+    ].join("\n");
+
+    expect(processLua(input, traceableOptions).trimEnd().split("\n")).toEqual([
+      "local function apply(",
+      "value)",
+      "return",
+      "(",
+      "value",
+      "+",
       "1",
-      ",",
-      "42",
       ")",
+      ".field",
+      ":method(",
+      "value)",
       "end",
     ]);
   });
