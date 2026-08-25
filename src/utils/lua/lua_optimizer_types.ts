@@ -7,6 +7,7 @@ export type OptimizationRuleOptions = LuaPrinterOptions & {
   renameLocalVariables: boolean;
   aliasRepeatedExpressions: boolean;
   aliasLiterals: boolean;
+  // Fold scalar expressions and inline immutable scalar locals.
   simplifyExpressions: boolean;
   removeUnusedLocals: boolean;
   removeUnusedFunctions: boolean;

@@ -47,7 +47,13 @@ function createTempProject(code: string = "print('ok')", minify = false): { dir:
     assembly: {
       lua: {
         minify,
-        ...(minify ? { minification: { removeUnusedLocals: false } } : {}),
+        ...(minify ? {
+          minification: {
+            removeUnusedLocals: false,
+            // These tests intentionally saturate the authored-local budget.
+            ruleOverrides: { "reduce.inline-immutable-scalars": false },
+          },
+        } : {}),
       },
       blocks: [
         {

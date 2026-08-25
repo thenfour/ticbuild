@@ -17,14 +17,18 @@ import { memberAccessSyntaxRule } from "./lua_syntax_member_access";
 import { omitLocalNilSyntaxRule } from "./lua_syntax_omit_local_nil";
 import { invertNegatedIfRule } from "./lua_control_flow_invert_negated_if";
 import { removeFalseWhileRule } from "./lua_control_flow_remove_false_while";
+import { resolveConstantIfRule } from "./lua_control_flow_resolve_constant_if";
+import { inlineImmutableScalarsRule } from "./lua_inline_immutable_scalars";
 
 export const luaOptimizationRules: readonly LuaOptimizationRule[] = [
   stripCommentsRule,
   simplifyExpressionsRule,
+  inlineImmutableScalarsRule,
   memberAccessSyntaxRule,
   bareTableKeySyntaxRule,
   omitLocalNilSyntaxRule,
   invertNegatedIfRule,
+  resolveConstantIfRule,
   removeFalseWhileRule,
   removeUnusedLocalsRule,
   removeUnusedFunctionsRule,

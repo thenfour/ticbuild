@@ -82,12 +82,26 @@ describe("Lua optimizer source mapping", () => {
 
   it("anchors a folded literal to the expression that produced it", () => {
     const input = "local result=(1+2)*3\nprint(result)";
-    const result = processLuaWithReport(input, options({ simplifyExpressions: true }));
+    const result = processLuaWithReport(input, options({
+      simplifyExpressions: true,
+      ruleOverrides: { "reduce.inline-immutable-scalars": false },
+    }));
     const foldedOffset = result.code.indexOf("=9") + 1;
 
     expect(foldedOffset).toBeGreaterThan(0);
     expect(mapLuaTransformOffset(result.transformMap, foldedOffset, "right")?.offset).toBe(
       input.indexOf("(1+2)*3"),
+    );
+  });
+
+  it("anchors an inlined scalar to the reference it replaces", () => {
+    const input = 'local value="hi"\nprint(value)';
+    const result = processLuaWithReport(input, options({ simplifyExpressions: true }));
+    const literalOffset = result.code.indexOf('"hi"');
+
+    expect(result.code).toContain('print("hi")');
+    expect(mapLuaTransformOffset(result.transformMap, literalOffset, "right")?.offset).toBe(
+      input.lastIndexOf("value"),
     );
   });
 

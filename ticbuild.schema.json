@@ -259,7 +259,8 @@
                   "type": "boolean"
                 },
                 "simplifyExpressions": {
-                  "type": "boolean"
+                  "type": "boolean",
+                  "description": "Fold constant scalar expressions and inline immutable scalar locals."
                 },
                 "removeUnusedLocals": {
                   "type": "boolean"
@@ -281,10 +282,12 @@
                   "properties": {
                     "syntax.strip-comments": { "type": "boolean" },
                     "reduce.simplify-expressions": { "type": "boolean" },
+                    "reduce.inline-immutable-scalars": { "type": "boolean" },
                     "syntax.member-access": { "type": "boolean" },
                     "syntax.bare-table-key": { "type": "boolean" },
                     "syntax.omit-local-nil": { "type": "boolean" },
                     "control-flow.invert-negated-if": { "type": "boolean" },
+                    "control-flow.resolve-constant-if": { "type": "boolean" },
                     "control-flow.remove-false-while": { "type": "boolean" },
                     "reduce.remove-unused-locals": { "type": "boolean" },
                     "reduce.remove-unused-functions": { "type": "boolean" },

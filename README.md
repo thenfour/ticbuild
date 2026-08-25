@@ -218,16 +218,20 @@ renameSpecifiedGlobalSymbols (legacy opt-in switch)
 
 Every optimizer plugin can also be overridden by its finer rule ID, even when
 its umbrella is disabled. For example, `:minify syntax.member-access on`.
+`simplifyExpressions` covers constant folding and immutable scalar inlining;
+`simplifyControlFlow` covers the small control-flow rewrites below.
 
 The rule IDs are:
 
 ```
 syntax.strip-comments
 reduce.simplify-expressions
+reduce.inline-immutable-scalars
 syntax.member-access
 syntax.bare-table-key
 syntax.omit-local-nil
 control-flow.invert-negated-if
+control-flow.resolve-constant-if
 control-flow.remove-false-while
 reduce.remove-unused-locals
 reduce.remove-unused-functions
