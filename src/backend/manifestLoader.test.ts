@@ -117,6 +117,53 @@ describe("Manifest Loader", () => {
       expect(result.manifest.imports[0].typescript?.tsconfig).toBe("tsconfig.json");
     });
 
+    it("should accept command-backed imports", () => {
+      const commandManifest = {
+        ...validManifest,
+        imports: [
+          {
+            name: "generated",
+            kind: "binary",
+            command: {
+              executable: "python",
+              args: ["./scripts/generate.py"],
+              outputFile: "./generated/data.bin",
+              fileDependencies: ["./scripts/generate.py", "./source/data.png"],
+            },
+          },
+        ],
+      };
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(commandManifest));
+
+      const result = loadManifest("/test/manifest.ticbuild.jsonc");
+
+      expect(result.manifest.imports[0].command).toEqual(commandManifest.imports[0].command);
+    });
+
+    it.each([
+      {
+        name: "generated",
+        kind: "binary",
+        path: "./generated/data.bin",
+        command: { executable: "python", outputFile: "./generated/data.bin" },
+      },
+      {
+        name: "generated",
+        kind: "binary",
+        command: { executable: "python" },
+      },
+      {
+        name: "generated",
+        command: { executable: "python", outputFile: "./generated/data.bin" },
+      },
+    ])("should reject invalid command-backed import %#", (invalidImport) => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...validManifest, imports: [invalidImport] }));
+
+      expect(() => loadManifest("/test/manifest.ticbuild.jsonc")).toThrow(ManifestValidationError);
+    });
+
     it.each(["traceable", "tight2"] as const)("should accept %s Lua printer configuration", (lineBehavior) => {
       const printerManifest = {
         ...validManifest,

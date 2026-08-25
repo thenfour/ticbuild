@@ -78,9 +78,24 @@ export function canonicalizePath(p: string): string {
   return path.normalize(p);
 }
 
+// canonical form of path for use as a key (win32 paths are case-insensitive so we lowercase them)
+export function canonicalizePathKey(p: string): string {
+  const normalized = path.normalize(p);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
 export function toAbsoluteCanonicalPath(fileName: string, baseDir: string): string {
   return canonicalizePath(path.isAbsolute(fileName) ? fileName : path.resolve(baseDir, fileName));
 }
+
+
+export function isSameFileLocation(left: string, right: string): boolean {
+  left = canonicalizePathKey(left);
+  right = canonicalizePathKey(right);
+  return left === right;
+}
+
+
 
 // Resolves a file path by searching in a base directory and additional search directories.
 // Returns the first matching file found, or null if not found.

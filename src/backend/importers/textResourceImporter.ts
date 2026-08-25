@@ -3,6 +3,7 @@ import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../I
 import { ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { loadTextImportData } from "../importUtils";
+import { MaterializedImportSource } from "../importSources";
 
 export class TextResourceView extends ResourceViewBase {
   private text: string;
@@ -56,11 +57,11 @@ export class TextResource extends ImportedResourceBase {
   }
 }
 
-export async function importTextResource(project: TicbuildProjectCore, spec: ImportDefinition): Promise<TextResource> {
-  const result = await loadTextImportData(project, spec);
-  const dependencies: ExternalDependency[] = result.dependencies.map((path) => ({
-    path,
-    reason: "Imported text resource",
-  }));
-  return new TextResource(result.data, dependencies);
+export async function importTextResource(
+  project: TicbuildProjectCore,
+  spec: ImportDefinition,
+  source?: MaterializedImportSource,
+): Promise<TextResource> {
+  const result = await loadTextImportData(project, spec, source);
+  return new TextResource(result.data, result.dependencies);
 }

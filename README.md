@@ -397,6 +397,19 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
       // but you can also just specify the value here. Again, string substitution is supported.
       "value": "greetz to everyone at the party",
     },
+    {
+      // A command source produces an asset via a system command.
+      // The command runs once per build with CWD = project directory
+      "name": "shipLarge_png",
+      "kind": "binary",
+      "command": {
+        "executable": "python",
+        "args": ["./scripts/processImage.py", "./images/shipLarge.png"],
+        "outputFile": "./generated/shipLarge.png.bin", // the asset binary
+        // These inputs trigger watch rebuilds. outputFile is generated and is not watched.
+        "fileDependencies": ["./scripts/processImage.py", "./images/shipLarge.png"],
+      },
+    },
     // it is not necessary to specify all source files here; main.lua can import
     // files directly by relative path.
     {

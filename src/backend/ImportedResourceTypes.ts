@@ -19,6 +19,7 @@ export type GeneratedLuaSource = {
   sourcePath: string;
   sourceMap: LuaPreprocessorSourceMap;
   dependencies?: ExternalDependency[];
+  generatedOutputs?: string[];
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -1,6 +1,6 @@
 import * as luaparse from "luaparse";
 import * as path from "node:path";
-import { readBinaryFileAsync, readTextFileAsync, resolveFileWithSearchPaths } from "../utils/fileSystem";
+import { isSameFileLocation, readBinaryFileAsync, readTextFileAsync, resolveFileWithSearchPaths } from "../utils/fileSystem";
 import { toLuaStringLiteral } from "../utils/lua/lua_fundamentals";
 import { stringValue } from "../utils/lua/lua_utils";
 import { decompressCodeBytes, getCombinedCodeBytes, parseTic80Cart } from "../utils/tic80/cartLoader";
@@ -27,6 +27,8 @@ import {
   resolveImportBytes,
 } from "./luaEncode";
 import { GeneratedLuaSource } from "./ImportedResourceTypes";
+import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "./importSources";
+
 
 export type LuaPreprocessorValue = PreprocessorValue;
 
@@ -40,9 +42,11 @@ export type LuaPreprocessResult = {
 };
 
 export type LuaCodeImportResolver = (importName: string) => Promise<GeneratedLuaSource | undefined>;
+export type LuaImportSourceResolver = (importName: string) => Promise<MaterializedImportSource | undefined>;
 
 export type LuaPreprocessorOptions = {
   resolveCodeImport?: LuaCodeImportResolver;
+  resolveImportSource?: LuaImportSourceResolver;
   sourceMap?: LuaPreprocessorSourceMap;
   quietParseFailures?: boolean;
 };
@@ -70,6 +74,7 @@ type PreprocessorState = {
   minifyAllowedGlobalNames: string[];
   minifyGlobalNamesToKeep: string[];
   resolveCodeImport?: LuaCodeImportResolver;
+  resolveImportSource: LuaImportSourceResolver;
 };
 
 type MinifyRenameDirective = "allow_rename" | "no_rename";
@@ -113,6 +118,19 @@ export async function preprocessLuaCode(
   options: LuaPreprocessorOptions = {},
 ): Promise<LuaPreprocessResult> {
   const manifestDefines = getManifestPreprocessorDefines(project);
+  const fallbackImportSources = new Map<string, Promise<MaterializedImportSource>>();
+  const resolveImportSource: LuaImportSourceResolver = options.resolveImportSource ?? (async (importName) => {
+    const importDef = project.manifest.imports.find((candidate) => candidate.name === importName);
+    if (!importDef) {
+      return undefined;
+    }
+    let source = fallbackImportSources.get(importName);
+    if (!source) {
+      source = materializeImportSource(project, importDef);
+      fallbackImportSources.set(importName, source);
+    }
+    return await source;
+  });
   const state: PreprocessorState = {
     defines: new Map<string, LuaPreprocessorValue>(Object.entries(manifestDefines)),
     dependencies: new Set<string>(),
@@ -122,6 +140,7 @@ export async function preprocessLuaCode(
     minifyAllowedGlobalNames: [],
     minifyGlobalNamesToKeep: [],
     resolveCodeImport: options.resolveCodeImport,
+    resolveImportSource,
   };
 
   const includeKey = makeIncludeKey(filePath, {});
@@ -661,15 +680,22 @@ async function resolveImportInclude(
       includeKey,
       state,
       overrides,
+      !(generatedLua.generatedOutputs ?? []).some((outputPath) => isSameFileLocation(outputPath, generatedLua.sourcePath)),
     );
     return ensureTrailingNewline(included, generatedLua.sourcePath);
   }
 
   if (importDef.kind === kImportKind.key.Tic80Cartridge) {
-    const resolvedPath = project.resolveImportPath(importDef);
+    const importSource = await state.resolveImportSource(importName);
+    if (!importSource) {
+      throw new Error(formatError("<include>", lineNumber, `Import source not found: ${importName}`));
+    }
+    const resolvedPath = requireFileImportSource(importDef, importSource);
     const data = await readBinaryFileAsync(resolvedPath);
     const cart = parseTic80Cart(data);
-    state.dependencies.add(resolvedPath);
+    for (const dependency of importSource.watchDependencies) {
+      state.dependencies.add(dependency.path);
+    }
 
     const availableChunks =
       importDef.chunks && importDef.chunks.length > 0
@@ -1544,10 +1570,15 @@ async function expandPreprocessorCalls(
           const pipelineSpec = project.substituteVariables(pipelineArg.value);
           const split = splitPipelineSpec(pipelineSpec, true, filePath, lineNumber, formatError);
           const resolvedSourceSpec = normalizeEmptySpec(project.substituteVariables(split.sourceSpecRaw || ""));
+          const importSource = await state.resolveImportSource(ref.importName);
+          if (!importSource) {
+            throw new Error(formatError(filePath, lineNumber, `Import source not found: ${ref.importName}`));
+          }
 
           const bytes = await resolveImportBytes(
             project,
             importDef,
+            importSource,
             resolvedSourceSpec,
             ref.chunkSpec,
             (dep) => state.dependencies.add(dep),

@@ -4,6 +4,7 @@ import { ImportDefinition, TypeScriptImportConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { CodeResource } from "./CodeResource";
 import { transpileTypeScriptToLua } from "./TypeScriptTranspiler";
+import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
 
 export class TypeScriptCodeResource extends CodeResource {
   constructor(
@@ -30,8 +31,12 @@ export class TypeScriptCodeResource extends CodeResource {
 export async function importTypeScriptCode(
   project: TicbuildProjectCore,
   spec: ImportDefinition,
+  materializedSource?: MaterializedImportSource,
 ): Promise<TypeScriptCodeResource> {
-  const filePath = project.resolveImportPath(spec);
+  const sourceInfo = materializedSource ?? await materializeImportSource(project, spec);
+  const filePath = requireFileImportSource(spec, sourceInfo);
   const source = await readTextFileAsync(filePath);
-  return new TypeScriptCodeResource(filePath, source, spec.typescript);
+  const resource = new TypeScriptCodeResource(filePath, source, spec.typescript);
+  resource.setImportSource(sourceInfo);
+  return resource;
 }

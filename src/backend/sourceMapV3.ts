@@ -3,7 +3,7 @@
 
 import * as path from "node:path";
 import { RawSourceMap, SourceMapConsumer, SourceMapGenerator } from "source-map";
-import { canonicalizePath, toAbsoluteCanonicalPath } from "../utils/fileSystem";
+import { canonicalizePathKey, toAbsoluteCanonicalPath } from "../utils/fileSystem";
 import {
   LuaPreprocessorSourceMap,
   SourceMapBuilder,
@@ -77,35 +77,30 @@ function lineColumnToOffset(
   return offset <= lineEnd ? offset : null;
 }
 
-function normalizeComparisonPath(filePath: string): string {
-  const normalized = canonicalizePath(filePath).replace(/\\/g, "/");
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
 function resolveMappedSource(
   mappedSource: string,
   knownSources: readonly ResolvedSource[],
   projectDir: string,
 ): ResolvedSource | undefined {
-  const comparison = normalizeComparisonPath(mappedSource);
+  const comparison = canonicalizePathKey(mappedSource);
   const directCandidates = [
     comparison,
-    normalizeComparisonPath(toAbsoluteCanonicalPath(mappedSource, projectDir)),
+    canonicalizePathKey(toAbsoluteCanonicalPath(mappedSource, projectDir)),
   ];
-  const direct = knownSources.find((source) => directCandidates.includes(normalizeComparisonPath(source.canonicalPath)));
+  const direct = knownSources.find((source) => directCandidates.includes(canonicalizePathKey(source.canonicalPath)));
   if (direct) {
     return direct;
   }
 
   const suffix = `/${comparison.replace(/^\.\//, "")}`;
-  const suffixMatches = knownSources.filter((source) => normalizeComparisonPath(source.canonicalPath).endsWith(suffix));
+  const suffixMatches = knownSources.filter((source) => canonicalizePathKey(source.canonicalPath).endsWith(suffix));
   if (suffixMatches.length === 1) {
     return suffixMatches[0];
   }
 
   const baseName = path.basename(comparison);
   const baseNameMatches = knownSources.filter(
-    (source) => path.basename(normalizeComparisonPath(source.canonicalPath)) === baseName,
+    (source) => path.basename(canonicalizePathKey(source.canonicalPath)) === baseName,
   );
   return baseNameMatches.length === 1 ? baseNameMatches[0] : undefined;
 }

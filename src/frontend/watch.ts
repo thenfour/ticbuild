@@ -9,6 +9,7 @@ import { ITic80Controller, Tic80RemotingTarget } from "../backend/tic80Controlle
 import { mergeTic80Args } from "../utils/tic80/args";
 import { RunningTerminalClient, startTerminalClient } from "./terminal";
 import { ScriptErrorSourceMapRegistry } from "./scriptErrorSourceMapper";
+import { ImportSourceManager } from "../backend/importSources";
 
 export function resolveAdditionalWatchGlob(projectDir: string, glob: string): string {
   const trimmed = glob.trim();
@@ -137,12 +138,11 @@ export async function watchCommand(
   process.on("SIGQUIT", cleanup);
 
   // Function to update the watched file list
-  const updateWatchList = async () => {
-    const projectLoadOptions = parseBuildOptions(manifestPath, options);
-    const project = TicbuildProject.loadFromManifest(projectLoadOptions);
-    await project.loadImports();
-
-    const dependencyList = project.resourceMgr!.getDependencyList();
+  const updateWatchList = async (builtProject?: TicbuildProject) => {
+    const project = builtProject ?? TicbuildProject.loadFromManifest(parseBuildOptions(manifestPath, options));
+    const dependencyList = project.resourceMgr
+      ? project.resourceMgr.getDependencyList()
+      : new ImportSourceManager(project.resolvedCore).getDeclaredWatchDependencies();
 
     // turn that into a distinct list.
     const distinctPaths = Array.from(new Set(dependencyList.map((dep) => dep.path))).sort();
@@ -201,11 +201,8 @@ export async function watchCommand(
     try {
       // Build the project
       cons.info("\n" + "=".repeat(60));
-      await buildCore(manifestPath, options);
-
-      // Get the output file path
-      const projectLoadOptions = parseBuildOptions(manifestPath, options);
-      const project = TicbuildProject.loadFromManifest(projectLoadOptions);
+      const buildResult = await buildCore(manifestPath, options);
+      const project = buildResult.project;
       try {
         // update source maps with newly bult.
         scriptErrorSourceMaps.replaceFromProject(project);
@@ -247,7 +244,7 @@ export async function watchCommand(
 
       // Recompute dependencies after every successful build so newly discovered
       // includes/import dependencies are added to the watch list.
-      await updateWatchList();
+      await updateWatchList(project);
 
       cons.info("\nWatching for changes... (press Ctrl+C to stop)");
     } catch (error) {
@@ -267,8 +264,10 @@ export async function watchCommand(
   // Perform initial build
   await buildAndLaunch();
 
-  // Get all dependencies to watch
-  await updateWatchList();
+  // A failed initial build still needs a pure, non-executing dependency plan.
+  if (currentWatchTargets.length === 0) {
+    await updateWatchList();
+  }
 
   cons.info(`\nWatching ${currentWatchTargets.length} target(s) for changes...`);
   for (const target of currentWatchTargets) {

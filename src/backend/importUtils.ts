@@ -10,6 +10,8 @@ import {
 import { ImportDefinition, kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { kTic80CartChunkTypes, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
+import { ExternalDependency } from "./ImportedResourceTypes";
+import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "./importSources";
 
 export function IsImportReference(value: string): boolean {
   return value.startsWith("import:");
@@ -22,7 +24,7 @@ export type ImportReference = {
 
 export type ImportDataResult<T> = {
   data: T;
-  dependencies: string[];
+  dependencies: ExternalDependency[];
 };
 
 export function parseImportReference(reference: string): ImportReference {
@@ -61,31 +63,27 @@ function resolveSourceEncodingKey(importDef: ImportDefinition): SourceEncodingKe
 export async function loadBinaryImportData(
   project: TicbuildProjectCore,
   importDef: ImportDefinition,
+  materializedSource?: MaterializedImportSource,
 ): Promise<ImportDataResult<Uint8Array>> {
   if (importDef.kind !== kImportKind.key.binary) {
     throw new Error(`Import ${importDef.name} is not a binary resource`);
   }
 
   const encoding = resolveSourceEncodingKey(importDef);
-  const dependencies: string[] = [];
+  const source = materializedSource ?? await materializeImportSource(project, importDef);
+  const dependencies = source.watchDependencies;
 
-  if (importDef.value !== undefined) {
-    const substituted = project.substituteVariables(importDef.value);
+  if (source.sourceKind === "value") {
     if (!isStringSourceEncoding(encoding)) {
       throw new Error(
         `Binary import ${importDef.name} uses encoding ${encoding} which requires a file path; value is not supported`,
       );
     }
-    const data = decodeSourceDataFromString(encoding, substituted);
+    const data = decodeSourceDataFromString(encoding, source.value);
     return { data, dependencies };
   }
 
-  if (!importDef.path) {
-    throw new Error(`Binary import ${importDef.name} must specify either path or value`);
-  }
-
-  const resolvedPath = project.resolveImportPath(importDef);
-  dependencies.push(resolvedPath);
+  const resolvedPath = requireFileImportSource(importDef, source);
 
   if (isStringSourceEncoding(encoding)) {
     const text = await readTextFileAsync(resolvedPath);
@@ -101,24 +99,20 @@ export async function loadBinaryImportData(
 export async function loadTextImportData(
   project: TicbuildProjectCore,
   importDef: ImportDefinition,
+  materializedSource?: MaterializedImportSource,
 ): Promise<ImportDataResult<string>> {
   if (importDef.kind !== kImportKind.key.text) {
     throw new Error(`Import ${importDef.name} is not a text resource`);
   }
 
-  const dependencies: string[] = [];
+  const source = materializedSource ?? await materializeImportSource(project, importDef);
+  const dependencies = source.watchDependencies;
 
-  if (importDef.value !== undefined) {
-    const substituted = project.substituteVariables(importDef.value);
-    return { data: substituted, dependencies };
+  if (source.sourceKind === "value") {
+    return { data: source.value, dependencies };
   }
 
-  if (!importDef.path) {
-    throw new Error(`Text import ${importDef.name} must specify either path or value`);
-  }
-
-  const resolvedPath = project.resolveImportPath(importDef);
-  dependencies.push(resolvedPath);
+  const resolvedPath = requireFileImportSource(importDef, source);
   const text = await readTextFileAsync(resolvedPath);
   return { data: text, dependencies };
 }

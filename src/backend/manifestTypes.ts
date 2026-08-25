@@ -46,9 +46,17 @@ export interface TypeScriptImportConfig {
   tsconfig: string;
 }
 
+export interface CommandImportSource {
+  executable: string;
+  args?: string[];
+  outputFile: string;
+  fileDependencies?: string[];
+}
+
 export interface ImportDefinition {
   name: string;
   path?: string;
+  command?: CommandImportSource;
   kind?: ImportKindKey;
   chunks?: Tic80CartChunkTypeKey[];
   sourceEncoding?: SourceEncodingKey;

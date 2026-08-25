@@ -30,6 +30,10 @@ type BuildReportSession = {
   dispose: () => void;
 };
 
+export type BuildCoreResult = {
+  project: TicbuildProject;
+};
+
 
 export function GetFinalLuaArtifactFileLeaf(name: string): string {
   return `${name}.02.minified.lua`;
@@ -114,10 +118,10 @@ export async function buildCore(
   manifestPath?: string,
   options?: CommandLineOptions,
   reporter: BuildReporter = new HumanBuildReporter(),
-): Promise<void> {
+): Promise<BuildCoreResult> {
   const reportSession = createBuildReportSession(reporter);
   try {
-    await executeBuildCore(manifestPath, options, reportSession.reporter, reportSession.initialize);
+    return await executeBuildCore(manifestPath, options, reportSession.reporter, reportSession.initialize);
   } catch (error) {
     reportSession.reportFailure(error);
     throw error;
@@ -131,7 +135,7 @@ async function executeBuildCore(
   options: CommandLineOptions | undefined,
   reporter: BuildReporter,
   initializeBuildReport: (filePath: string) => void,
-): Promise<void> {
+): Promise<BuildCoreResult> {
   const buildStartTime = Date.now();
   let project: TicbuildProject;
   let projectLoadOptions = parseBuildOptions(manifestPath, options);
@@ -344,6 +348,7 @@ async function executeBuildCore(
       cons.info(`  Cart: ${outputFilePath}`);
     },
   });
+  return { project };
 }
 
 function getBundledManifestSchemaPath(): string {

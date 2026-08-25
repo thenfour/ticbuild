@@ -135,6 +135,42 @@
             "type": "string",
             "description": "Inline value for text or encoded binary imports"
           },
+          "command": {
+            "type": "object",
+            "required": [
+              "executable",
+              "outputFile"
+            ],
+            "properties": {
+              "executable": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Executable that produces the imported asset"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments passed directly to the executable without shell parsing"
+              },
+              "outputFile": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Generated asset path, relative to the project directory unless absolute"
+              },
+              "fileDependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "Project-relative input files watched for changes; outputFile must not be listed"
+              }
+            },
+            "additionalProperties": false,
+            "description": "Command-backed import source; the command runs from the project directory"
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -196,7 +232,7 @@
             "description": "Specific chunks to import from cartridges"
           }
         },
-        "anyOf": [
+        "oneOf": [
           {
             "required": [
               "path"
@@ -205,6 +241,12 @@
           {
             "required": [
               "value"
+            ]
+          },
+          {
+            "required": [
+              "command",
+              "kind"
             ]
           }
         ]

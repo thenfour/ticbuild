@@ -6,6 +6,7 @@ import { LuaPreprocessResult } from "../luaPreprocessor";
 import { ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { createIdentitySourceMap } from "../sourceMap";
+import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
 import {
   CodeResource,
 } from "./CodeResource";
@@ -46,8 +47,15 @@ export class LuaCodeResource extends CodeResource {
   }
 }
 
-export async function importLuaCode(project: TicbuildProjectCore, spec: ImportDefinition): Promise<LuaCodeResource> {
-  const filePath = project.resolveImportPath(spec);
+export async function importLuaCode(
+  project: TicbuildProjectCore,
+  spec: ImportDefinition,
+  materializedSource?: MaterializedImportSource,
+): Promise<LuaCodeResource> {
+  const sourceInfo = materializedSource ?? await materializeImportSource(project, spec);
+  const filePath = requireFileImportSource(spec, sourceInfo);
   const source = await readTextFileAsync(filePath);
-  return new LuaCodeResource(filePath, source);
+  const resource = new LuaCodeResource(filePath, source);
+  resource.setImportSource(sourceInfo);
+  return resource;
 }

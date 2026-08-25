@@ -24,6 +24,7 @@ import { loadBinaryImportData, loadTextImportData } from "./importUtils";
 import { trimTrailingZeros } from "../utils/utils";
 import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { importTic80Cart } from "./importers/tic80CartImporter";
+import { MaterializedImportSource, requireFileImportSource } from "./importSources";
 import { EncodeErrorFormatter } from "./luaEncodeBase";
 import { formatLuaNumber, parseNumericList } from "./luaEncodeHelpers";
 
@@ -113,6 +114,7 @@ export function encodeLiteralToBytes(
 export async function resolveImportBytes(
     project: TicbuildProjectCore,
     importDef: ImportDefinition, // the import from the manifest
+    importSource: MaterializedImportSource,
     sourceSpecRaw: string | null, // source encoding spec (e.g., "utf8,lz") or null for default
     chunkSpec: Tic80CartChunkTypeKey | undefined,
     onDependency: (path: string) => void,
@@ -133,7 +135,7 @@ export async function resolveImportBytes(
     }
 
     if (importDef.kind === kImportKind.key.Tic80Cartridge) {
-        const resource = await importTic80Cart(project, importDef);
+        const resource = await importTic80Cart(project, importDef, importSource);
         for (const dep of resource.getDependencyList()) {
             onDependency(dep.path);
         }
@@ -162,9 +164,9 @@ export async function resolveImportBytes(
 
     if (importDef.kind === kImportKind.key.binary) {
         if (!sourceSpecRaw) {
-            const result = await loadBinaryImportData(project, importDef);
+            const result = await loadBinaryImportData(project, importDef, importSource);
             for (const dep of result.dependencies) {
-                onDependency(dep);
+                onDependency(dep.path);
             }
             return result.data;
         }
@@ -175,10 +177,10 @@ export async function resolveImportBytes(
         let bytes: Uint8Array;
         const dependencies: string[] = [];
         if (isStringSourceEncoding(baseCodec)) {
-            const text = await loadImportText(project, importDef, dependencies);
+            const text = await loadImportText(project, importDef, importSource, dependencies);
             bytes = decodeSourceDataFromString(baseCodec, text);
         } else {
-            const binary = await loadImportBytes(project, importDef, dependencies);
+            const binary = await loadImportBytes(project, importDef, importSource, dependencies);
             bytes = decodeSourceDataFromBytes(baseCodec, binary);
         }
 
@@ -190,9 +192,9 @@ export async function resolveImportBytes(
         return bytes;
     }
 
-    const textResult = await loadTextImportData(project, importDef);
+    const textResult = await loadTextImportData(project, importDef, importSource);
     for (const dep of textResult.dependencies) {
-        onDependency(dep);
+        onDependency(dep.path);
     }
     const spec = sourceSpecRaw ?? "utf8";
     const sourceSpec = parseSpecChain(spec, filePath, lineNumber, "Source", formatError);
@@ -458,32 +460,28 @@ function parseNumericArgs(
 async function loadImportText(
     project: TicbuildProjectCore,
     importDef: ImportDefinition,
+    importSource: MaterializedImportSource,
     dependencies: string[],
 ): Promise<string> {
-    if (importDef.value !== undefined) {
-        return project.substituteVariables(importDef.value);
+    dependencies.push(...importSource.watchDependencies.map((dependency) => dependency.path));
+    if (importSource.sourceKind === "value") {
+        return importSource.value;
     }
-    if (!importDef.path) {
-        throw new Error(`Import ${importDef.name} must specify either path or value`);
-    }
-    const resolvedPath = project.resolveImportPath(importDef);
-    dependencies.push(resolvedPath);
+    const resolvedPath = requireFileImportSource(importDef, importSource);
     return await readTextFileAsync(resolvedPath);
 }
 
 async function loadImportBytes(
     project: TicbuildProjectCore,
     importDef: ImportDefinition,
+    importSource: MaterializedImportSource,
     dependencies: string[],
 ): Promise<Uint8Array> {
-    if (importDef.value !== undefined) {
+    dependencies.push(...importSource.watchDependencies.map((dependency) => dependency.path));
+    if (importSource.sourceKind === "value") {
         throw new Error(`Import ${importDef.name} specifies a value but requires binary input`);
     }
-    if (!importDef.path) {
-        throw new Error(`Import ${importDef.name} must specify either path or value`);
-    }
-    const resolvedPath = project.resolveImportPath(importDef);
-    dependencies.push(resolvedPath);
+    const resolvedPath = requireFileImportSource(importDef, importSource);
     return await readBinaryFileAsync(resolvedPath);
 }
 

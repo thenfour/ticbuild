@@ -6,6 +6,7 @@ import { Tic80Cart, Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
 import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
 import { ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
+import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
 
 export class Tic80CartResourceView extends ResourceViewBase {
   subAssets: Map<Tic80CartChunkTypeKey, Uint8Array> = new Map<Tic80CartChunkTypeKey, Uint8Array>();
@@ -34,10 +35,12 @@ export class Tic80Resource extends ImportedResourceBase {
   // map of chunk type key -> chunk data
   rootView: Tic80CartResourceView = new Tic80CartResourceView();
   cartPath: string;
+  dependencies: ExternalDependency[];
 
-  constructor(cartPath: string, spec: ImportDefinition, parsedCart: Tic80Cart) {
+  constructor(cartPath: string, spec: ImportDefinition, parsedCart: Tic80Cart, dependencies?: ExternalDependency[]) {
     super();
     this.cartPath = cartPath;
+    this.dependencies = dependencies ?? [{ path: cartPath, reason: "Imported TIC-80 cartridge" }];
 
     const combinedCode = getCombinedCodeBytes(parsedCart);
 
@@ -97,21 +100,20 @@ export class Tic80Resource extends ImportedResourceBase {
   }
 
   getDependencyList(): ExternalDependency[] {
-    return [
-      {
-        path: this.cartPath, //
-        reason: `Imported TIC-80 cartridge`,
-      },
-    ];
+    return this.dependencies;
   }
 }
 
 // spec is assumed to be in the project.
-export async function importTic80Cart(project: TicbuildProjectCore, spec: ImportDefinition): Promise<Tic80Resource> {
-  // resolve the resource path.
-  const path = project.resolveImportPath(spec);
-  const data = await readBinaryFileAsync(path);
+export async function importTic80Cart(
+  project: TicbuildProjectCore,
+  spec: ImportDefinition,
+  materializedSource?: MaterializedImportSource,
+): Promise<Tic80Resource> {
+  const sourceInfo = materializedSource ?? await materializeImportSource(project, spec);
+  const sourcePath = requireFileImportSource(spec, sourceInfo);
+  const data = await readBinaryFileAsync(sourcePath);
   const cart = parseTic80Cart(data);
-  const resource = new Tic80Resource(path, spec, cart);
+  const resource = new Tic80Resource(sourcePath, spec, cart, sourceInfo.watchDependencies);
   return resource;
 }

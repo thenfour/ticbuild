@@ -1,4 +1,5 @@
 import { constants as zlibConstants, deflateSync } from "node:zlib";
+import * as path from "node:path";
 import { zlibAsync as zopfliZlibAsync, ZopfliOptions } from "@gfx/zopfli";
 import { toLuaStringLiteral } from "../../utils/lua/lua_fundamentals";
 import { AliasPassReport, createEmptyAliasPassReport } from "../../utils/lua/lua_alias_shared";
@@ -19,9 +20,11 @@ import {
 } from "../ImportedResourceTypes";
 import {
   LuaCodeImportResolver,
+  LuaImportSourceResolver,
   LuaPreprocessResult,
   preprocessLuaCode,
 } from "../luaPreprocessor";
+import { MaterializedImportSource } from "../importSources";
 import { CodeAssemblyOptions, LuaCompressionMode, LuaMinificationConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import {
@@ -30,6 +33,7 @@ import {
   mapPreprocessedOffset,
   SourceMapBuilder,
 } from "../sourceMap";
+import { canonicalizePath } from "../../utils/fileSystem";
 
 export const LUA_RELEASE_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   stripComments: true,
@@ -427,6 +431,7 @@ export abstract class CodeResource extends ImportedResourceBase {
   private codeView: CodeResourceView | undefined;
   private preprocessResult: LuaPreprocessResult | undefined;
   private generatedLuaPromise: Promise<GeneratedLuaSource> | undefined;
+  private importSource: MaterializedImportSource | undefined;
 
   protected constructor(filePath: string, sourceText: string, initialized?: InitializedCodeResource) {
     super();
@@ -445,32 +450,67 @@ export abstract class CodeResource extends ImportedResourceBase {
   protected abstract generateLuaSource(project: TicbuildProjectCore): Promise<GeneratedLuaSource>;
   protected abstract getInputDependencyReason(): string;
 
+  setImportSource(source: MaterializedImportSource): void {
+    this.importSource = source;
+  }
+
   async getGeneratedLuaSource(project: TicbuildProjectCore): Promise<GeneratedLuaSource> {
     if (!this.generatedLuaPromise) {
-      this.generatedLuaPromise = this.generateLuaSource(project);
+      this.generatedLuaPromise = this.generateLuaSource(project).then((generated) => {
+        if (!this.importSource) {
+          return generated;
+        }
+        const generatedOutputPaths = new Set(this.importSource.generatedOutputs.map(canonicalizePath));
+        return {
+          ...generated,
+          dependencies: [
+            ...(generated.dependencies ?? []).filter(
+              (dependency) => !generatedOutputPaths.has(canonicalizePath(dependency.path)),
+            ),
+            ...this.importSource.watchDependencies,
+          ],
+          generatedOutputs: [
+            ...(generated.generatedOutputs ?? []),
+            ...this.importSource.generatedOutputs,
+          ],
+        };
+      });
     }
     return await this.generatedLuaPromise;
   }
 
-  async initialize(project: TicbuildProjectCore, resolveCodeImport: LuaCodeImportResolver): Promise<void> {
+  async initialize(
+    project: TicbuildProjectCore,
+    resolveCodeImport: LuaCodeImportResolver,
+    resolveImportSource?: LuaImportSourceResolver,
+  ): Promise<void> {
     if (this.codeView) {
       return;
     }
     const generated = await this.getGeneratedLuaSource(project);
     const preprocessResult = await preprocessLuaCode(project, generated.source, generated.sourcePath, {
       resolveCodeImport,
+      resolveImportSource,
       sourceMap: generated.sourceMap,
     });
+    const generatedOutputPaths = new Set(this.importSource?.generatedOutputs.map(canonicalizePath) ?? []);
     const dependencyPaths = [
       ...(generated.dependencies?.map((dependency) => dependency.path) ?? []),
       ...preprocessResult.dependencies,
+    ].filter((dependencyPath) => !generatedOutputPaths.has(canonicalizePath(dependencyPath)));
+    dependencyPaths.push(...(this.importSource?.watchDependencies.map((dependency) => dependency.path) ?? []));
+    const dependencyReasons = [
+      ...(generated.dependencies ?? []).filter(
+        (dependency) => !generatedOutputPaths.has(canonicalizePath(dependency.path)),
+      ),
+      ...(this.importSource?.watchDependencies ?? []),
     ];
     this.setPreprocessResult(
       generated.source,
       generated.sourceMap,
       dependencyPaths,
       preprocessResult,
-      generated.dependencies,
+      dependencyReasons,
     );
   }
 

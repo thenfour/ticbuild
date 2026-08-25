@@ -3,6 +3,7 @@ import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../I
 import { ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { loadBinaryImportData } from "../importUtils";
+import { MaterializedImportSource } from "../importSources";
 
 export class BinaryResourceView extends ResourceViewBase {
   private data: Uint8Array;
@@ -56,11 +57,8 @@ export class BinaryResource extends ImportedResourceBase {
 export async function importBinaryResource(
   project: TicbuildProjectCore,
   spec: ImportDefinition,
+  source?: MaterializedImportSource,
 ): Promise<BinaryResource> {
-  const result = await loadBinaryImportData(project, spec);
-  const dependencies: ExternalDependency[] = result.dependencies.map((path) => ({
-    path,
-    reason: "Imported binary resource",
-  }));
-  return new BinaryResource(result.data, dependencies);
+  const result = await loadBinaryImportData(project, spec, source);
+  return new BinaryResource(result.data, result.dependencies);
 }

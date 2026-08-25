@@ -11,39 +11,54 @@ import { importTextResource } from "./importers/textResourceImporter";
 import { importTic80Cart } from "./importers/tic80CartImporter";
 import { kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
+import { ImportSourceManager, MaterializedImportSource } from "./importSources";
 
 //
 export async function loadAllImports(project: TicbuildProjectCore): Promise<ResourceManager> {
   //  scan imports, select appropriate importer for each import,
   //  invoke importer to get ImportedResourceBase
   //  store in map of identifier -> ImportedResourceBase
-  const tasks = [];
   for (const importDef of project.manifest.imports) {
     if (!importDef.kind) {
       throw new Error(`Import ${importDef.name} is missing kind`);
     }
     assert(importDef.kind in kImportKind.key);
-    const key = importDef.name;
+  }
+
+  const sourceManager = new ImportSourceManager(project);
+  const materializedSources = await Promise.all(
+    project.manifest.imports.map(async (importDef) => {
+      const source = await sourceManager.materialize(importDef.name);
+      if (!source) {
+        throw new Error(`Import source not found: ${importDef.name}`);
+      }
+      return source;
+    }),
+  );
+  const tasks: Promise<ImportedResourceBase>[] = [];
+  for (let importIndex = 0; importIndex < project.manifest.imports.length; importIndex++) {
+    const importDef = project.manifest.imports[importIndex];
+    const source: MaterializedImportSource = materializedSources[importIndex];
     switch (importDef.kind) {
       case kImportKind.key.Tic80Cartridge:
-        const tic80ImportTask = importTic80Cart(project, importDef);
+        const tic80ImportTask = importTic80Cart(project, importDef, source);
         tasks.push(tic80ImportTask);
         break;
       case kImportKind.key.LuaCode:
-        const luaCodeImportTask = importLuaCode(project, importDef);
+        const luaCodeImportTask = importLuaCode(project, importDef, source);
         tasks.push(luaCodeImportTask);
         break;
       case kImportKind.key.TypeScriptCode:
-        const typeScriptCodeImportTask = importTypeScriptCode(project, importDef);
+        const typeScriptCodeImportTask = importTypeScriptCode(project, importDef, source);
         tasks.push(typeScriptCodeImportTask);
         break;
       case kImportKind.key.binary: {
-        const binaryImportTask = importBinaryResource(project, importDef);
+        const binaryImportTask = importBinaryResource(project, importDef, source);
         tasks.push(binaryImportTask);
         break;
       }
       case kImportKind.key.text: {
-        const textImportTask = importTextResource(project, importDef);
+        const textImportTask = importTextResource(project, importDef, source);
         tasks.push(textImportTask);
         break;
       }
@@ -74,7 +89,11 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
   );
   await Promise.all(
     codeResources.map((resource) =>
-      resource.initialize(project, (importName) => resourceManager.getGeneratedLuaSource(project, importName)),
+      resource.initialize(
+        project,
+        (importName) => resourceManager.getGeneratedLuaSource(project, importName),
+        (importName) => sourceManager.materialize(importName),
+      ),
     ),
   );
 
