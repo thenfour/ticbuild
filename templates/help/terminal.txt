@@ -1,7 +1,7 @@
 
 ticbuild terminal
 
-usage: ticbuild terminal [host:port]
+usage: ticbuild terminal [options] [host:port]
 
 Connect to the TIC-80 remoting terminal server.
 
@@ -18,3 +18,8 @@ Example:
 0 OK "TIC-80 remoting v1"
 > hello
 1 OK "TIC-80 remoting v1"
+
+Options:
+
+  --on-connect <command> Send a required remoting command after connecting.
+                         Repeat for multiple commands.

@@ -15,7 +15,7 @@
 - #58 Lua optimizer: bracketed string representation when it's shorter
 - #70 Lua short name generation improvements (more chars, scope-aware, some fixes)
 - #73 Lua optimizer: global symbols can now be renamed with opt-in or opt-out behavior
-- #74 Lua optimizer: many small optimizations which combine to remove a lot of dead code and inlining consts
+- #74 #82 #81 Lua optimizer: many small optimizations which combine to remove a lot of dead code and inlining consts
 - #76 Lua optimizer does multiple passes and supports a better options archeticture
 - #78 Added `tight2` lua output format which improves on existing `tight` by removing a lot of unnecessary whitespace.
 
@@ -34,12 +34,40 @@
 - #69 Removed support for manifest-specified Lua globals; they were not correct, unnecessary, not useful, confusing.
 - #61 added support for `lzrle` and `unlzrle`, added a search so LZ chooses most optimal profile
 - #83 Fixed error messages that sometimes include a huge amount of noise.
+- #86 Allow running commands on connect for terminal & watch.
 
 ### Migration notes from v1.0.22
 
 Required: You will need to add a base build configuration name.
 
-Required: Any `globalsToEmit` in your manifest need to be moved to code; this feature has been removed.
+Possible: Any `globalsToEmit` in your manifest need to be moved to code; this feature has been removed.
+
+Possible: `--#macro` changes may require attention. For example syntax is stricter, and
+ordering matters.
+
+```lua
+-- Previous behavior:
+--#macro MY_STR() => "hello"
+print(MY_VAL)
+--#macro MY_STR() => "world"
+print(MY_VAL)
+
+-- will output:
+-- world
+-- world
+
+-- v1.0.23 behavior:
+--#macro MY_STR() => "hello"
+print(MY_VAL)
+--#macro MY_STR() => "world"
+print(MY_VAL)
+
+-- will output:
+-- hello
+-- world
+```
+
+In addition, macros can no longer be used before they're defined.
 
 Recommended: Specify the `tight2` lua output format for better minfication.
 

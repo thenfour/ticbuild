@@ -171,6 +171,12 @@ async function main(): Promise<void> {
     .option("-m, --mode <name>", "Build configuration name")
     .option("--remoting-verbose", "Verbose TIC-80 remoting output")
     .option(
+      "--on-connect <command>",
+      "Send a required remoting command after connecting (repeatable)",
+      (value, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
       "-v, --var <key=value>",
       "Override manifest variable",
       (value, previous: string[] = []) => {
@@ -251,8 +257,14 @@ async function main(): Promise<void> {
   program
     .command("terminal [hostPort]")
     .description("Connect terminal client to TIC-80 remoting")
-    .action(async (hostPort?: string) => {
-      await terminalCommand(hostPort);
+    .option(
+      "--on-connect <command>",
+      "Send a required remoting command after connecting (repeatable)",
+      (value, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .action(async (hostPort?: string, options?: CommandLineOptions) => {
+      await terminalCommand(hostPort, options?.onConnect);
     });
 
   program

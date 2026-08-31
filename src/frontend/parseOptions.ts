@@ -25,6 +25,7 @@ export interface CommandLineOptions {
   var?: string[];
   reporter?: string;
   remotingVerbose?: boolean;
+  onConnect?: string[];
   multiLine?: boolean;
 }
 

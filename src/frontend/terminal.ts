@@ -21,6 +21,7 @@ export interface TerminalClientOptions {
     input?: NodeJS.ReadableStream;
     output?: NodeJS.WritableStream;
     terminal?: boolean;
+    onConnectCommands?: readonly string[];
     captureConsoleOutput?: boolean;
     keepOpenOnInputClose?: boolean;
     onInterrupt?: () => void;
@@ -39,6 +40,15 @@ const terminalSubscriptionRequestId = 2147483647;
 const terminalLastScriptErrorRequestId = 2147483646;
 const terminalMaxAutomaticRequestId = 2147483645;
 const terminalSubscriptionTimeoutMs = 5000;
+
+type RegisterTerminalResponseHandler = (handler: (line: string) => boolean) => () => void;
+type RegisterTerminalCloseHandler = (handler: (error?: Error) => void) => () => void;
+
+interface TerminalCommandResponse {
+    status: string;
+    data: string;
+    rawLine: string;
+}
 
 function hasTerminalRequestId(line: string): boolean {
     return /^-?\d+(?:\s|$)/.test(line);
@@ -123,6 +133,19 @@ function formatSessionSummary(session: DiscoveredTic80Session, index?: number): 
 
 function asError(error: unknown): Error {
     return error instanceof Error ? error : new Error(String(error));
+}
+
+function normalizeOnConnectCommands(commands: readonly string[] | undefined): string[] {
+    return (commands ?? []).map((command, index) => {
+        if (command.includes("\r") || command.includes("\n")) {
+            throw new Error(`Invalid --on-connect command ${index + 1}: commands must contain exactly one line`);
+        }
+        const trimmed = command.trim();
+        if (trimmed.length === 0) {
+            throw new Error(`Invalid --on-connect command ${index + 1}: command cannot be blank`);
+        }
+        return trimmed;
+    });
 }
 
 function createSocketLinePump(
@@ -239,11 +262,15 @@ class InteractiveTerminalOutput {
     }
 }
 
-function subscribeToTerminalEvents(
+function sendTerminalCommandAndWait(
     socket: net.Socket,
-    registerResponseHandler: (handler: (line: string) => boolean) => () => void,
-    registerCloseHandler: (handler: (error?: Error) => void) => () => void,
-): Promise<void> {
+    requestId: number,
+    wireLine: string,
+    registerResponseHandler: RegisterTerminalResponseHandler,
+    registerCloseHandler: RegisterTerminalCloseHandler,
+    description: string,
+    consumeResponse: boolean = true,
+): Promise<TerminalCommandResponse> {
     return new Promise((resolve, reject) => {
         let settled = false;
         let timeout: NodeJS.Timeout;
@@ -262,72 +289,60 @@ function subscribeToTerminalEvents(
 
         unregisterResponseHandler = registerResponseHandler((line) => {
             const parsed = parseRemotingLine(line);
-            if (!parsed || parsed.kind !== "response" || parsed.id !== terminalSubscriptionRequestId) {
+            if (!parsed || parsed.kind !== "response" || parsed.id !== requestId) {
                 return false;
             }
 
-            if (parsed.status.toUpperCase() === "OK") {
-                settle(resolve);
-            } else {
-                settle(() => reject(new Error(parsed.data || "Failed to subscribe to TIC-80 remoting events")));
-            }
-            return true;
+            settle(() => resolve({ status: parsed.status, data: parsed.data, rawLine: line }));
+            return consumeResponse;
         });
         unregisterCloseHandler = registerCloseHandler((error) => {
             const detail = error ? `: ${error.message}` : "";
-            settle(() => reject(new Error(`Disconnected while subscribing to TIC-80 remoting events${detail}`)));
+            settle(() => reject(new Error(`Disconnected while waiting for ${description}${detail}`)));
         });
 
         timeout = setTimeout(() => {
-            settle(() => reject(new Error("Timed out subscribing to TIC-80 remoting events")));
+            settle(() => reject(new Error(`Timed out waiting for ${description}`)));
         }, terminalSubscriptionTimeoutMs);
 
-        const eventTypes = terminalEventTypes.join("|");
-        socket.write(`${terminalSubscriptionRequestId} event_subscribe "${eventTypes}" 1\n`, "ascii");
+        socket.write(`${wireLine}\n`, "ascii");
     });
 }
 
-function requestLatestScriptError(
+async function subscribeToTerminalEvents(
     socket: net.Socket,
-    registerResponseHandler: (handler: (line: string) => boolean) => () => void,
-    registerCloseHandler: (handler: (error?: Error) => void) => () => void,
+    registerResponseHandler: RegisterTerminalResponseHandler,
+    registerCloseHandler: RegisterTerminalCloseHandler,
+): Promise<void> {
+    const eventTypes = terminalEventTypes.join("|");
+    const response = await sendTerminalCommandAndWait(
+        socket,
+        terminalSubscriptionRequestId,
+        `${terminalSubscriptionRequestId} event_subscribe "${eventTypes}" 1`,
+        registerResponseHandler,
+        registerCloseHandler,
+        "the TIC-80 event subscription response",
+    );
+    if (response.status.toUpperCase() !== "OK") {
+        throw new Error(response.data || "Failed to subscribe to TIC-80 remoting events");
+    }
+}
+
+async function requestLatestScriptError(
+    socket: net.Socket,
+    registerResponseHandler: RegisterTerminalResponseHandler,
+    registerCloseHandler: RegisterTerminalCloseHandler,
     onResponse: (data: string | undefined, rawLine: string) => void,
 ): Promise<void> {
-    return new Promise((resolve, reject) => {
-        let settled = false;
-        let timeout: NodeJS.Timeout;
-        let unregisterResponseHandler = () => { };
-        let unregisterCloseHandler = () => { };
-        const settle = (callback: () => void) => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            clearTimeout(timeout);
-            unregisterResponseHandler();
-            unregisterCloseHandler();
-            callback();
-        };
-
-        unregisterResponseHandler = registerResponseHandler((line) => {
-            const parsed = parseRemotingLine(line);
-            if (!parsed || parsed.kind !== "response" || parsed.id !== terminalLastScriptErrorRequestId) {
-                return false;
-            }
-            onResponse(parsed.status.toUpperCase() === "OK" ? parsed.data : undefined, line);
-            settle(resolve);
-            return true;
-        });
-        unregisterCloseHandler = registerCloseHandler((error) => {
-            const detail = error ? `: ${error.message}` : "";
-            settle(() => reject(new Error(`Disconnected while requesting the latest TIC-80 script error${detail}`)));
-        });
-        timeout = setTimeout(() => {
-            settle(() => reject(new Error("Timed out requesting the latest TIC-80 script error")));
-        }, terminalSubscriptionTimeoutMs);
-
-        socket.write(`${terminalLastScriptErrorRequestId} script_error_last\n`, "ascii");
-    });
+    const response = await sendTerminalCommandAndWait(
+        socket,
+        terminalLastScriptErrorRequestId,
+        `${terminalLastScriptErrorRequestId} script_error_last`,
+        registerResponseHandler,
+        registerCloseHandler,
+        "the latest TIC-80 script error response",
+    );
+    onResponse(response.status.toUpperCase() === "OK" ? response.data : undefined, response.rawLine);
 }
 
 export function parseHostPort(hostPortValue: string): TerminalTarget {
@@ -498,6 +513,18 @@ async function runTerminalClientCore(
         }
         return request;
     };
+    let nextRequestId = 1;
+    const prepareRequest = (commandLine: string): { parsed?: ParsedTerminalRequest; wireLine: string } => {
+        let requestLine: string;
+        if (hasTerminalRequestId(commandLine)) {
+            requestLine = commandLine;
+        } else {
+            requestLine = `${nextRequestId} ${commandLine}`;
+            nextRequestId = nextRequestId === terminalMaxAutomaticRequestId ? 1 : nextRequestId + 1;
+        }
+        const parsed = parseTerminalRequest(requestLine);
+        return { parsed, wireLine: parsed?.wireLine ?? requestLine };
+    };
     const presentScriptError = (data: string | undefined, rawLine: string, deduplicate: boolean = true): void => {
         if (data === undefined) {
             terminalOutput.writeLine(rawLine);
@@ -644,6 +671,44 @@ async function runTerminalClientCore(
             presentScriptError,
         );
 
+        const onConnectCommands = options.onConnectCommands ?? [];
+        for (let index = 0; index < onConnectCommands.length; index += 1) {
+            const command = onConnectCommands[index];
+            const prepared = prepareRequest(command);
+            if (!prepared.parsed || prepared.parsed.id < 0) {
+                throw new Error(
+                    `Invalid --on-connect command ${index + 1}: expected a remoting command with an optional non-negative request ID`,
+                );
+            }
+            enqueueRequest(prepared.parsed);
+
+            let response: TerminalCommandResponse;
+            try {
+                response = await sendTerminalCommandAndWait(
+                    socket,
+                    prepared.parsed.id,
+                    prepared.wireLine,
+                    (handler) => {
+                        responseHandlers.add(handler);
+                        return () => responseHandlers.delete(handler);
+                    },
+                    (handler) => {
+                        closeHandlers.add(handler);
+                        return () => closeHandlers.delete(handler);
+                    },
+                    `response to --on-connect command ${index + 1}`,
+                    false,
+                );
+            } catch (error) {
+                throw new Error(`--on-connect command ${index + 1} failed (${command}): ${asError(error).message}`);
+            }
+            if (response.status.toUpperCase() !== "OK") {
+                throw new Error(
+                    `--on-connect command ${index + 1} failed (${command}): ${response.data || response.status}`,
+                );
+            }
+        }
+
         if (disconnected) {
             throw new Error("Disconnected from TIC-80 remoting server");
         }
@@ -651,24 +716,15 @@ async function runTerminalClientCore(
         cons.info(`Connected to ${host}:${port}. Type remoting commands like: ping  (Ctrl+C to quit)`);
 
         if (!inputHasClosed) {
-            let nextRequestId = 1;
             rl.on("line", (line) => {
                 terminalOutput.acceptInputLine();
                 const commandLine = line.trim();
                 if (commandLine.length > 0 && !disconnected) {
-                    let requestLine: string;
-                    if (hasTerminalRequestId(commandLine)) {
-                        requestLine = commandLine;
-                    } else {
-                        requestLine = `${nextRequestId} ${commandLine}`;
-                        nextRequestId = nextRequestId === terminalMaxAutomaticRequestId ? 1 : nextRequestId + 1;
+                    const prepared = prepareRequest(commandLine);
+                    if (prepared.parsed) {
+                        enqueueRequest(prepared.parsed);
                     }
-                    const parsedRequest = parseTerminalRequest(requestLine);
-                    const wireLine = parsedRequest?.wireLine ?? requestLine;
-                    if (parsedRequest) {
-                        enqueueRequest(parsedRequest);
-                    }
-                    socket.write(`${wireLine}\n`, "ascii");
+                    socket.write(`${prepared.wireLine}\n`, "ascii");
                 }
                 terminalOutput.showPrompt();
             });
@@ -733,6 +789,10 @@ export async function startTerminalClient(
     target: TerminalTarget,
     options: TerminalClientOptions = {},
 ): Promise<RunningTerminalClient> {
+    const normalizedOptions: TerminalClientOptions = {
+        ...options,
+        onConnectCommands: normalizeOnConnectCommands(options.onConnectCommands),
+    };
     const startupAttempts = Math.max(1, Math.trunc(options.startupAttempts ?? 1));
     const startupRetryDelayMs = Math.max(0, options.startupRetryDelayMs ?? 100);
 
@@ -740,7 +800,7 @@ export async function startTerminalClient(
     // so use a retry mechanism.
     for (let attempt = 1; attempt <= startupAttempts; attempt += 1) {
         try {
-            return await startTerminalClientAttempt(target, options);
+            return await startTerminalClientAttempt(target, normalizedOptions);
         } catch (error) {
             const terminalError = asError(error);
             if (attempt >= startupAttempts) {
@@ -772,12 +832,15 @@ export async function discoCommand(): Promise<void> {
     }
 }
 
-export async function terminalCommand(hostPort?: string): Promise<void> {
+export async function terminalCommand(hostPort?: string, onConnectCommands: readonly string[] = []): Promise<void> {
     const target = await resolveTerminalTarget(hostPort);
     if (!target) {
         return;
     }
-    await runTerminalClient(target, { scriptErrorSourceMapper: tryCreateCurrentProjectScriptErrorSourceMaps() });
+    await runTerminalClient(target, {
+        onConnectCommands,
+        scriptErrorSourceMapper: tryCreateCurrentProjectScriptErrorSourceMaps(),
+    });
 }
 
 export async function attachTerminalToLaunchedTic80(

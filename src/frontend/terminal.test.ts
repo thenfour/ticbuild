@@ -183,6 +183,102 @@ describe("terminal remoting session", () => {
         }
     });
 
+    it("runs on-connect commands serially before accepting interactive input", async () => {
+        const receivedLines: string[] = [];
+        let connectedSocket: net.Socket | undefined;
+        const server = net.createServer((socket) => {
+            connectedSocket = socket;
+            pumpSocketLines(socket, (line) => {
+                receivedLines.push(line);
+                if (acknowledgeTerminalSetupLine(socket, line)) {
+                    return;
+                }
+                if (line === "1 ping") {
+                    socket.write('-1 trace "while waiting"\n');
+                } else if (line === "2 version") {
+                    socket.write('2 OK "ticbuild-test"\n');
+                } else if (line === "3 hello") {
+                    socket.write('3 OK "hello"\n');
+                }
+            });
+        });
+        const port = await listen(server);
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let rendered = "";
+        output.on("data", (chunk) => {
+            rendered += chunk.toString("utf8");
+        });
+
+        const terminalStarting = startTerminalClient(
+            { host: "127.0.0.1", port },
+            { input, output, terminal: false, onConnectCommands: ["ping", "version"] },
+        );
+
+        await waitFor(() => receivedLines.includes("1 ping"));
+        await waitFor(() => rendered.includes('-1 trace "while waiting"'));
+        expect(receivedLines).not.toContain("2 version");
+
+        connectedSocket!.write("1 OK PONG\n");
+        await waitFor(() => receivedLines.includes("2 version"));
+        const terminal = await terminalStarting;
+
+        input.write("hello\n");
+        await waitFor(() => receivedLines.includes("3 hello"));
+        expect(receivedLines).toEqual([
+            '2147483647 event_subscribe "trace|cart_run|lua_profiler_stopped|script_error" 1',
+            "2147483646 script_error_last",
+            "1 ping",
+            "2 version",
+            "3 hello",
+        ]);
+        expect(rendered).toContain("1 OK PONG\n");
+        expect(rendered).toContain('2 OK "ticbuild-test"\n');
+
+        input.end();
+        await terminal.closed;
+        await closeServer(server);
+    });
+
+    it("stops the on-connect sequence when a command returns ERR", async () => {
+        const receivedLines: string[] = [];
+        const server = net.createServer((socket) => {
+            pumpSocketLines(socket, (line) => {
+                receivedLines.push(line);
+                if (acknowledgeTerminalSetupLine(socket, line)) {
+                    return;
+                }
+                if (line === "1 ping") {
+                    socket.write("1 ERR nope\n");
+                }
+            });
+        });
+        const port = await listen(server);
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let rendered = "";
+        output.on("data", (chunk) => {
+            rendered += chunk.toString("utf8");
+        });
+
+        await expect(startTerminalClient(
+            { host: "127.0.0.1", port },
+            { input, output, terminal: false, onConnectCommands: ["ping", "version"] },
+        )).rejects.toThrow("--on-connect command 1 failed (ping): nope");
+
+        expect(receivedLines).not.toContain("2 version");
+        expect(rendered).toContain("1 ERR nope\n");
+        await closeServer(server);
+    });
+
+    it("rejects blank and multiline on-connect commands before connecting", async () => {
+        const target = { host: "127.0.0.1", port: 1 };
+        await expect(startTerminalClient(target, { onConnectCommands: ["  "] }))
+            .rejects.toThrow("command cannot be blank");
+        await expect(startTerminalClient(target, { onConnectCommands: ["ping\nversion"] }))
+            .rejects.toThrow("commands must contain exactly one line");
+    });
+
     it("supports structured and raw response presentation prefixes", async () => {
         const scriptError = encodedScriptError(23);
         const receivedLines: string[] = [];
@@ -447,7 +543,7 @@ describe("terminal remoting session", () => {
 
         expect(connectionCount).toBe(2);
         expect(retryErrors).toHaveLength(1);
-        expect(retryErrors[0].message).toContain("Disconnected while subscribing");
+        expect(retryErrors[0].message).toContain("Disconnected while waiting for the TIC-80 event subscription response");
         expect(retryErrors[0].message).toContain("ECONNRESET");
 
         input.end();

@@ -12,6 +12,13 @@ import { ScriptErrorSourceMapRegistry } from "./scriptErrorSourceMapper";
 import { ImportSourceManager } from "../backend/importSources";
 import { getErrorMessage } from "../utils/errorHandling";
 
+class RequiredWatchTerminalStartupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RequiredWatchTerminalStartupError";
+  }
+}
+
 export function resolveAdditionalWatchGlob(projectDir: string, glob: string): string {
   const trimmed = glob.trim();
   if (trimmed.length === 0) {
@@ -57,9 +64,10 @@ export async function watchCommand(
   let isShuttingDown = false;
   let terminalSession: RunningTerminalClient | undefined;
   let terminalStarting: Promise<void> | undefined;
+  const requiredOnConnectCommands = options?.onConnect ?? [];
   const scriptErrorSourceMaps = new ScriptErrorSourceMapRegistry();
 
-  const cleanup = async (reason?: string) => {
+  const shutdown = async (reason?: string) => {
     if (isShuttingDown) {
       return;
     }
@@ -72,9 +80,22 @@ export async function watchCommand(
       await tic80Controller.stop();
     }
     if (watcher) {
-      watcher.close();
+      await watcher.close();
     }
+  };
+
+  const cleanup = async (reason?: string) => {
+    await shutdown(reason);
     process.exit(0);
+  };
+
+  const handleFatalWatchError = (error: unknown): void => {
+    cons.error("Watch failed:");
+    cons.error(getErrorMessage(error));
+    process.exitCode = 1;
+    void shutdown().catch((shutdownError) => {
+      cons.error(`Failed to shut down cleanly: ${getErrorMessage(shutdownError)}`);
+    });
   };
 
   const ensureWatchTerminal = async (target: Tic80RemotingTarget): Promise<void> => {
@@ -89,6 +110,7 @@ export async function watchCommand(
     terminalStarting = (async () => {
       try {
         const session = await startTerminalClient(target, {
+          onConnectCommands: requiredOnConnectCommands,
           captureConsoleOutput: true,
           keepOpenOnInputClose: true,
           startupAttempts: 3,
@@ -125,6 +147,11 @@ export async function watchCommand(
       } catch (error) {
         if (!isShuttingDown) {
           cons.warning(`Unable to attach TIC-80 terminal: ${getErrorMessage(error)}`);
+        }
+        if (requiredOnConnectCommands.length > 0) {
+          throw new RequiredWatchTerminalStartupError(
+            `TIC-80 on-connect setup failed: ${getErrorMessage(error)}`,
+          );
         }
       } finally {
         terminalStarting = undefined;
@@ -191,6 +218,9 @@ export async function watchCommand(
 
   // Function to perform build and launch
   const buildAndLaunch = async () => {
+    if (isShuttingDown) {
+      return;
+    }
     if (isBuilding) {
       pendingRebuild = true;
       return;
@@ -249,21 +279,32 @@ export async function watchCommand(
 
       cons.info("\nWatching for changes... (press Ctrl+C to stop)");
     } catch (error) {
+      if (error instanceof RequiredWatchTerminalStartupError) {
+        // don't pretend this is a build fail..
+        throw error;
+      }
       cons.error("Build failed:");
       cons.error(getErrorMessage(error));
     } finally {
       isBuilding = false;
 
       // If a rebuild was requested while we were building, start it now
-      if (pendingRebuild) {
+      if (pendingRebuild && !isShuttingDown) {
         cons.dim("  Starting queued rebuild...");
-        setTimeout(() => buildAndLaunch(), 100);
+        setTimeout(() => {
+          void buildAndLaunch().catch(handleFatalWatchError);
+        }, 100);
       }
     }
   };
 
   // Perform initial build
-  await buildAndLaunch();
+  try {
+    await buildAndLaunch();
+  } catch (error) {
+    await shutdown();
+    throw error;
+  }
 
   // A failed initial build still needs a pure, non-executing dependency plan.
   if (currentWatchTargets.length === 0) {
@@ -286,7 +327,7 @@ export async function watchCommand(
 
   const onWatchEvent = (event: string, watchTarget: string) => {
     cons.info(`\nWatch target ${event}: ${watchTarget}`);
-    buildAndLaunch();
+    void buildAndLaunch().catch(handleFatalWatchError);
   };
 
   watcher.on("change", (watchTarget: string) => {

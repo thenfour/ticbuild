@@ -660,6 +660,12 @@ back to authored sources when the running cart matches the build source maps.
 
 Request ID prefixes are optional (e.g. `1 ping`).
 
+Use `--on-connect` options with `terminal` or `watch` to send
+remoting commands immediately after terminal setup. 
+
+An `ERR` response, timeout, or disconnect stops the sequence and ticbuild exits
+non-zero.
+
 Prefix a command to select how its response is presented:
 
 - `!script_error_last` decodes and prints the structured JSON value without
