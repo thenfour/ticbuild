@@ -34,6 +34,14 @@
 - #69 Removed support for manifest-specified Lua globals; they were not correct, unnecessary, not useful, confusing.
 - #61 added support for `lzrle` and `unlzrle`, added a search so LZ chooses most optimal profile
 
+### Migration notes from v1.0.22
+
+Required: You will need to add a base build configuration name.
+
+Required: Any `globalsToEmit` in your manifest need to be moved to code; this feature has been removed.
+
+Recommended: Specify the `tight2` lua output format for better minfication.
+
 ## v1.0.22 (2026-8-11)
 
 - #59 new tic-80 build with HMR support
