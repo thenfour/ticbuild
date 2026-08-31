@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import * as cons from "./console";
+import { getErrorMessage } from "./errorHandling";
 
 const execAsync = promisify(exec);
 
@@ -98,7 +99,7 @@ export async function waitForWindow(pid: number, timeoutMs: number = 5000): Prom
     } catch (error) {
       // Window might not exist yet, keep trying
       cons.dim(
-        `[windowPosition] Attempt ${attempts} failed: ${error instanceof Error ? error.message : String(error)}`,
+        `[windowPosition] Attempt ${attempts} failed: ${getErrorMessage(error)}`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 30));

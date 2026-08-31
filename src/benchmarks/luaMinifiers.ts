@@ -1,5 +1,6 @@
 import { constants as zlibConstants, deflateSync } from "node:zlib";
 import * as luaparse from "luaparse";
+import { getErrorMessage } from "../utils/errorHandling";
 
 export type LuaMinifierBenchmarkFixture = {
   id: string;
@@ -70,7 +71,7 @@ function validateLua(source: string, description: string): void {
   try {
     luaparse.parse(source, { luaVersion: "5.3" });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     throw new Error(`${description} is not valid Lua 5.3: ${message}`);
   }
 }
@@ -157,7 +158,7 @@ export async function runLuaMinifierBenchmark(
       } catch (error) {
         fixtureResults.push({
           ...baseResult,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }

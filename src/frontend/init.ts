@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildInfo } from "../buildInfo";
 import * as cons from "../utils/console";
+import { getErrorMessage } from "../utils/errorHandling";
 import { copyFile, ensureDir, fileExists, isDirectory, isDirectoryEmpty } from "../utils/fileSystem";
 import {
   applyTemplateVariables,
@@ -150,7 +151,7 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
     try {
       await installProjectDependencies(resolvedDir);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       throw new Error(`Project files were initialized, but dependency installation failed: ${message}`);
     }
   }

@@ -8,6 +8,7 @@ import { printReplHelp } from "../utils/help";
 import { OptimizationRuleOptions } from "../utils/lua/lua_processor";
 import { luaOptimizationRules } from "../utils/lua/lua_optimizer_rules";
 import { CoalesceBool } from "../utils/utils";
+import { getErrorMessage } from "../utils/errorHandling";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 
 function readLine(rl: readline.Interface, prompt: string): Promise<string | null> {
@@ -217,7 +218,7 @@ async function processInput(
         );
         process.stdout.write(result.minifiedSource + "\n");
     } catch (error) {
-        cons.error(error instanceof Error ? error.message : String(error));
+        cons.error(getErrorMessage(error));
     }
 }
 

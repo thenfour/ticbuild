@@ -26,6 +26,7 @@ import {
   printTic80TerminalHelp,
   printWatchHelp,
 } from "./utils/help";
+import { getErrorMessage } from "./utils/errorHandling";
 import { getBuildVersionTag } from "./utils/versionString";
 
 type ForwardedArgs = {
@@ -318,4 +319,10 @@ async function main(): Promise<void> {
   await program.parseAsync(cliArgs, { from: "user" });
 }
 
-main();
+// catch errors here instead of letting caller handle, to avoid issues with other libs
+// that install their own unhandled except handlers (e.g. Zopfli)
+void main().catch((error: unknown) => {
+  console.error("ticbuild failed:");
+  console.error(getErrorMessage(error));
+  process.exitCode = 1;
+});

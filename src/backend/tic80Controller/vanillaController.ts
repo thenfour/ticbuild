@@ -1,4 +1,5 @@
 import { fileExists, findExecutableInPath } from "../../utils/fileSystem";
+import { getErrorMessage } from "../../utils/errorHandling";
 import { mergeTic80Args } from "../../utils/tic80/args";
 import { launchProcessReturnImmediately } from "../../utils/tic80/launch";
 import { getWindowPosition, setWindowPosition, waitForWindow, WindowPlacement } from "../../utils/windowPosition";
@@ -97,7 +98,7 @@ export class VanillaTic80Controller implements ITic80Controller {
         }
       } catch (err) {
         console.log(
-          `[VanillaController] Failed to save window position: ${err instanceof Error ? err.message : String(err)}`,
+          `[VanillaController] Failed to save window position: ${getErrorMessage(err)}`,
         );
         savedWindowPosition = null;
       }

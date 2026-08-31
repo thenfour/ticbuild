@@ -1,5 +1,6 @@
 import net from "node:net";
 import * as cons from "../../utils/console";
+import { getErrorMessage } from "../../utils/errorHandling";
 import { parseRemotingLine } from "./remotingProtocol";
 
 export interface RemotingResponse {
@@ -157,7 +158,7 @@ export class Tic80RemotingClient {
         try {
           handler(event);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = getErrorMessage(err);
           cons.warning(`[remoting] Event handler failed: ${message}`);
         }
       }

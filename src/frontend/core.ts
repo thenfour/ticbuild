@@ -5,6 +5,7 @@ import { Tic80Resource } from "../backend/importers/tic80CartImporter";
 import { AssetReference, CodeAssemblyOptions } from "../backend/manifestTypes";
 import { serializeSourceMapV3 } from "../backend/sourceMapV3";
 import * as cons from "../utils/console";
+import { getErrorMessage } from "../utils/errorHandling";
 import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
 import { canonicalizePath } from "../utils/fileSystem";
 import { formatBytes } from "../utils/utils";
@@ -99,7 +100,7 @@ function createBuildReportSession(selectedReporter: BuildReporter): BuildReportS
         archivedReporter.message({
           type: "build.failed",
           data: {
-            message: error instanceof Error ? error.message : String(error),
+            message: getErrorMessage(error),
           },
           humanReadable: () => undefined,
         });

@@ -11,6 +11,7 @@ import { TicbuildProjectCore } from "./projectCore";
 import { parseLua, parseLuaQuiet } from "../utils/lua/lua_processor";
 import { collectDocCommentAbove } from "../utils/lua/lua_doc";
 import * as cons from "../utils/console";
+import { getErrorMessage } from "../utils/errorHandling";
 import {
   assertSourceMapMatchesSource,
   createIdentitySourceMap,
@@ -619,7 +620,7 @@ async function resolveInclude(
     try {
       resolvedPath = project.resolveIncludePath(substituted);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       throw new Error(formatError(fromFile, lineNumber, message));
     }
   }
@@ -1216,7 +1217,7 @@ function parseMacroBody(body: string, filePath: string, lineNumber: number): Par
   try {
     return { kind: "statements", ast: parseLuaChunkWithRanges(body), rangeOffset: 0 };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     throw new Error(formatError(filePath, lineNumber, `Failed to parse macro body: ${message}`));
   }
 }
@@ -1376,7 +1377,7 @@ function parseLuaForMacroExpansion(code: string, filePath: string): luaparse.Chu
   } catch (error) {
     const errorWithLine = error as { line?: unknown };
     const lineNumber = typeof errorWithLine.line === "number" ? errorWithLine.line : 1;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     throw new Error(formatError(filePath, lineNumber, `Failed to parse Lua while expanding macros: ${message}`));
   }
 }

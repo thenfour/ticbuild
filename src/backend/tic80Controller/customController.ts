@@ -4,6 +4,7 @@
 import { ChildProcess } from "node:child_process";
 import { fileExists } from "../../utils/fileSystem";
 import * as cons from "../../utils/console";
+import { getErrorMessage } from "../../utils/errorHandling";
 import { getPathRelativeToTemplates } from "../../utils/templates";
 import { findOptionValue, mergeTic80Args } from "../../utils/tic80/args";
 import { launchProcessReturnImmediately } from "../../utils/tic80/launch";
@@ -70,7 +71,7 @@ export class CustomTic80Controller implements ITic80Controller {
       try {
         await this.client.quit();
       } catch (err) {
-        cons.warning(`[remoting] Failed to send quit: ${err instanceof Error ? err.message : String(err)}`);
+        cons.warning(`[remoting] Failed to send quit: ${getErrorMessage(err)}`);
       }
       this.client.close();
     }

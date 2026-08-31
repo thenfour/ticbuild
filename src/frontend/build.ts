@@ -2,10 +2,7 @@ import { buildCore } from "./core";
 import { CommandLineOptions } from "./parseOptions";
 import { BuildReporter, createBuildReporter } from "./buildReporter";
 import * as cons from "../utils/console";
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { getErrorMessage } from "../utils/errorHandling";
 
 export async function buildCommand(
   manifestPath?: string,

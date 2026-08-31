@@ -18,6 +18,10 @@ export function err<T = never>(error: string): Result<T> {
   return { ok: false, error };
 }
 
+export function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function assert(condition: boolean = true, message: string = "Assertion failed"): asserts condition {
   if (!condition) {
     console.error("Assertion failed:", message);

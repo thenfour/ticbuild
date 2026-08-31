@@ -10,6 +10,7 @@ import { mergeTic80Args } from "../utils/tic80/args";
 import { RunningTerminalClient, startTerminalClient } from "./terminal";
 import { ScriptErrorSourceMapRegistry } from "./scriptErrorSourceMapper";
 import { ImportSourceManager } from "../backend/importSources";
+import { getErrorMessage } from "../utils/errorHandling";
 
 export function resolveAdditionalWatchGlob(projectDir: string, glob: string): string {
   const trimmed = glob.trim();
@@ -117,13 +118,13 @@ export async function watchCommand(
               terminalSession = undefined;
             }
             if (!isShuttingDown) {
-              cons.warning(`TIC-80 terminal disconnected: ${error instanceof Error ? error.message : String(error)}`);
+              cons.warning(`TIC-80 terminal disconnected: ${getErrorMessage(error)}`);
             }
           },
         );
       } catch (error) {
         if (!isShuttingDown) {
-          cons.warning(`Unable to attach TIC-80 terminal: ${error instanceof Error ? error.message : String(error)}`);
+          cons.warning(`Unable to attach TIC-80 terminal: ${getErrorMessage(error)}`);
         }
       } finally {
         terminalStarting = undefined;
@@ -208,7 +209,7 @@ export async function watchCommand(
         scriptErrorSourceMaps.replaceFromProject(project);
       } catch (error) {
         cons.warning(
-          `Unable to load script-error source maps: ${error instanceof Error ? error.message : String(error)}`,
+          `Unable to load script-error source maps: ${getErrorMessage(error)}`,
         );
       }
       const outputFilePath = project.resolvedCore.getOutputFilePath();
@@ -249,7 +250,7 @@ export async function watchCommand(
       cons.info("\nWatching for changes... (press Ctrl+C to stop)");
     } catch (error) {
       cons.error("Build failed:");
-      cons.error(error instanceof Error ? error.message : String(error));
+      cons.error(getErrorMessage(error));
     } finally {
       isBuilding = false;
 
