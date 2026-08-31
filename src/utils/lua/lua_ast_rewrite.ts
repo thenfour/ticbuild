@@ -10,9 +10,18 @@ export type LuaStatementRewriteResult = {
   changed: boolean;
 };
 
+export type LuaStatementRewriteContext = {
+  readonly parent: luaparse.Node;
+  readonly body: readonly luaparse.Statement[];
+  readonly index: number;
+};
+
 export type LuaAstRewriteVisitor = {
   expression?: (expression: luaparse.Expression) => LuaExpressionRewriteResult;
-  statement?: (statement: luaparse.Statement) => LuaStatementRewriteResult;
+  statement?: (
+    statement: luaparse.Statement,
+    context: LuaStatementRewriteContext,
+  ) => LuaStatementRewriteResult;
 };
 
 type BlockRewriteResult = {
@@ -41,7 +50,7 @@ function rewriteExpression(
 
   switch (expression.type) {
     case "FunctionDeclaration": {
-      const body = rewriteBlock(expression.body, visitor);
+      const body = rewriteBlock(expression.body, expression, visitor);
       expression.body = body.body;
       changed ||= body.changed;
       break;
@@ -123,12 +132,13 @@ function rewriteExpression(
 
 function rewriteBlock(
   body: luaparse.Statement[],
+  parent: luaparse.Node,
   visitor: LuaAstRewriteVisitor,
 ): BlockRewriteResult {
   const rewritten: luaparse.Statement[] = [];
   let changed = false;
-  for (const statement of body) {
-    const result = rewriteStatement(statement, visitor);
+  for (let index = 0; index < body.length; index++) {
+    const result = rewriteStatement(body[index], { parent, body, index }, visitor);
     rewritten.push(...result.statements);
     changed ||= result.changed;
   }
@@ -137,6 +147,7 @@ function rewriteBlock(
 
 function rewriteStatement(
   statement: luaparse.Statement,
+  context: LuaStatementRewriteContext,
   visitor: LuaAstRewriteVisitor,
 ): LuaStatementRewriteResult {
   let changed = false;
@@ -152,7 +163,7 @@ function rewriteStatement(
           clause.condition = condition.expression;
           changed ||= condition.changed;
         }
-        const body = rewriteBlock(clause.body, visitor);
+        const body = rewriteBlock(clause.body, clause, visitor);
         clause.body = body.body;
         changed ||= body.changed;
       }
@@ -160,14 +171,14 @@ function rewriteStatement(
     case "WhileStatement":
     case "RepeatStatement": {
       const condition = rewriteExpression(statement.condition, visitor);
-      const body = rewriteBlock(statement.body, visitor);
+      const body = rewriteBlock(statement.body, statement, visitor);
       statement.condition = condition.expression;
       statement.body = body.body;
       changed ||= condition.changed || body.changed;
       break;
     }
     case "DoStatement": {
-      const body = rewriteBlock(statement.body, visitor);
+      const body = rewriteBlock(statement.body, statement, visitor);
       statement.body = body.body;
       changed ||= body.changed;
       break;
@@ -191,7 +202,7 @@ function rewriteStatement(
       break;
     }
     case "FunctionDeclaration": {
-      const body = rewriteBlock(statement.body, visitor);
+      const body = rewriteBlock(statement.body, statement, visitor);
       statement.body = body.body;
       changed ||= body.changed;
       break;
@@ -207,14 +218,14 @@ function rewriteStatement(
         statement.step = step.expression;
         changed ||= step.changed;
       }
-      const body = rewriteBlock(statement.body, visitor);
+      const body = rewriteBlock(statement.body, statement, visitor);
       statement.body = body.body;
       changed ||= body.changed;
       break;
     }
     case "ForGenericStatement": {
       changed = rewriteExpressionList(statement.iterators, visitor) || changed;
-      const body = rewriteBlock(statement.body, visitor);
+      const body = rewriteBlock(statement.body, statement, visitor);
       statement.body = body.body;
       changed ||= body.changed;
       break;
@@ -223,14 +234,14 @@ function rewriteStatement(
       break;
   }
 
-  const result = visitor.statement?.(statement);
+  const result = visitor.statement?.(statement, context);
   return result
     ? { statements: result.statements, changed: changed || result.changed }
     : { statements: [statement], changed };
 }
 
 export function rewriteLuaAst(ast: luaparse.Chunk, visitor: LuaAstRewriteVisitor): boolean {
-  const result = rewriteBlock(ast.body, visitor);
+  const result = rewriteBlock(ast.body, ast, visitor);
   ast.body = result.body;
   return result.changed;
 }

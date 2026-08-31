@@ -13,6 +13,7 @@ export const OptimizationRuleIds = [
   "syntax.member-access",
   "syntax.bare-table-key",
   "syntax.omit-local-nil",
+  "syntax.remove-redundant-do",
   "control-flow.invert-negated-if",
   "control-flow.resolve-constant-if",
   "control-flow.remove-false-while",

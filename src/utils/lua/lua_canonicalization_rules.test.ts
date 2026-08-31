@@ -46,6 +46,90 @@ describe("Lua syntax canonicalization rules", () => {
   });
 });
 
+describe("Lua redundant do scope removal", () => {
+  it("flattens nested declaration-free blocks", () => {
+    expect(minify(
+      'do do print("hi") end end',
+      { canonicalizeSyntax: true },
+    )).toBe('print("hi")');
+  });
+
+  it("flattens nested tail blocks containing locals", () => {
+    expect(minify(
+      "do local x=fn() do local y=fn2() print(x,y) end end",
+      { canonicalizeSyntax: true },
+    )).toBe("local x=fn() local y=fn2() print(x,y)");
+  });
+
+  it("flattens a declaration-free block before later statements", () => {
+    expect(minify(
+      "before() do work() end after()",
+      { canonicalizeSyntax: true },
+    )).toBe("before() work() after()");
+  });
+
+  it("retains a non-tail block whose locals would escape their scope", () => {
+    expect(minify(
+      "local x=1 do local x=2 print(x) end print(x)",
+      { canonicalizeSyntax: true },
+    )).toBe("local x=1 do local x=2 print(x) end print(x)");
+  });
+
+  it("retains tail locals in a repeat body because until can observe them", () => {
+    expect(minify(
+      "repeat do local x=fn() print(x) end until x==nil",
+      { canonicalizeSyntax: true },
+    )).toBe("repeat do local x=fn() print(x) end until x==nil");
+  });
+
+  it("retains blocks containing labels or gotos", () => {
+    expect(minify(
+      'do ::again:: print("x") end',
+      { canonicalizeSyntax: true },
+    )).toBe('do print("x") end');
+    expect(minify(
+      "::again:: do goto again end",
+      { canonicalizeSyntax: true },
+    )).toBe("do end");
+  });
+
+  it("treats local function declarations as locals", () => {
+    expect(minify(
+      "do local function f() return 1 end use(f) end after()",
+      { canonicalizeSyntax: true },
+    )).toMatch(/^do /);
+    expect(minify(
+      "do local function f() return 1 end return f() end",
+      { canonicalizeSyntax: true },
+    )).toMatch(/^local function /);
+  });
+
+  it("removes a tail scope inside an anonymous function", () => {
+    expect(minify(
+      "local f=function() do local x=fn() return x end end return f",
+      { canonicalizeSyntax: true },
+    )).toBe("local f=function()\nlocal x=fn() return x\nend return f");
+  });
+
+  it("does not increase peak locals by flattening a non-tail block", () => {
+    const outerLocals = Array.from({ length: 199 }, (_, index) => `p${index}`).join(",");
+    const output = minify(
+      `local ${outerLocals}=seed() ` +
+      "do local inner=fn() use(inner) end local tail=fn2() use(tail)",
+      { canonicalizeSyntax: true, maxLineLength: 10_000 },
+    );
+
+    expect(output).toContain("do local inner=fn() use(inner) end");
+  });
+
+  it("removes the scope emitted for a constant true branch when it is safe", () => {
+    expect(minify(
+      "if true then local x=fn() print(x) end",
+      { canonicalizeSyntax: true, simplifyControlFlow: true },
+    )).toBe("local x=fn() print(x)");
+  });
+});
+
 describe("Lua declaration packing with implicit nils", () => {
   const packingOptions: Partial<OptimizationRuleOptions> = {
     canonicalizeSyntax: true,
@@ -169,6 +253,20 @@ describe("Lua optimization rule overrides", () => {
         ruleOverrides: { "syntax.member-access": false },
       },
     )).toBe('return t["valid"],{valid=1}');
+  });
+
+  it("can independently enable and disable redundant do removal", () => {
+    expect(minify(
+      "do print(1) end",
+      { ruleOverrides: { "syntax.remove-redundant-do": true } },
+    )).toBe("print(1)");
+    expect(minify(
+      "do print(1) end",
+      {
+        canonicalizeSyntax: true,
+        ruleOverrides: { "syntax.remove-redundant-do": false },
+      },
+    )).toBe("do print(1) end");
   });
 
   it("overrides existing rules that have specialized options", () => {
