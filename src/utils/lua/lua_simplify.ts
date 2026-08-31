@@ -11,6 +11,8 @@ import { unparseLua } from "./lua_printer";
 import type { LiteralNode, StringLiteralNode } from "./lua_utils";
 import { stringValue } from "./lua_utils";
 
+const comparisonOperators = new Set(["==", "~=", "<", "<=", ">", ">="]);
+
 function makeNumericLiteral(value: number, source: luaparse.Node): luaparse.NumericLiteral | null {
   if (!Number.isFinite(value) || Object.is(value, -0)) return null;
   return inheritLuaNodeOrigin({ type: "NumericLiteral", value, raw: String(value) }, source);
@@ -58,6 +60,67 @@ function tightExpressionLength(expression: luaparse.Expression): number {
     lineBehavior: "tight2",
     maxLineLength: Number.MAX_SAFE_INTEGER,
   }).trim().slice("return ".length).length;
+}
+
+function isProvablyBooleanExpression(expression: luaparse.Expression): boolean {
+  if (expression.type === "BooleanLiteral") return true;
+  if (expression.type === "UnaryExpression") return expression.operator === "not";
+  if (expression.type === "BinaryExpression") {
+    return comparisonOperators.has(expression.operator);
+  }
+  return expression.type === "LogicalExpression" &&
+    isProvablyBooleanExpression(expression.left) &&
+    isProvablyBooleanExpression(expression.right);
+}
+
+function makeNotExpression(
+  argument: luaparse.Expression,
+  source: luaparse.Node,
+): luaparse.UnaryExpression {
+  return inheritLuaNodeOrigin({
+    type: "UnaryExpression",
+    operator: "not",
+    argument,
+  }, source);
+}
+
+function makeComplementaryEquality(
+  expression: luaparse.BinaryExpression,
+  source: luaparse.Node,
+): luaparse.BinaryExpression {
+  return inheritLuaNodeOrigin({
+    type: "BinaryExpression",
+    operator: expression.operator === "==" ? "~=" : "==",
+    left: expression.left,
+    right: expression.right,
+  }, source);
+}
+
+function useIfShorter(
+  original: luaparse.Expression,
+  candidate: luaparse.Expression,
+): luaparse.Expression {
+  return tightExpressionLength(candidate) < tightExpressionLength(original)
+    ? candidate
+    : original;
+}
+
+function simplifyBooleanComparison(
+  expression: luaparse.BinaryExpression,
+): luaparse.Expression {
+  if (expression.operator !== "==" && expression.operator !== "~=") return expression;
+
+  const leftIsBooleanLiteral = expression.left.type === "BooleanLiteral";
+  const rightIsBooleanLiteral = expression.right.type === "BooleanLiteral";
+  if (leftIsBooleanLiteral === rightIsBooleanLiteral) return expression;
+
+  const literal = (leftIsBooleanLiteral ? expression.left : expression.right) as luaparse.BooleanLiteral;
+  const compared = leftIsBooleanLiteral ? expression.right : expression.left;
+  if (!isProvablyBooleanExpression(compared)) return expression;
+
+  const negate = expression.operator === "==" ? !literal.value : literal.value;
+  const candidate = negate ? makeNotExpression(compared, expression) : compared;
+  return useIfShorter(expression, candidate);
 }
 
 function literalsEqual(left: LiteralNode, right: LiteralNode): boolean | null {
@@ -165,38 +228,68 @@ function foldBinary(expression: luaparse.BinaryExpression): LiteralNode | null {
 }
 
 function foldExpression(expression: luaparse.Expression): luaparse.Expression {
-  if (expression.type === "UnaryExpression" && isLuaScalarLiteral(expression.argument)) {
-    if (expression.operator === "not") {
+  if (expression.type === "UnaryExpression") {
+    if (expression.operator === "not" && isLuaScalarLiteral(expression.argument)) {
       return makeBooleanLiteral(!isLuaTruthyLiteral(expression.argument), expression);
     }
-    if (expression.operator === "-") {
+    if (expression.operator === "-" && isLuaScalarLiteral(expression.argument)) {
       const value = numericValue(expression.argument);
       if (value !== null && (!Number.isInteger(value) || Number.isSafeInteger(value))) {
         return makeNumericLiteral(-value, expression) ?? expression;
       }
     }
+    if (
+      expression.operator === "not" &&
+      expression.argument.type === "BinaryExpression" &&
+      (expression.argument.operator === "==" || expression.argument.operator === "~=")
+    ) {
+      return useIfShorter(
+        expression,
+        makeComplementaryEquality(expression.argument, expression),
+      );
+    }
+    if (
+      expression.operator === "not" &&
+      expression.argument.type === "UnaryExpression" &&
+      expression.argument.operator === "not" &&
+      isProvablyBooleanExpression(expression.argument.argument)
+    ) {
+      return useIfShorter(expression, expression.argument.argument);
+    }
   }
 
   if (expression.type === "BinaryExpression") {
     const folded = foldBinary(expression);
-    if (!folded) return expression;
-    if ((folded.type === "NumericLiteral" || folded.type === "StringLiteral") &&
-        tightExpressionLength(folded) > tightExpressionLength(expression)) {
-      return expression;
+    if (folded) {
+      if ((folded.type === "NumericLiteral" || folded.type === "StringLiteral") &&
+          tightExpressionLength(folded) > tightExpressionLength(expression)) {
+        return expression;
+      }
+      return folded;
     }
-    return folded;
+    return simplifyBooleanComparison(expression);
   }
 
-  if (expression.type === "LogicalExpression" && isLuaScalarLiteral(expression.left)) {
-    const leftIsTruthy = isLuaTruthyLiteral(expression.left);
-    if (expression.operator === "and") {
+  if (expression.type === "LogicalExpression") {
+    if (isLuaScalarLiteral(expression.left)) {
+      const leftIsTruthy = isLuaTruthyLiteral(expression.left);
+      if (expression.operator === "and") {
+        return leftIsTruthy
+          ? expression.right
+          : cloneLuaScalarLiteral(expression.left, expression);
+      }
       return leftIsTruthy
-        ? expression.right
-        : cloneLuaScalarLiteral(expression.left, expression);
+        ? cloneLuaScalarLiteral(expression.left, expression)
+        : expression.right;
     }
-    return leftIsTruthy
-      ? cloneLuaScalarLiteral(expression.left, expression)
-      : expression.right;
+    if (
+      isProvablyBooleanExpression(expression.left) &&
+      expression.right.type === "BooleanLiteral" &&
+      ((expression.operator === "and" && expression.right.value) ||
+        (expression.operator === "or" && !expression.right.value))
+    ) {
+      return useIfShorter(expression, expression.left);
+    }
   }
 
   return expression;
@@ -219,7 +312,7 @@ export function simplifyExpressionsInAST(ast: luaparse.Chunk): luaparse.Chunk {
 export const simplifyExpressionsRule: LuaOptimizationRule = {
   id: "reduce.simplify-expressions",
   family: "simplify",
-  description: "Fold constant scalar expressions",
+  description: "Fold constant and provably equivalent scalar expressions",
   defaultEnabled: (options) => options.simplifyExpressions,
   hooks: {
     reduce(context) {

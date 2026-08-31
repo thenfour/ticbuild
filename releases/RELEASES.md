@@ -33,6 +33,7 @@
 - #62 Base build configuration name is clearer
 - #69 Removed support for manifest-specified Lua globals; they were not correct, unnecessary, not useful, confusing.
 - #61 added support for `lzrle` and `unlzrle`, added a search so LZ chooses most optimal profile
+- #83 Fixed error messages that sometimes include a huge amount of noise.
 
 ### Migration notes from v1.0.22
 

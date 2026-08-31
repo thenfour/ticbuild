@@ -178,6 +178,54 @@ describe("Lua constant expression folding", () => {
       simplifyExpressions: true,
     })).toContain("==");
   });
+
+  it("removes boolean literal comparisons from provably boolean expressions", () => {
+    expect(minify([
+      "return (x>0)==true,(x==y)~=false,(not ready)==true,",
+      "true==(x<=y),false~=(x~=y)",
+    ].join(""), {
+      simplifyExpressions: true,
+    })).toBe("return x>0,x==y,not ready,x<=y,x~=y");
+  });
+
+  it("negates comparisons against boolean literals without changing their values", () => {
+    expect(minify([
+      "return (x>0)==false,(x==y)~=true,false==(not ready),",
+      "true~=(x<=y)",
+    ].join(""), {
+      simplifyExpressions: true,
+    })).toBe("return not(x>0),x~=y,not not ready,not(x<=y)");
+  });
+
+  it("complements negated equality expressions", () => {
+    expect(minify("return not(x==y),not(x~=y),not(x<y)", {
+      simplifyExpressions: true,
+    })).toBe("return x~=y,x==y,not(x<y)");
+  });
+
+  it("removes exact boolean double negations and logical identities", () => {
+    expect(minify([
+      "return not not (x==y),(x==y) and true,",
+      "((x<y) or (y<z)) or false",
+    ].join(""), {
+      simplifyExpressions: true,
+    })).toBe("return x==y,x==y,x<y or y<z");
+  });
+
+  it("does not treat arbitrary values as booleans", () => {
+    const source = [
+      "return value==true,value~=false,value==false,value~=true,",
+      "value and true,value or false,not not value,value==nil,value~=nil",
+    ].join("");
+    expect(minify(source, { simplifyExpressions: true })).toBe(source);
+  });
+
+  it("does not drop evaluated operands from absorbing boolean operations", () => {
+    const source = "return (probe()==1) and false,(probe()==1) or true";
+    expect(minify(source, { simplifyExpressions: true })).toBe(
+      "return probe()==1and false,probe()==1or true",
+    );
+  });
 });
 
 describe("Lua constant control-flow resolution", () => {
