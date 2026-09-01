@@ -261,25 +261,27 @@ ticbuild repl
 ticbuild repl --multi-line
 ```
 
-### dev-only Lua optimizer sandbox
+### dev-only code pipeline lab
 
 ```bash
-npm run dev:lua-optimizer
+npm run dev:code-pipeline
 ```
 
-Starts a web app for exploring the Lua minification options. It's possible to operate
-the server over a specific project / build configuration:
+Starts a web app for exploring Lua preprocessing/minification and
+TypeScript-to-Lua pipeline.
+
+It's possible to operate the server over a specific project / build configuration:
 
 ```powershell
 $env:TICBUILD_PLAYGROUND_MANIFEST = "C:\path\to\project.ticbuild.jsonc"
 $env:TICBUILD_PLAYGROUND_MODE = "release"
-npm run dev:lua-optimizer
+npm run dev:code-pipeline
 ```
 
 Also available are:
 
-- `npm run build:lua-optimizer`
-- `npm run preview:lua-optimizer`
+- `npm run build:code-pipeline`
+- `npm run preview:code-pipeline`
 
 ### dev-only LZ compressor sandbox
 

@@ -22,6 +22,7 @@ const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const tic80CallbackNames = new Set(["TIC", "BOOT", "BDR", "SCN", "OVR", "MENU"]);
 const preprocessorDirectivePattern =
   /^([ \t]*)\/\/(?:--)?#(pragma|define|undef|include|if|ifdef|ifndef|else|endif|warning|error|macro|endmacro|minify)\b(.*)$/;
+const builtinsName = "tic80.d.ts";
 
 function formatDiagnostic(diagnostic: ts.Diagnostic, projectDir: string): string {
   const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
@@ -47,8 +48,9 @@ export function transpileTypeScriptToLua(
   entryFilePath: string,
   entrySource: string,
   typescriptConfig?: TypeScriptImportConfig,
+  builtinsPathOverride?: string,
 ): GeneratedLuaSource {
-  const builtinsPath = canonicalizePath(getPathRelativeToPackageRoot("tic80.d.ts"));
+  const builtinsPath = canonicalizePath(builtinsPathOverride ?? getPathRelativeToPackageRoot(builtinsName));
   const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
   const options = createTypeScriptTranspilationOptions(configuredProject.options);
   const luaAssetDeclarationsPath = getLuaAssetDeclarationsPath(project.projectDir);

@@ -3,12 +3,14 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { defineConfig, type Plugin } from "vite";
+import react from "@vitejs/plugin-react";
 import { TicbuildProject } from "../../src/backend/project";
 import {
-  getLuaSnippetProjectConfig,
-  processLuaSnippet,
-  type LuaSnippetSettings,
-} from "../../src/backend/luaSnippetProcessor";
+  getCodeSnippetProjectConfig,
+  processCodeSnippet,
+  type CodeSnippetLanguage,
+  type CodeSnippetSettings,
+} from "../../src/backend/codeSnippetProcessor";
 import type { TicbuildProjectCore } from "../../src/backend/projectCore";
 
 const playgroundDir = path.dirname(fileURLToPath(import.meta.url));
@@ -49,15 +51,30 @@ function errorPayload(error: unknown): Record<string, unknown> {
   return {
     name: typeof error.name === "string" ? error.name : "Error",
     message: typeof error.message === "string" ? error.message : String(error),
+    ...(typeof error.stage === "string" ? { stage: error.stage } : {}),
     ...(typeof error.index === "number" ? { index: error.index } : {}),
     ...(typeof error.line === "number" ? { line: error.line } : {}),
     ...(typeof error.column === "number" ? { column: error.column } : {}),
   };
 }
 
-function parseProcessRequest(value: unknown): { source: string; settings: LuaSnippetSettings } {
+type ProcessRequest = {
+  language: CodeSnippetLanguage;
+  source: string;
+  typeScriptProfileId?: string;
+  settings: CodeSnippetSettings;
+};
+
+function parseProcessRequest(value: unknown): ProcessRequest {
   if (!isRecord(value) || typeof value.source !== "string") {
     throw new Error("Expected a JSON object with a string source field");
+  }
+  const language = value.language ?? "lua";
+  if (language !== "lua" && language !== "typescript") {
+    throw new Error("Expected language to be 'lua' or 'typescript'");
+  }
+  if (value.typeScriptProfileId !== undefined && typeof value.typeScriptProfileId !== "string") {
+    throw new Error("Expected typeScriptProfileId to be a string when provided");
   }
   if (!isRecord(value.settings) || typeof value.settings.minifyEnabled !== "boolean") {
     throw new Error("Expected settings.minifyEnabled to be a boolean");
@@ -66,15 +83,17 @@ function parseProcessRequest(value: unknown): { source: string; settings: LuaSni
     throw new Error("Expected settings.minificationOverrides to be an object");
   }
   return {
+    language,
     source: value.source,
+    typeScriptProfileId: value.typeScriptProfileId,
     settings: {
       minifyEnabled: value.settings.minifyEnabled,
       minificationOverrides: value.settings.minificationOverrides,
     },
-  } as { source: string; settings: LuaSnippetSettings };
+  } as ProcessRequest;
 }
 
-function luaOptimizerApiPlugin(): Plugin {
+function codePipelineApiPlugin(): Plugin {
   let baseCore: TicbuildProjectCore | undefined;
   const getBaseCore = (): TicbuildProjectCore => {
     if (!baseCore) {
@@ -88,20 +107,38 @@ function luaOptimizerApiPlugin(): Plugin {
 
   const middleware = async (request: IncomingMessage, response: ServerResponse, next: NextFunction) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (requestUrl.pathname === "/api/lua-optimizer/config" && request.method === "GET") {
+    if (
+      (requestUrl.pathname === "/api/code-pipeline/config" || requestUrl.pathname === "/api/lua-optimizer/config")
+      && request.method === "GET"
+    ) {
       try {
-        writeJson(response, 200, { config: getLuaSnippetProjectConfig(getBaseCore()) });
+        writeJson(response, 200, { config: getCodeSnippetProjectConfig(getBaseCore()) });
       } catch (error) {
         writeJson(response, 500, { error: errorPayload(error) });
       }
       return;
     }
 
-    if (requestUrl.pathname === "/api/lua-optimizer/process" && request.method === "POST") {
+    if (
+      (requestUrl.pathname === "/api/code-pipeline/process" || requestUrl.pathname === "/api/lua-optimizer/process")
+      && request.method === "POST"
+    ) {
       try {
         const requestBody = parseProcessRequest(await readJsonBody(request));
         const started = performance.now();
-        const result = await processLuaSnippet(requestBody.source, getBaseCore(), requestBody.settings);
+        const result = await processCodeSnippet(
+          {
+            language: requestBody.language,
+            source: requestBody.source,
+            typeScriptProfileId: requestBody.typeScriptProfileId,
+          },
+          getBaseCore(),
+          requestBody.settings,
+          {
+            parseFailure: "throw",
+            typeScriptBuiltinsPath: path.resolve(playgroundDir, "../../tic80.d.ts"),
+          },
+        );
         writeJson(response, 200, { result, elapsedMs: performance.now() - started });
       } catch (error) {
         writeJson(response, 422, { error: errorPayload(error) });
@@ -113,7 +150,7 @@ function luaOptimizerApiPlugin(): Plugin {
   };
 
   return {
-    name: "ticbuild-lua-optimizer-api",
+    name: "ticbuild-code-pipeline-api",
     configureServer(server) {
       server.middlewares.use(middleware);
     },
@@ -126,7 +163,7 @@ function luaOptimizerApiPlugin(): Plugin {
 export default defineConfig({
   root: playgroundDir,
   base: "./",
-  plugins: [luaOptimizerApiPlugin()],
+  plugins: [react(), codePipelineApiPlugin()],
   server: {
     host: "127.0.0.1",
     port: 5174,
@@ -138,7 +175,7 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
-    outDir: path.resolve(playgroundDir, "../../obj/lua-optimizer-playground"),
+    outDir: path.resolve(playgroundDir, "../../obj/code-pipeline-playground"),
     emptyOutDir: true,
   },
 });

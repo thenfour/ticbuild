@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import * as readline from "node:readline";
-import { processLuaSnippet } from "../backend/luaSnippetProcessor";
+import { processLuaSnippet } from "../backend/codeSnippetProcessor";
 import { TicbuildProject } from "../backend/project";
 import { TicbuildProjectCore } from "../backend/projectCore";
 import * as cons from "../utils/console";
