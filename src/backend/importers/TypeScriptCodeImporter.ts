@@ -5,8 +5,11 @@ import { TicbuildProjectCore } from "../projectCore";
 import { CodeResource } from "./CodeResource";
 import { transpileTypeScriptToLua } from "./TypeScriptTranspiler";
 import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
+import { LuaDefinitionBlock } from "./TypeScriptLuaDeclarations";
 
 export class TypeScriptCodeResource extends CodeResource {
+  private luaDefinitionBlocks: readonly LuaDefinitionBlock[] = [];
+
   constructor(
     filePath: string,
     sourceText: string,
@@ -16,7 +19,13 @@ export class TypeScriptCodeResource extends CodeResource {
   }
 
   protected async generateLuaSource(project: TicbuildProjectCore): Promise<GeneratedLuaSource> {
-    return transpileTypeScriptToLua(project, this.filePath, this.sourceText, this.typescriptConfig);
+    const result = transpileTypeScriptToLua(project, this.filePath, this.sourceText, this.typescriptConfig);
+    this.luaDefinitionBlocks = result.luaDefinitionBlocks;
+    return result;
+  }
+
+  getLuaDefinitionBlocks(): readonly LuaDefinitionBlock[] {
+    return this.luaDefinitionBlocks;
   }
 
   protected getInputDependencyReason(): string {

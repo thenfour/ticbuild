@@ -17,6 +17,11 @@ import {
   createLuaAssetModuleCatalog,
   getLuaAssetDeclarationsPath,
 } from "./LuaAssetTypeScriptModules";
+import { LuaDefinitionBlock } from "./TypeScriptLuaDeclarations";
+
+export type TypeScriptTranspileResult = GeneratedLuaSource & {
+  luaDefinitionBlocks: readonly LuaDefinitionBlock[];
+};
 
 const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const tic80CallbackNames = new Set(["TIC", "BOOT", "BDR", "SCN", "OVR", "MENU"]);
@@ -49,7 +54,7 @@ export function transpileTypeScriptToLua(
   entrySource: string,
   typescriptConfig?: TypeScriptImportConfig,
   builtinsPathOverride?: string,
-): GeneratedLuaSource {
+): TypeScriptTranspileResult {
   const builtinsPath = canonicalizePath(builtinsPathOverride ?? getPathRelativeToPackageRoot(builtinsName));
   const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
   const options = createTypeScriptTranspilationOptions(configuredProject.options);
@@ -128,6 +133,7 @@ export function transpileTypeScriptToLua(
     sourcePath: entryFilePath,
     sourceMap: restored.sourceMap,
     dependencies,
+    luaDefinitionBlocks: staticLinker.getLuaDefinitionBlocks(),
   };
 }
 

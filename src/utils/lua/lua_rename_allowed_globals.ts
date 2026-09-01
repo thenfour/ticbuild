@@ -1,7 +1,7 @@
 import * as luaparse from "luaparse";
-import { isLuaIdentifierName } from "./lua_ast";
 import type { LuaOptimizationRule } from "./lua_optimizer_types";
 import { collectLuaIdentifierNames, LuaSymbolAllocator } from "./lua_symbols";
+import { isLuaIdentifierName } from "./lua_utils";
 
 const DEFAULT_GLOBAL_NAMES_TO_KEEP = new Set([
   "TIC",

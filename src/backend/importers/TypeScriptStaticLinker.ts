@@ -3,12 +3,16 @@ import { RawSourceMap, SourceMapConsumer, SourceNode } from "source-map";
 import * as ts from "typescript";
 import * as tstl from "typescript-to-lua";
 import { canonicalizePath, toAbsoluteCanonicalPath } from "../../utils/fileSystem";
-import { LUA_RESERVED_WORDS } from "../../utils/lua/lua_ast";
 import {
   LuaAssetModuleDefinition,
   LUA_ASSET_MODULE_PREFIX,
   parseLuaAssetModuleSpecifier,
 } from "./LuaAssetTypeScriptModules";
+import {
+  collectTypeScriptLuaDefinitionBlocks,
+  LuaDefinitionBlock,
+} from "./TypeScriptLuaDeclarations";
+import { isLuaIdentifierName } from "../../utils/lua/lua_utils";
 
 export function isTypeScriptImplementationFile(fileName: string): boolean {
   const lower = fileName.toLowerCase();
@@ -23,7 +27,7 @@ export function getCanonicalTSPathKey(filePath: string): string {
 
 /** Ensures an exported name can be emitted as `name = ...` instead of `_G[name]`. */
 function validateLuaGlobalName(name: string, sourceFile: ts.SourceFile, projectDir: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || LUA_RESERVED_WORDS.has(name)) {
+  if (!isLuaIdentifierName(name)) {
     throw new Error(
       `TypeScript static linking failed: export '${name}' in ${displayPath(sourceFile.fileName, projectDir)} ` +
       "cannot be represented as a direct Lua global identifier",
@@ -69,6 +73,7 @@ export type TypeScriptStaticLinkResult = {
 
 export type TypeScriptStaticLinker = {
   plugin: tstl.Plugin;
+  getLuaDefinitionBlocks(): readonly LuaDefinitionBlock[];
   link(): TypeScriptStaticLinkResult;
 };
 
@@ -145,6 +150,19 @@ export function createTypeScriptStaticLinker(
 
   return {
     plugin,
+    getLuaDefinitionBlocks() {
+      const entrySourceFile = program.getSourceFile(entryFilePath);
+      if (!entrySourceFile) {
+        throw new Error(`TypeScript static linking failed: entry source was not found: ${entryFilePath}`);
+      }
+      return collectTypeScriptLuaDefinitionBlocks(
+        program,
+        modules.map((module) => module.sourceFile),
+        entrySourceFile,
+        entryCallbackNames,
+        projectDir,
+      );
+    },
     // Linking is deliberately separate from afterPrint: TSTL must finish the
     // emit pass first so diagnostics are available before this output is used.
     link() {

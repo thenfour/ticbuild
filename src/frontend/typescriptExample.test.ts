@@ -34,6 +34,16 @@ describe("TypeScript project template", () => {
     expect(preprocessedLua).not.toContain("require(");
     expect(preprocessedLua).not.toContain("__TICBUILD_EXPORT_GLOBAL__");
     expect(preprocessedLua).not.toContain("return ____entry");
+    const luaDeclarationsPath = path.join(
+      exampleDir,
+      ".ticbuild",
+      "declarations",
+      "typescript-globals.d.lua",
+    );
+    const luaDeclarations = fs.readFileSync(luaDeclarationsPath, "utf-8");
+    expect(luaDeclarations).toContain("---@meta _");
+    expect(luaDeclarations).toContain("function TIC() end");
+    expect(preprocessedLua).not.toContain("---@meta _");
     const generatedPath = path.join(exampleDir, "build", "release-obj", "maincode.00.generated.lua");
     const generatedMapPath = `${generatedPath}.map`;
     const preprocessedMapPath = path.join(

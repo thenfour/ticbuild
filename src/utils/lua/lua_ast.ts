@@ -2,17 +2,6 @@
 // luaparse's AST is a bit annoying to manipulate / query; put helpers here to keep things as sane and self-documenting as possible.
 import * as luaparse from "luaparse";
 
-// Lua reserved keywords that cannot be used as variable names
-export const LUA_RESERVED_WORDS = new Set([
-   "and", "break", "do",  "else", "elseif", "end",    "false",  "for",  "function", "goto",  "if",
-   "in",  "local", "nil", "not",  "or",     "repeat", "return", "then", "true",     "until", "while"
-]);
-
-export function isLuaIdentifierName(name: string): boolean {
-   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !LUA_RESERVED_WORDS.has(name);
-}
-
-
 
 // Walk all nodes in the AST, calling visitor for each node
 export function walkAST(node: any, visitor: (node: any, parent?: any) => void, parent?: any) {
@@ -51,7 +40,7 @@ export function isLocalDeclaration(node: any): boolean {
 export function createsScope(node: any): boolean {
    return node &&
       (node.type === "FunctionDeclaration" || node.type === "ForNumericStatement" ||
-       node.type === "ForGenericStatement" || node.type === "DoStatement" || node.type === "Chunk");
+         node.type === "ForGenericStatement" || node.type === "DoStatement" || node.type === "Chunk");
 }
 
 // Get all identifiers that are declared in a node
@@ -78,7 +67,7 @@ export function getDeclaredIdentifiers(node: any): luaparse.Identifier[] {
 }
 
 // Get the body of a scope-creating node
-export function getScopeBody(node: any): luaparse.Statement[]|null {
+export function getScopeBody(node: any): luaparse.Statement[] | null {
    if (node.type === "FunctionDeclaration")
       return node.body;
    if (node.type === "ForNumericStatement")

@@ -18,6 +18,16 @@ const LUA_SIMPLE_STRING_ESCAPES: Readonly<Record<string, string>> = {
    "'": "'",
 };
 
+// Lua reserved keywords that cannot be used as variable names
+export const LUA_RESERVED_WORDS = new Set([
+   "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if",
+   "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"
+]);
+
+export function isLuaIdentifierName(name: string): boolean {
+   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !LUA_RESERVED_WORDS.has(name);
+}
+
 export function isStringLiteral(node: luaparse.Expression | undefined | null): node is luaparse.StringLiteral {
    return !!node && node.type === "StringLiteral";
 }

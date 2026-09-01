@@ -4,8 +4,9 @@ import { assert } from "../utils/errorHandling";
 import { ImportedResourceBase, ResourceManager } from "./ImportedResourceTypes";
 import { importLuaCode } from "./importers/LuaCodeImporter";
 import { CodeResource } from "./importers/CodeResource";
-import { importTypeScriptCode } from "./importers/TypeScriptCodeImporter";
+import { importTypeScriptCode, TypeScriptCodeResource } from "./importers/TypeScriptCodeImporter";
 import { prepareLuaAssetTypeScriptDeclarations } from "./importers/LuaAssetTypeScriptModules";
+import { writeTypeScriptLuaDeclarations } from "./importers/TypeScriptLuaDeclarations";
 import { importBinaryResource } from "./importers/binaryResourceImporter";
 import { importTextResource } from "./importers/textResourceImporter";
 import { importTic80Cart } from "./importers/tic80CartImporter";
@@ -96,6 +97,17 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
       ),
     ),
   );
+
+  // write .d.lua for typescript code resources to give visiblity to Lua
+  const typeScriptResources = codeResources.filter(
+    (resource): resource is TypeScriptCodeResource => resource instanceof TypeScriptCodeResource,
+  );
+  if (typeScriptResources.length > 0) {
+    await writeTypeScriptLuaDeclarations(
+      project.projectDir,
+      typeScriptResources.flatMap((resource) => resource.getLuaDefinitionBlocks()),
+    );
+  }
 
   return resourceManager;
 }

@@ -56,6 +56,10 @@ describe("ticbuild init", () => {
     expect(config.config.compilerOptions.lib).toEqual(["ESNext"]);
     expect(config.config.include).toContain(".ticbuild/declarations/**/*.d.ts");
     expect(fs.readFileSync(path.join(tempDir, ".gitignore"), "utf-8")).toContain(".ticbuild/declarations/");
+    expect(JSON.parse(fs.readFileSync(path.join(tempDir, ".luarc.json"), "utf-8"))).toMatchObject({
+      "runtime.version": "Lua 5.3",
+      "workspace.library": [".ticbuild/declarations"],
+    });
     const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, tempDir, undefined, configPath);
     const program = ts.createProgram(parsed.fileNames, parsed.options);
     const errors = ts
@@ -64,7 +68,7 @@ describe("ticbuild init", () => {
 
     expect(errors.map(formatDiagnostic)).toEqual([]);
     expect(JSON.parse(fs.readFileSync(path.join(tempDir, ".vscode", "extensions.json"), "utf-8"))).toEqual({
-      recommendations: ["dbaeumer.vscode-eslint"],
+      recommendations: ["dbaeumer.vscode-eslint", "sumneko.lua"],
     });
     expect(packageInstaller.installProjectDependencies).toHaveBeenCalledWith(tempDir);
   });

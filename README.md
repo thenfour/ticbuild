@@ -793,6 +793,35 @@ Lua code can also include TypeScript code with `--#include "import:typescriptAss
 ticbuild statically links all dependent TypeScript modules.
 Every module becomes enclosed in a Lua `do ... end` scope.
 
+For Lua editor tooling, ticbuild also generates
+`.ticbuild/declarations/typescript-globals.d.lua`. This
+[LuaCATS](https://github.com/LuaCATS) definition file
+describes exported TypeScript globals. TypeScript JSDoc is preserved,
+and [LuaLS](https://github.com/LuaLS/lua-language-server/wiki)
+navigation points back to the authored TypeScript source.
+
+LuaLS projects should include the generated declarations as a workspace
+library. The TypeScript project template supplies this in `.luarc.json`:
+
+```json
+{
+  "runtime.version": "Lua 5.3",
+  "workspace.library": [".ticbuild/declarations"]
+}
+```
+
+Build once after creating a project so the definition file exists. Types which
+do not have a LuaCATS representation are exposed as `any`.
+
+**For this to work in VSCode** you must install a LuaCATS capable Lua server
+(as of 2026-09-01) -- namely, [sumneko.lua](https://marketplace.visualstudio.com/items?itemName=sumneko.lua)
+
+Reference: [Lua definition files](https://luals.github.io/wiki/definition-files/)
+
+For the moment this actually conflicts with the ticbuild vscode extension
+(preprocessor syntax highlighting fails to work),
+so... this needs sorting out what the recommended configuration is.
+
 TypeScript value exports become Lua globals.
 Non-exported symbols stay local to their module scope:
 
@@ -1655,3 +1684,21 @@ correct signatures and doc comments // enough info to produce the correct index.
 
 ```
 
+# typescript tips
+
+The TypeScript transpiler can introduce bloaty code or performance less than expected.
+Some observations:
+
+```ts
+// ARRAY manips
+
+// Fine
+const x = [...a]; // -> local c = {table.unpack(a)}
+a.push(b); // -> a[#a + 1] = b
+
+// Avoid: introduces 4 SparseArray helpers
+const x = [...a, 1];
+
+// Avoid: introduces __TS__ArrayConcat
+const b = a.concat(c);
+```

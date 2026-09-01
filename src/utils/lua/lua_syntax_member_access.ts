@@ -1,9 +1,8 @@
 import * as luaparse from "luaparse";
-import { isLuaIdentifierName } from "./lua_ast";
 import { inheritLuaNodeOrigin } from "./lua_ast_provenance";
 import { rewriteLuaAst } from "./lua_ast_rewrite";
 import type { LuaOptimizationRule } from "./lua_optimizer_types";
-import { StringLiteralNode, stringValue } from "./lua_utils";
+import { isLuaIdentifierName, StringLiteralNode, stringValue } from "./lua_utils";
 
 export const memberAccessSyntaxRule: LuaOptimizationRule = {
   id: "syntax.member-access",

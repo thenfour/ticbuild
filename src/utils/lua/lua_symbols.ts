@@ -1,5 +1,6 @@
 import * as luaparse from "luaparse";
-import { isIdentifier, LUA_RESERVED_WORDS, walkAST } from "./lua_ast";
+import { isIdentifier, walkAST } from "./lua_ast";
+import { LUA_RESERVED_WORDS } from "./lua_utils";
 
 const LUA_IDENTIFIER_FIRST_CHARACTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_";
 const LUA_IDENTIFIER_CONTINUATION_CHARACTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
@@ -88,7 +89,7 @@ export function collectLuaIdentifierNames(ast: luaparse.Chunk): Set<string> {
 class LuaBindingNameScope {
   private readonly localNames = new Set<string>();
 
-  constructor(private readonly parent: LuaBindingNameScope | null = null) {}
+  constructor(private readonly parent: LuaBindingNameScope | null = null) { }
 
   createChild(): LuaBindingNameScope {
     return new LuaBindingNameScope(this);

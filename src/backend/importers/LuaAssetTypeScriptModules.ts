@@ -2,7 +2,6 @@ import * as path from "node:path";
 import * as luaparse from "luaparse";
 import { ensureDir, fileExists, readTextFileAsync, writeTextFile } from "../../utils/fileSystem";
 import { collectDocCommentAbove, LuaDocInfo, parseLuaDocLines } from "../../utils/lua/lua_doc";
-import { LUA_RESERVED_WORDS } from "../../utils/lua/lua_ast";
 import { parseLua } from "../../utils/lua/lua_processor";
 import { GeneratedLuaSource, ResourceManager } from "../ImportedResourceTypes";
 import { preprocessLuaCode, LuaPreprocessResult } from "../luaPreprocessor";
@@ -10,6 +9,7 @@ import { kImportKind } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { createIdentitySourceMap, mapPreprocessedOffset } from "../sourceMap";
 import { LuaCodeResource } from "./LuaCodeImporter";
+import { LUA_RESERVED_WORDS } from "../../utils/lua/lua_utils";
 
 export const LUA_ASSET_MODULE_PREFIX = "ticbuild-assets/";
 
