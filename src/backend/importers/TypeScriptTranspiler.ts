@@ -13,14 +13,18 @@ import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
 import { assert } from "../../utils/errorHandling";
 import { LuaPreprocessorSourceMap, SourceMapBuilder } from "../sourceMap";
 import { importSourceMapV3, KnownSourceFile } from "../sourceMapV3";
-import {
-  createLuaAssetModuleCatalog,
-  getLuaAssetDeclarationsPath,
-} from "./LuaAssetTypeScriptModules";
+import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
+import { createManifestCodeModuleCatalog } from "./ManifestCodeTypeScriptModules";
 import { LuaDefinitionBlock } from "./TypeScriptLuaDeclarations";
+import {
+  emitTypeScriptManifestModuleDeclaration,
+  getTypeScriptManifestDeclarationsPath,
+  TypeScriptManifestModuleDeclaration,
+} from "./TypeScriptManifestModules";
 
 export type TypeScriptTranspileResult = GeneratedLuaSource & {
   luaDefinitionBlocks: readonly LuaDefinitionBlock[];
+  typescriptManifestModuleDeclaration?: TypeScriptManifestModuleDeclaration;
 };
 
 const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
@@ -54,12 +58,14 @@ export function transpileTypeScriptToLua(
   entrySource: string,
   typescriptConfig?: TypeScriptImportConfig,
   builtinsPathOverride?: string,
+  manifestImportName?: string,
 ): TypeScriptTranspileResult {
   const builtinsPath = canonicalizePath(builtinsPathOverride ?? getPathRelativeToPackageRoot(builtinsName));
   const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
   const options = createTypeScriptTranspilationOptions(configuredProject.options);
   const luaAssetDeclarationsPath = getLuaAssetDeclarationsPath(project.projectDir);
-  const generatedDeclarationRoots = fileExists(luaAssetDeclarationsPath) ? [luaAssetDeclarationsPath] : [];
+  const typeScriptManifestDeclarationsPath = getTypeScriptManifestDeclarationsPath(project.projectDir);
+  const generatedDeclarationRoots = [luaAssetDeclarationsPath, typeScriptManifestDeclarationsPath].filter(fileExists);
 
   const compilerHost = createCompilerHost(options, entryFilePath, entrySource);
   const program = ts.createProgram(
@@ -78,7 +84,7 @@ export function transpileTypeScriptToLua(
     entryFilePath,
     project.projectDir,
     new Set(findDeclaredCallbacks(entrySource, entryFilePath)),
-    createLuaAssetModuleCatalog(project),
+    createManifestCodeModuleCatalog(project),
   );
   const emitReadDependencies = new Set<string>();
   const emitHost: tstl.EmitHost = {
@@ -112,6 +118,26 @@ export function transpileTypeScriptToLua(
     cons.warning(`TypeScript transpilation warning: ${formatDiagnostic(warning, project.projectDir)}`);
   }
 
+  const manifestDeclaration = manifestImportName
+    ? emitTypeScriptManifestModuleDeclaration(
+      program,
+      compilerHost,
+      entryFilePath,
+      manifestImportName,
+      project.projectDir,
+    )
+    : undefined;
+  const declarationErrors = manifestDeclaration?.diagnostics.filter(
+    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+  ) ?? [];
+  if (declarationErrors.length > 0 || (manifestImportName && !manifestDeclaration?.declaration)) {
+    throw new Error(
+      declarationErrors.length > 0
+        ? formatDiagnostics(declarationErrors, project.projectDir)
+        : `TypeScript declaration emit failed for manifest import '${manifestImportName}'`,
+    );
+  }
+
   const linked = staticLinker.link();
   const emittedMap = importSourceMapV3(
     linked.source,
@@ -126,7 +152,7 @@ export function transpileTypeScriptToLua(
     emitReadDependencies,
     project.projectDir,
     configuredProject.configDependencies,
-    luaAssetDeclarationsPath,
+    generatedDeclarationRoots,
   );
   return {
     source: restored.source,
@@ -134,6 +160,7 @@ export function transpileTypeScriptToLua(
     sourceMap: restored.sourceMap,
     dependencies,
     luaDefinitionBlocks: staticLinker.getLuaDefinitionBlocks(),
+    typescriptManifestModuleDeclaration: manifestDeclaration?.declaration,
   };
 }
 
@@ -194,6 +221,7 @@ function createCompilerHost(
     }
 
     const transformed = preserveTicbuildDirectives(original.text);
+    // todo: unify all these kinds of checks. search for ".tsx" to see what i mean.
     const scriptKind = fileName.toLowerCase().endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
     return ts.createSourceFile(fileName, transformed, languageVersion, true, scriptKind);
   };
@@ -313,18 +341,18 @@ function collectDependencies(
   emitReadDependencies: Set<string>,
   projectDir: string,
   configDependencies: readonly string[],
-  generatedDeclarationsPath: string,
+  generatedDeclarationPaths: readonly string[],
 ): ExternalDependency[] {
   const dependencies = new Map<string, string>();
   const canonicalBuiltinsPath = getCanonicalTSPathKey(builtinsPath);
-  const canonicalGeneratedDeclarationsPath = getCanonicalTSPathKey(generatedDeclarationsPath);
+  const canonicalGeneratedDeclarationPaths = new Set(generatedDeclarationPaths.map(getCanonicalTSPathKey));
   for (const sourceFile of program.getSourceFiles()) {
     if (!program.isSourceFileDefaultLibrary(sourceFile)) {
       const dependencyPath = toAbsoluteCanonicalPath(sourceFile.fileName, projectDir);
       const dependencyKey = getCanonicalTSPathKey(dependencyPath);
       if (
         dependencyKey !== canonicalBuiltinsPath &&
-        dependencyKey !== canonicalGeneratedDeclarationsPath &&
+        !canonicalGeneratedDeclarationPaths.has(dependencyKey) &&
         !isNodeModulesPath(dependencyPath)
       ) {
         dependencies.set(dependencyPath, "TypeScript compiler dependency");
@@ -333,7 +361,7 @@ function collectDependencies(
   }
   for (const dependencyPath of emitReadDependencies) {
     if (
-      getCanonicalTSPathKey(dependencyPath) !== canonicalGeneratedDeclarationsPath &&
+      !canonicalGeneratedDeclarationPaths.has(getCanonicalTSPathKey(dependencyPath)) &&
       !isNodeModulesPath(dependencyPath)
     ) {
       dependencies.set(dependencyPath, "TypeScript compiler dependency");

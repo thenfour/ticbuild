@@ -6,11 +6,17 @@ import { CodeResource } from "./CodeResource";
 import { transpileTypeScriptToLua } from "./TypeScriptTranspiler";
 import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
 import { LuaDefinitionBlock } from "./TypeScriptLuaDeclarations";
+import {
+  collectTypeScriptManifestDependencies,
+  TypeScriptManifestModuleDeclaration,
+} from "./TypeScriptManifestModules";
 
 export class TypeScriptCodeResource extends CodeResource {
   private luaDefinitionBlocks: readonly LuaDefinitionBlock[] = [];
+  private typescriptManifestModuleDeclaration: TypeScriptManifestModuleDeclaration | undefined;
 
   constructor(
+    readonly manifestImportName: string,
     filePath: string,
     sourceText: string,
     private readonly typescriptConfig?: TypeScriptImportConfig,
@@ -19,13 +25,32 @@ export class TypeScriptCodeResource extends CodeResource {
   }
 
   protected async generateLuaSource(project: TicbuildProjectCore): Promise<GeneratedLuaSource> {
-    const result = transpileTypeScriptToLua(project, this.filePath, this.sourceText, this.typescriptConfig);
+    const result = transpileTypeScriptToLua(
+      project,
+      this.filePath,
+      this.sourceText,
+      this.typescriptConfig,
+      undefined,
+      this.manifestImportName,
+    );
     this.luaDefinitionBlocks = result.luaDefinitionBlocks;
+    this.typescriptManifestModuleDeclaration = result.typescriptManifestModuleDeclaration;
     return result;
   }
 
   getLuaDefinitionBlocks(): readonly LuaDefinitionBlock[] {
     return this.luaDefinitionBlocks;
+  }
+
+  getTypeScriptManifestDependencies(project: TicbuildProjectCore): readonly string[] {
+    return collectTypeScriptManifestDependencies(project, this.filePath, this.sourceText, this.typescriptConfig);
+  }
+
+  getTypeScriptManifestModuleDeclaration(): TypeScriptManifestModuleDeclaration {
+    if (!this.typescriptManifestModuleDeclaration) {
+      throw new Error(`TypeScript manifest declarations are not available for '${this.manifestImportName}'`);
+    }
+    return this.typescriptManifestModuleDeclaration;
   }
 
   protected getInputDependencyReason(): string {
@@ -45,7 +70,7 @@ export async function importTypeScriptCode(
   const sourceInfo = materializedSource ?? await materializeImportSource(project, spec);
   const filePath = requireFileImportSource(spec, sourceInfo);
   const source = await readTextFileAsync(filePath);
-  const resource = new TypeScriptCodeResource(filePath, source, spec.typescript);
+  const resource = new TypeScriptCodeResource(spec.name, filePath, source, spec.typescript);
   resource.setImportSource(sourceInfo);
   return resource;
 }

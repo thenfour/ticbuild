@@ -13,6 +13,7 @@ import { LuaCodeResource } from "./LuaCodeImporter";
 import { TypeScriptCodeResource } from "./TypeScriptCodeImporter";
 import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
 import { getTypeScriptLuaDeclarationsPath } from "./TypeScriptLuaDeclarations";
+import { getTypeScriptManifestDeclarationsPath } from "./TypeScriptManifestModules";
 
 function createProject(projectDir: string, imports: Manifest["imports"], defines?: Record<string, boolean>) {
   const manifest: Manifest = {
@@ -145,6 +146,305 @@ describe("TypeScriptCodeResource", () => {
       const declarations = fs.readFileSync(getTypeScriptLuaDeclarationsPath(projectDir), "utf-8");
       expect(declarations).toContain("function fromLeft(value) end");
       expect(declarations).toContain("---@type string\nfromRight = nil");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("imports a manifest TypeScriptCode asset by name on the first build", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-module-"));
+    const mainPath = path.join(projectDir, "main.ts");
+    const helpersPath = path.join(projectDir, "helpers.ts");
+    fs.writeFileSync(
+      helpersPath,
+      [
+        "/** Options accepted by Inc. */",
+        "export interface IncOptions { amount: number; }",
+        "/** Increments a value. */",
+        "export function Inc(value: number, options: IncOptions): number {",
+        "  return value + options.amount;",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      mainPath,
+      [
+        'import { Inc, type IncOptions } from "ticbuild-assets/helpers";',
+        "const options: IncOptions = { amount: 2 };",
+        "export function TIC(): void { print(Inc(3, options)); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "helpers", path: "helpers.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const main = getTypeScriptResource(resources, "main");
+      const artifacts = main.getCodeArtifacts(project);
+      const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(projectDir), "utf-8");
+
+      expect(declarations).toContain('declare module "ticbuild-assets/helpers"');
+      expect(declarations).toContain("export interface IncOptions");
+      expect(declarations).toContain("export function Inc(value: number, options: IncOptions): number;");
+      expect(artifacts.inputSource).toContain('--#include "import:helpers"');
+      expect(artifacts.inputSource).not.toContain("require(");
+      expect(artifacts.preprocessedSource).toContain("function Inc(");
+      expect(artifacts.preprocessedSource).toContain("function TIC(");
+      expect(artifacts.preprocessedSource.match(/function Inc\(/g)).toHaveLength(1);
+      expect(main.getDependencyList().map((dependency) => dependency.path)).toContain(helpersPath);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("typechecks manifest TypeScript imports against generated declarations on the first build", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-typecheck-"));
+    fs.writeFileSync(
+      path.join(projectDir, "helpers.ts"),
+      "export function NumericOnly(value: number): number { return value; }\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { NumericOnly } from "ticbuild-assets/helpers";',
+        'export function TIC(): void { print(NumericOnly("wrong")); }',
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "helpers", path: "helpers.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(
+        /main\.ts:2:\d+ - Argument of type 'string' is not assignable to parameter of type 'number'/,
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("orders transitive manifest TypeScript modules and preserves referenced exported types", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-transitive-"));
+    fs.writeFileSync(
+      path.join(projectDir, "base.ts"),
+      [
+        "export interface AddOptions { amount: number; }",
+        "export function Add(value: number, options: AddOptions): number { return value + options.amount; }",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "helpers.ts"),
+      [
+        'import { Add, type AddOptions } from "ticbuild-assets/base";',
+        "export function AddTwice(value: number, options: AddOptions): number {",
+        "  return Add(Add(value, options), options);",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { AddTwice } from "ticbuild-assets/helpers";',
+        "export function TIC(): void { print(AddTwice(1, { amount: 2 })); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "helpers", path: "helpers.ts", kind: "TypeScriptCode" },
+      { name: "base", path: "base.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
+      const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(projectDir), "utf-8");
+
+      expect(declarations).toContain('declare module "ticbuild-assets/base"');
+      expect(declarations).toContain('declare module "ticbuild-assets/helpers"');
+      expect(declarations).toContain('from "ticbuild-assets/base"');
+      expect(artifacts.preprocessedSource.match(/function Add\(/g)).toHaveLength(1);
+      expect(artifacts.preprocessedSource.match(/function AddTwice\(/g)).toHaveLength(1);
+      expect(artifacts.preprocessedSource.indexOf("function Add(")).toBeLessThan(
+        artifacts.preprocessedSource.indexOf("function AddTwice("),
+      );
+      expect(artifacts.preprocessedSource.indexOf("function AddTwice(")).toBeLessThan(
+        artifacts.preprocessedSource.indexOf("function TIC("),
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves relative declaration dependencies behind a manifest TypeScript module", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-relative-types-"));
+    fs.mkdirSync(path.join(projectDir, "helpers"));
+    fs.writeFileSync(
+      path.join(projectDir, "helpers", "model.ts"),
+      "export interface Adjustment { amount: number; }\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "helpers", "index.ts"),
+      [
+        'import type { Adjustment } from "./model";',
+        "export function Adjust(value: number, adjustment: Adjustment): number {",
+        "  return value + adjustment.amount;",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { Adjust } from "ticbuild-assets/helpers";',
+        "export function TIC(): void { print(Adjust(1, { amount: 3 })); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "helpers", path: "helpers/index.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      await loadAllImports(project);
+      const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(projectDir), "utf-8");
+
+      expect(declarations).toContain('declare module "ticbuild-assets/helpers"');
+      expect(declarations).toContain('declare module "ticbuild-assets/helpers/__types/helpers/model"');
+      expect(declarations).toContain('from "ticbuild-assets/helpers/__types/helpers/model"');
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not include a manifest TypeScript module for a type-only import", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-type-only-"));
+    fs.writeFileSync(
+      path.join(projectDir, "types.ts"),
+      [
+        "export interface Config { color: number; }",
+        'export const TypeRuntimeMarker = "type-runtime-marker";',
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import type { Config } from "ticbuild-assets/types";',
+        "const config: Config = { color: 3 };",
+        "export function TIC(): void { cls(config.color); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      { name: "types", path: "types.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
+
+      expect(artifacts.inputSource).not.toContain("import:types");
+      expect(artifacts.preprocessedSource).not.toContain("type-runtime-marker");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("imports a command-backed manifest TypeScript module", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-command-"));
+    const generatedPath = path.join(projectDir, "generated", "helpers.ts");
+    const generatedSource = "export function GeneratedInc(value: number): number { return value + 1; }\n";
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { GeneratedInc } from "ticbuild-assets/generatedHelpers";',
+        "export function TIC(): void { print(GeneratedInc(4)); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+      {
+        name: "generatedHelpers",
+        kind: "TypeScriptCode",
+        command: {
+          executable: process.execPath,
+          args: [
+            "-e",
+            'require("fs").writeFileSync(process.argv[1], process.argv[2])',
+            "generated/helpers.ts",
+            generatedSource,
+          ],
+          outputFile: "generated/helpers.ts",
+        },
+      },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const main = getTypeScriptResource(resources, "main");
+      const artifacts = main.getCodeArtifacts(project);
+
+      expect(fs.readFileSync(generatedPath, "utf-8")).toBe(generatedSource);
+      expect(artifacts.preprocessedSource).toContain("function GeneratedInc(");
+      expect(main.getDependencyList().map((dependency) => dependency.path)).not.toContain(generatedPath);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects cycles between manifest TypeScript modules", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-cycle-"));
+    fs.writeFileSync(
+      path.join(projectDir, "left.ts"),
+      'import { right } from "ticbuild-assets/right"; export function left(): number { return right(); }\n',
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "right.ts"),
+      'import { left } from "ticbuild-assets/left"; export function right(): number { return left(); }\n',
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "left", path: "left.ts", kind: "TypeScriptCode" },
+      { name: "right", path: "right.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(
+        "TypeScript manifest module cycles are not supported: left -> right -> left",
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate Lua globals across independent manifest TypeScript resources", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-global-collision-"));
+    fs.writeFileSync(path.join(projectDir, "left.ts"), "export const SharedGlobal = 1;\n", "utf-8");
+    fs.writeFileSync(path.join(projectDir, "right.ts"), "export const SharedGlobal = 2;\n", "utf-8");
+    const project = createProject(projectDir, [
+      { name: "left", path: "left.ts", kind: "TypeScriptCode" },
+      { name: "right", path: "right.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(
+        "TypeScript resources both declare Lua global 'SharedGlobal'",
+      );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -854,7 +1154,7 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
-  it("rejects first-class imports which do not name a manifest LuaCode asset", async () => {
+  it("rejects first-class imports which do not name a manifest code asset", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-module-missing-"));
     fs.writeFileSync(
       path.join(projectDir, "main.ts"),
@@ -867,7 +1167,7 @@ describe("TypeScriptCodeResource", () => {
 
     try {
       await expect(loadAllImports(project)).rejects.toThrow(
-        /ticbuild-assets\/Missing.*does not name a manifest LuaCode asset/,
+        /ticbuild-assets\/Missing.*does not name a manifest LuaCode or TypeScriptCode asset/,
       );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -895,7 +1195,7 @@ describe("TypeScriptCodeResource", () => {
 
     try {
       await expect(loadAllImports(project)).rejects.toThrow(
-        /Lua assets 'Left' and 'Right' both declare Lua global 'SharedLuaGlobal'/,
+        /manifest code assets 'Left' and 'Right' both declare Lua global 'SharedLuaGlobal'/,
       );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });

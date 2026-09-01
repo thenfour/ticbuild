@@ -1,22 +1,21 @@
-import * as path from "node:path";
 import * as luaparse from "luaparse";
+import * as path from "node:path";
 import { ensureDir, fileExists, readTextFileAsync, writeTextFile } from "../../utils/fileSystem";
 import { collectDocCommentAbove, LuaDocInfo, parseLuaDocLines } from "../../utils/lua/lua_doc";
 import { parseLua } from "../../utils/lua/lua_processor";
+import { LUA_RESERVED_WORDS } from "../../utils/lua/lua_utils";
 import { GeneratedLuaSource, ResourceManager } from "../ImportedResourceTypes";
-import { preprocessLuaCode, LuaPreprocessResult } from "../luaPreprocessor";
+import { LuaPreprocessResult, preprocessLuaCode } from "../luaPreprocessor";
 import { kImportKind } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { createIdentitySourceMap, mapPreprocessedOffset } from "../sourceMap";
 import { LuaCodeResource } from "./LuaCodeImporter";
-import { LUA_RESERVED_WORDS } from "../../utils/lua/lua_utils";
+import {
+  createManifestCodeModuleCatalog,
+  ManifestCodeModuleDefinition
+} from "./ManifestCodeTypeScriptModules";
 
-export const LUA_ASSET_MODULE_PREFIX = "ticbuild-assets/";
-
-export type LuaAssetModuleDefinition = {
-  importName: string;
-  moduleSpecifier: string;
-};
+export type LuaAssetModuleDefinition = ManifestCodeModuleDefinition & { kind: "LuaCode" };
 
 type LuaFunctionParameter = {
   name: string;
@@ -37,29 +36,11 @@ export function getLuaAssetDeclarationsPath(projectDir: string): string {
   return path.join(projectDir, ".ticbuild", "declarations", "lua-assets.d.ts");
 }
 
-// Parses a Lua asset module name, without accepting lookalike package paths.
-export function parseLuaAssetModuleSpecifier(specifier: string): string | undefined {
-  if (!specifier.startsWith(LUA_ASSET_MODULE_PREFIX)) {
-    return undefined;
-  }
-  const importName = specifier.slice(LUA_ASSET_MODULE_PREFIX.length);
-  // Accept only simple identifiers, not paths or package-like names.
-  return importName.length > 0 && !/[/:]/.test(importName) ? importName : undefined;
-}
-
-// builds the manifest-backed module catalog consumed by the static linker
 export function createLuaAssetModuleCatalog(project: TicbuildProjectCore): ReadonlyMap<string, LuaAssetModuleDefinition> {
-  const result = new Map<string, LuaAssetModuleDefinition>();
-  for (const importDef of project.manifest.imports) {
-    if (importDef.kind !== kImportKind.key.LuaCode) {
-      continue;
-    }
-    result.set(importDef.name, {
-      importName: importDef.name,
-      moduleSpecifier: `${LUA_ASSET_MODULE_PREFIX}${importDef.name}`,
-    });
-  }
-  return result;
+  return new Map(
+    Array.from(createManifestCodeModuleCatalog(project))
+      .filter((entry): entry is [string, LuaAssetModuleDefinition] => entry[1].kind === kImportKind.key.LuaCode),
+  );
 }
 
 // generates .d.ts file for all LuaCode assets in the manifest, so TypeScript can see them
@@ -127,7 +108,7 @@ function extractLuaGlobalDeclarations(preprocess: LuaPreprocessResult): LuaGloba
 
   const declarations = new Map<string, LuaGlobalDeclaration>();
   const scopeStack: Array<Set<string>> = [new Set<string>()];
-  const sourceLines = preprocess.code.split(/\r?\n/);
+  const sourceLines = preprocess.code.split(/\r?\n/); // split lines
   const isLocal = (name: string) => {
     for (let i = scopeStack.length - 1; i >= 0; i--) {
       if (scopeStack[i].has(name)) {
