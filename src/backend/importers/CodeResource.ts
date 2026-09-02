@@ -37,7 +37,7 @@ import { canonicalizePath } from "../../utils/fileSystem";
 export const LUA_RELEASE_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   stripComments: true,
   maxIndentLevel: 1,
-  lineBehavior: "tight",
+  lineBehavior: "tight2",
   maxLineLength: 180,
   aliasRepeatedExpressions: true,
   renameLocalVariables: true,

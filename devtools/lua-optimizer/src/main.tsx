@@ -11,10 +11,7 @@ import type {
   TypeScriptSnippetProfile,
 } from "../../../src/backend/codeSnippetProcessor";
 import type { LuaMinificationConfig } from "../../../src/backend/manifestTypes";
-import type {
-  OptimizationRuleId,
-  OptimizationRuleOptions,
-} from "../../../src/utils/lua/lua_optimizer_types";
+import type { OptimizationRuleId, OptimizationRuleOptions } from "../../../src/utils/lua/lua_optimizer_types";
 
 type ConfigResponse = { config: CodeSnippetProjectConfig };
 type ProcessResponse = { result: CodeSnippetResult; elapsedMs: number };
@@ -131,9 +128,7 @@ function initialState(): AppState {
   return {
     language,
     sources: {
-      lua: readStoredValue(sourceStorageKeys.lua)
-        ?? readStoredValue("ticbuild.lua-optimizer.source")
-        ?? LUA_SAMPLE,
+      lua: readStoredValue(sourceStorageKeys.lua) ?? readStoredValue("ticbuild.lua-optimizer.source") ?? LUA_SAMPLE,
       typescript: readStoredValue(sourceStorageKeys.typescript) ?? TYPESCRIPT_SAMPLE,
     },
     typeScriptProfileId: readStoredValue("ticbuild.code-pipeline.typescript-profile") ?? "defaults",
@@ -193,9 +188,8 @@ function cloneOptions(options: OptimizationRuleOptions): LuaMinificationConfig {
 }
 
 function formatApiError(error: ApiErrorPayload): string {
-  const location = error.line === undefined || /^\[\d+:\d+\]/.test(error.message)
-    ? ""
-    : ` at ${error.line}:${error.column ?? 0}`;
+  const location =
+    error.line === undefined || /^\[\d+:\d+\]/.test(error.message) ? "" : ` at ${error.line}:${error.column ?? 0}`;
   return `${error.message}${location}`;
 }
 
@@ -248,7 +242,7 @@ function App(): React.JSX.Element {
     void (async () => {
       try {
         const response = await fetch("/api/code-pipeline/config", { signal: controller.signal });
-        const body = await response.json() as ConfigResponse | { error: ApiErrorPayload };
+        const body = (await response.json()) as ConfigResponse | { error: ApiErrorPayload };
         if (!response.ok || "error" in body) {
           const error = "error" in body ? body.error : { message: `HTTP ${response.status}` };
           throw new Error(formatApiError(error));
@@ -297,7 +291,7 @@ function App(): React.JSX.Element {
             }),
             signal: controller.signal,
           });
-          const body = await response.json() as ProcessResponse | { error: ApiErrorPayload };
+          const body = (await response.json()) as ProcessResponse | { error: ApiErrorPayload };
           if (!response.ok || "error" in body) {
             const error = "error" in body ? body.error : { message: `HTTP ${response.status}` };
             dispatch({ type: "failed", error });
@@ -330,9 +324,7 @@ function App(): React.JSX.Element {
     window.setTimeout(() => setCopyLabel("Copy"), 900);
   };
 
-  const selectedProfile = projectConfig?.typeScriptProfiles.find(
-    (profile) => profile.id === state.typeScriptProfileId,
-  );
+  const selectedProfile = projectConfig?.typeScriptProfiles.find((profile) => profile.id === state.typeScriptProfileId);
   const activeRuleStates = state.result?.ruleStates ?? projectConfig?.ruleStates ?? [];
   const outputIsStale = !!state.result && state.request.kind !== "ready";
   const inputBytes = new TextEncoder().encode(source).length;
@@ -347,7 +339,9 @@ function App(): React.JSX.Element {
           <div id="project-name">
             {projectConfig ? `${projectConfig.projectName} · ${projectConfig.buildConfig}` : "Loading project…"}
           </div>
-          <div id="project-path" title={projectConfig?.manifestPath}>{projectConfig?.manifestPath}</div>
+          <div id="project-path" title={projectConfig?.manifestPath}>
+            {projectConfig?.manifestPath}
+          </div>
         </div>
       </header>
 
@@ -358,7 +352,9 @@ function App(): React.JSX.Element {
               <div>
                 <h2>{state.language === "typescript" ? "TypeScript source" : "Lua source"}</h2>
                 {state.language === "typescript" && selectedProfile && (
-                  <div className="source-path" title={selectedProfile.sourcePath}>{selectedProfile.sourcePath}</div>
+                  <div className="source-path" title={selectedProfile.sourcePath}>
+                    {selectedProfile.sourcePath}
+                  </div>
                 )}
               </div>
               <div className="source-actions">
@@ -367,10 +363,12 @@ function App(): React.JSX.Element {
                   <select
                     aria-label="Input language"
                     value={state.language}
-                    onChange={(event) => dispatch({
-                      type: "set-language",
-                      language: event.currentTarget.value as CodeSnippetLanguage,
-                    })}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "set-language",
+                        language: event.currentTarget.value as CodeSnippetLanguage,
+                      })
+                    }
                   >
                     <option value="lua">Lua</option>
                     <option value="typescript">TypeScript</option>
@@ -382,13 +380,17 @@ function App(): React.JSX.Element {
                     <select
                       aria-label="TypeScript profile"
                       value={state.typeScriptProfileId}
-                      onChange={(event) => dispatch({
-                        type: "set-typescript-profile",
-                        profileId: event.currentTarget.value,
-                      })}
+                      onChange={(event) =>
+                        dispatch({
+                          type: "set-typescript-profile",
+                          profileId: event.currentTarget.value,
+                        })
+                      }
                     >
                       {projectConfig.typeScriptProfiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>{profile.name}</option>
+                        <option key={profile.id} value={profile.id}>
+                          {profile.name}
+                        </option>
                       ))}
                     </select>
                   </label>
@@ -398,11 +400,13 @@ function App(): React.JSX.Element {
             </div>
             <textarea
               value={source}
-              onChange={(event) => dispatch({
-                type: "set-source",
-                language: state.language,
-                source: event.currentTarget.value,
-              })}
+              onChange={(event) =>
+                dispatch({
+                  type: "set-source",
+                  language: state.language,
+                  source: event.currentTarget.value,
+                })
+              }
               spellCheck={false}
               aria-label={`${state.language === "typescript" ? "TypeScript" : "Lua"} source`}
             />
@@ -416,41 +420,39 @@ function App(): React.JSX.Element {
               <div className="output-actions">
                 <select
                   value={state.outputView}
-                  onChange={(event) => dispatch({
-                    type: "set-output-view",
-                    outputView: event.currentTarget.value as OutputView,
-                  })}
+                  onChange={(event) =>
+                    dispatch({
+                      type: "set-output-view",
+                      outputView: event.currentTarget.value as OutputView,
+                    })
+                  }
                   aria-label="Output pipeline stage"
                 >
-                  <option value="generated">
-                    {state.language === "typescript" ? "Generated Lua" : "Input Lua"}
-                  </option>
+                  <option value="generated">{state.language === "typescript" ? "Generated Lua" : "Input Lua"}</option>
                   <option value="preprocessed">Preprocessed Lua</option>
                   <option value="minified">Minified Lua</option>
                 </select>
-                <button type="button" onClick={() => void copyOutput()} disabled={!state.result}>{copyLabel}</button>
+                <button type="button" onClick={() => void copyOutput()} disabled={!state.result}>
+                  {copyLabel}
+                </button>
               </div>
             </div>
             <textarea value={output} spellCheck={false} readOnly aria-label="Lua pipeline output" />
           </article>
 
-          <Diagnostics
-            configError={configError}
-            request={state.request}
-            result={state.result}
-          />
+          <Diagnostics configError={configError} request={state.request} result={state.result} />
         </section>
 
-        {projectConfig && state.settings
-          ? (
-            <OptimizerSettings
-              config={projectConfig}
-              settings={state.settings}
-              ruleStates={activeRuleStates}
-              onSettingsChange={(settings) => dispatch({ type: "set-settings", settings })}
-            />
-          )
-          : <aside className="settings-panel" aria-label="Optimizer settings" />}
+        {projectConfig && state.settings ? (
+          <OptimizerSettings
+            config={projectConfig}
+            settings={state.settings}
+            ruleStates={activeRuleStates}
+            onSettingsChange={(settings) => dispatch({ type: "set-settings", settings })}
+          />
+        ) : (
+          <aside className="settings-panel" aria-label="Optimizer settings" />
+        )}
       </main>
     </>
   );
@@ -484,7 +486,9 @@ function Diagnostics({
 
   return (
     <section className="diagnostics" aria-live="polite">
-      <div className="status" data-kind={statusKind}>{status}</div>
+      <div className="status" data-kind={statusKind}>
+        {status}
+      </div>
       {result && <PipelineStats result={result} />}
     </section>
   );
@@ -503,9 +507,7 @@ function PipelineStats({ result }: { result: CodeSnippetResult }): React.JSX.Ele
     { label: "Minified Lua", bytes: result.sizes.minifiedBytes },
   );
   const saved = result.sizes.preprocessedBytes - result.sizes.minifiedBytes;
-  const percent = result.sizes.preprocessedBytes === 0
-    ? 0
-    : (saved / result.sizes.preprocessedBytes) * 100;
+  const percent = result.sizes.preprocessedBytes === 0 ? 0 : (saved / result.sizes.preprocessedBytes) * 100;
 
   return (
     <div className="stats">
@@ -521,7 +523,10 @@ function PipelineStats({ result }: { result: CodeSnippetResult }): React.JSX.Ele
       ))}
       <div className="stat-delta">
         <span>Optimizer delta</span>
-        <strong>{saved >= 0 ? "−" : "+"}{formatBytes(Math.abs(saved))} ({percent.toFixed(1)}%)</strong>
+        <strong>
+          {saved >= 0 ? "−" : "+"}
+          {formatBytes(Math.abs(saved))} ({percent.toFixed(1)}%)
+        </strong>
       </div>
     </div>
   );
@@ -558,15 +563,19 @@ function OptimizerSettings({
   return (
     <aside className="settings-panel" aria-label="Optimizer settings">
       <div className="settings-heading">
-        <div><h2>Optimizer settings</h2></div>
+        <div>
+          <h2>Optimizer settings</h2>
+        </div>
         <label className="master-toggle">
           <input
             type="checkbox"
             checked={settings.minifyEnabled}
-            onChange={(event) => onSettingsChange({
-              ...settings,
-              minifyEnabled: event.currentTarget.checked,
-            })}
+            onChange={(event) =>
+              onSettingsChange({
+                ...settings,
+                minifyEnabled: event.currentTarget.checked,
+              })
+            }
           />
           <span>Minify</span>
         </label>
@@ -601,11 +610,13 @@ function OptimizerSettings({
         <div className="control-list advanced-controls">
           <LabeledControl label="Line behavior">
             <select
-              value={String(optionRecord.lineBehavior ?? "tight")}
+              value={String(optionRecord.lineBehavior ?? "tight2")}
               onChange={(event) => setOption("lineBehavior", event.currentTarget.value)}
             >
               {(["pretty", "tight", "tight2", "single-line-blocks", "traceable"] as const).map((value) => (
-                <option key={value} value={value}>{value}</option>
+                <option key={value} value={value}>
+                  {value}
+                </option>
               ))}
             </select>
           </LabeledControl>
@@ -616,15 +627,19 @@ function OptimizerSettings({
               onChange={(event) => setOption("globalSymbolRenaming", event.currentTarget.value)}
             >
               {(["off", "opt-in", "opt-out"] as const).map((value) => (
-                <option key={value} value={value}>{value}</option>
+                <option key={value} value={value}>
+                  {value}
+                </option>
               ))}
             </select>
           </LabeledControl>
 
-          {([
-            ["maxIndentLevel", "Maximum indent", 0],
-            ["maxLineLength", "Maximum line length", 20],
-          ] as const).map(([key, label, minimum]) => (
+          {(
+            [
+              ["maxIndentLevel", "Maximum indent", 0],
+              ["maxLineLength", "Maximum line length", 20],
+            ] as const
+          ).map(([key, label, minimum]) => (
             <LabeledControl key={key} label={label}>
               <input
                 type="number"
@@ -640,7 +655,7 @@ function OptimizerSettings({
             <ListControl
               key={key}
               label={label}
-              values={Array.isArray(optionRecord[key]) ? optionRecord[key] as string[] : []}
+              values={Array.isArray(optionRecord[key]) ? (optionRecord[key] as string[]) : []}
               onCommit={(values) => setOption(key, values)}
             />
           ))}
@@ -670,13 +685,7 @@ function OptimizerSettings({
   );
 }
 
-function LabeledControl({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}): React.JSX.Element {
+function LabeledControl({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <label className="setting-control">
       <span>{label}</span>
@@ -695,10 +704,13 @@ function ListControl({
   onCommit: (values: string[]) => void;
 }): React.JSX.Element {
   const serialized = values.join(", ");
-  const commit = (value: string) => onCommit(value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean));
+  const commit = (value: string) =>
+    onCommit(
+      value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    );
   return (
     <LabeledControl label={label}>
       <input
@@ -746,10 +758,12 @@ function RuleOptions({
                 <select
                   aria-label={`${rule.id} override`}
                   value={override === undefined ? "inherit" : override ? "on" : "off"}
-                  onChange={(event) => onRuleOverride(
-                    rule.id as OptimizationRuleId,
-                    event.currentTarget.value === "inherit" ? null : event.currentTarget.value === "on",
-                  )}
+                  onChange={(event) =>
+                    onRuleOverride(
+                      rule.id as OptimizationRuleId,
+                      event.currentTarget.value === "inherit" ? null : event.currentTarget.value === "on",
+                    )
+                  }
                 >
                   <option value="inherit">inherit</option>
                   <option value="on">on</option>

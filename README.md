@@ -1707,6 +1707,8 @@ correct signatures and doc comments // enough info to produce the correct index.
 The TypeScript transpiler can introduce bloaty code or performance less than expected.
 Some observations:
 
+## Array manipulation
+
 ```ts
 // ARRAY manips
 
@@ -1719,4 +1721,38 @@ const x = [...a, 1];
 
 // Avoid: introduces __TS__ArrayConcat
 const b = a.concat(c);
+```
+
+## Method invocation; receivers
+
+```ts
+// SELF calls
+const obj = {
+  method: () => {}
+};
+
+// transpiles as obj.method(), as expected
+obj.method();
+
+const obj : { method: () => void; } = {
+  method: () => {}
+}
+obj.method(); // transpiles as obj:method()
+obj['method'](); // transpiles as obj.method(obj)
+
+// Why? even though the types are the same, the first object uses arrow syntax in the declaration
+// and therefore TSTL knows it's receiverless.
+// In the 2nd example, the arrow notation is only in the type declaration and there's
+// no guarantee (type-wise) that it's receiverless.
+// This would also be legal:
+const obj : { method: () => void; } = {
+  method() {} // no arrow syntax; receiver-aware.
+}
+obj.method(); // transpiles correctly as obj:method()
+
+// The safest is to add `this:void` to the type decl.
+const obj : { method: (this:void) => void; } = {
+  method() {} // no arrow syntax; receiver-aware.
+}
+obj.method(); // transpiles to obj.method()
 ```
