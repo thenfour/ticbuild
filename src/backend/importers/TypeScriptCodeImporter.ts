@@ -32,6 +32,7 @@ export class TypeScriptCodeResource extends CodeResource {
       this.typescriptConfig,
       undefined,
       this.manifestImportName,
+      this.profileTrack,
     );
     this.luaDefinitionBlocks = result.luaDefinitionBlocks;
     this.typescriptManifestModuleDeclaration = result.typescriptManifestModuleDeclaration;

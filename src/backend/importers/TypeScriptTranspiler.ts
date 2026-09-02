@@ -21,6 +21,7 @@ import {
   getTypeScriptManifestDeclarationsPath,
   TypeScriptManifestModuleDeclaration,
 } from "./TypeScriptManifestModules";
+import { profileSync, type TraceTrack } from "../../utils/traceProfiler";
 
 export type TypeScriptTranspileResult = GeneratedLuaSource & {
   luaDefinitionBlocks: readonly LuaDefinitionBlock[];
@@ -59,33 +60,51 @@ export function transpileTypeScriptToLua(
   typescriptConfig?: TypeScriptImportConfig,
   builtinsPathOverride?: string,
   manifestImportName?: string,
+  profileTrack?: TraceTrack,
 ): TypeScriptTranspileResult {
-  const builtinsPath = canonicalizePath(builtinsPathOverride ?? getPathRelativeToPackageRoot(builtinsName));
-  const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
-  const options = createTypeScriptTranspilationOptions(configuredProject.options);
-  const luaAssetDeclarationsPath = getLuaAssetDeclarationsPath(project.projectDir);
-  const typeScriptManifestDeclarationsPath = getTypeScriptManifestDeclarationsPath(project.projectDir);
-  const generatedDeclarationRoots = [luaAssetDeclarationsPath, typeScriptManifestDeclarationsPath].filter(fileExists);
-
-  const compilerHost = createCompilerHost(options, entryFilePath, entrySource);
-  const program = ts.createProgram(
-    distinctTSPaths([
-      entryFilePath,
-      builtinsPath,
-      ...configuredProject.declarationRootPaths,
-      ...generatedDeclarationRoots,
-    ]),
-    options,
+  const {
+    builtinsPath,
+    configuredProject,
+    generatedDeclarationRoots,
     compilerHost,
-  );
-  const staticLinker = createTypeScriptStaticLinker(
     program,
-    compilerHost,
-    entryFilePath,
-    project.projectDir,
-    new Set(findDeclaredCallbacks(entrySource, entryFilePath)),
-    createManifestCodeModuleCatalog(project),
-  );
+    staticLinker,
+  } = profileSync(profileTrack, "Create TypeScript program", { category: "TypeScript" }, () => {
+    const builtinsPath = canonicalizePath(builtinsPathOverride ?? getPathRelativeToPackageRoot(builtinsName));
+    const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
+    const options = createTypeScriptTranspilationOptions(configuredProject.options);
+    const luaAssetDeclarationsPath = getLuaAssetDeclarationsPath(project.projectDir);
+    const typeScriptManifestDeclarationsPath = getTypeScriptManifestDeclarationsPath(project.projectDir);
+    const generatedDeclarationRoots = [luaAssetDeclarationsPath, typeScriptManifestDeclarationsPath].filter(fileExists);
+
+    const compilerHost = createCompilerHost(options, entryFilePath, entrySource);
+    const program = ts.createProgram(
+      distinctTSPaths([
+        entryFilePath,
+        builtinsPath,
+        ...configuredProject.declarationRootPaths,
+        ...generatedDeclarationRoots,
+      ]),
+      options,
+      compilerHost,
+    );
+    const staticLinker = createTypeScriptStaticLinker(
+      program,
+      compilerHost,
+      entryFilePath,
+      project.projectDir,
+      new Set(findDeclaredCallbacks(entrySource, entryFilePath)),
+      createManifestCodeModuleCatalog(project),
+    );
+    return {
+      builtinsPath,
+      configuredProject,
+      generatedDeclarationRoots,
+      compilerHost,
+      program,
+      staticLinker,
+    };
+  });
   const emitReadDependencies = new Set<string>();
   const emitHost: tstl.EmitHost = {
     directoryExists: ts.sys.directoryExists,
@@ -101,58 +120,77 @@ export function transpileTypeScriptToLua(
     writeFile: ts.sys.writeFile,
   };
 
-  const emitResult = new tstl.Transpiler({ emitHost }).emit({
-    program,
-    plugins: [staticLinker.plugin],
-    writeFile() { },
-  });
-  const diagnostics = ts.sortAndDeduplicateDiagnostics([
-    ...ts.getPreEmitDiagnostics(program),
-    ...emitResult.diagnostics,
-  ]);
-  const errors = diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
-  if (errors.length > 0) {
-    throw new Error(formatDiagnostics(errors, project.projectDir));
-  }
-  for (const warning of diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Warning)) {
-    cons.warning(`TypeScript transpilation warning: ${formatDiagnostic(warning, project.projectDir)}`);
-  }
-
-  const manifestDeclaration = manifestImportName
-    ? emitTypeScriptManifestModuleDeclaration(
+  profileSync(profileTrack, "Transpile TypeScript to Lua", { category: "TypeScript" }, () => {
+    const emitResult = new tstl.Transpiler({ emitHost }).emit({
       program,
-      compilerHost,
-      entryFilePath,
-      manifestImportName,
-      project.projectDir,
-    )
-    : undefined;
-  const declarationErrors = manifestDeclaration?.diagnostics.filter(
-    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
-  ) ?? [];
-  if (declarationErrors.length > 0 || (manifestImportName && !manifestDeclaration?.declaration)) {
-    throw new Error(
-      declarationErrors.length > 0
-        ? formatDiagnostics(declarationErrors, project.projectDir)
-        : `TypeScript declaration emit failed for manifest import '${manifestImportName}'`,
-    );
-  }
+      plugins: [staticLinker.plugin],
+      writeFile() { },
+    });
+    const diagnostics = ts.sortAndDeduplicateDiagnostics([
+      ...ts.getPreEmitDiagnostics(program),
+      ...emitResult.diagnostics,
+    ]);
+    const errors = diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+    if (errors.length > 0) {
+      throw new Error(formatDiagnostics(errors, project.projectDir));
+    }
+    for (const warning of diagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Warning)) {
+      cons.warning(`TypeScript transpilation warning: ${formatDiagnostic(warning, project.projectDir)}`);
+    }
+  });
 
-  const linked = staticLinker.link();
-  const emittedMap = importSourceMapV3(
-    linked.source,
-    linked.sourceMapV3,
-    collectKnownSourceFiles(program, entryFilePath, entrySource),
-    project.projectDir,
+  const manifestDeclaration = profileSync(
+    profileTrack,
+    "Emit TypeScript declarations",
+    { category: "TypeScript" },
+    () => {
+      const manifestDeclaration = manifestImportName
+        ? emitTypeScriptManifestModuleDeclaration(
+          program,
+          compilerHost,
+          entryFilePath,
+          manifestImportName,
+          project.projectDir,
+        )
+        : undefined;
+      const declarationErrors = manifestDeclaration?.diagnostics.filter(
+        (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+      ) ?? [];
+      if (declarationErrors.length > 0 || (manifestImportName && !manifestDeclaration?.declaration)) {
+        throw new Error(
+          declarationErrors.length > 0
+            ? formatDiagnostics(declarationErrors, project.projectDir)
+            : `TypeScript declaration emit failed for manifest import '${manifestImportName}'`,
+        );
+      }
+      return manifestDeclaration;
+    },
   );
-  const restored = restoreTicbuildMarkers(linked.source, emittedMap);
-  const dependencies = collectDependencies(
-    program,
-    builtinsPath,
-    emitReadDependencies,
-    project.projectDir,
-    configuredProject.configDependencies,
-    generatedDeclarationRoots,
+
+  const { restored, dependencies } = profileSync(
+    profileTrack,
+    "Link generated Lua",
+    { category: "TypeScript" },
+    (scope) => {
+      const linked = staticLinker.link();
+      const emittedMap = importSourceMapV3(
+        linked.source,
+        linked.sourceMapV3,
+        collectKnownSourceFiles(program, entryFilePath, entrySource),
+        project.projectDir,
+      );
+      const restored = restoreTicbuildMarkers(linked.source, emittedMap);
+      const dependencies = collectDependencies(
+        program,
+        builtinsPath,
+        emitReadDependencies,
+        project.projectDir,
+        configuredProject.configDependencies,
+        generatedDeclarationRoots,
+      );
+      scope?.setArgs({ outputCharacters: restored.source.length });
+      return { restored, dependencies };
+    },
   );
   return {
     source: restored.source,

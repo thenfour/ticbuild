@@ -33,6 +33,7 @@ import {
   SourceMapBuilder,
 } from "../sourceMap";
 import { canonicalizePath } from "../../utils/fileSystem";
+import { profileAsync, profileSync, TraceScope, TraceTrack } from "../../utils/traceProfiler";
 
 export const LUA_RELEASE_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   stripComments: true,
@@ -128,6 +129,7 @@ export class CodeResourceView extends ResourceViewBase {
     inputSourceMap: LuaPreprocessorSourceMap = createIdentitySourceMap(inputSource, "<generated>"),
     preprocessedSourceMap: LuaPreprocessorSourceMap = createIdentitySourceMap(preprocessedSource, "<generated>"),
     minifyGlobalNamesToKeep: string[] = [],
+    private readonly profileTrack?: TraceTrack,
   ) {
     super();
     this.inputSource = inputSource;
@@ -214,6 +216,9 @@ export class CodeResourceView extends ResourceViewBase {
       };
     }
 
+    using _profileScope = minifyEnabled
+      ? this.profileTrack?.enter("Lua minification", { category: "Lua code" })
+      : undefined;
     let code = this.preprocessedSource;
     let sourceMap = this.preprocessedSourceMap;
     let report = createEmptyAliasPassReport();
@@ -223,7 +228,7 @@ export class CodeResourceView extends ResourceViewBase {
         this.minifyAllowedGlobalNames,
         this.minifyGlobalNamesToKeep,
       );
-      const processed = processLuaWithReport(code, options, processOptions);
+      const processed = processLuaWithReport(code, options, processOptions, this.profileTrack);
       code = processed.code;
       sourceMap = composeLuaTransformSourceMap(processed.transformMap, code, sourceMap);
       report = processed.report;
@@ -255,10 +260,16 @@ export class CodeResourceView extends ResourceViewBase {
       return this.cachedCompressedBytes;
     }
     const rawBytes = new TextEncoder().encode(minifiedSource);
-    const compressed =
-      compressionMode === "zopfli"
-        ? zopfliZlibAsync(rawBytes, zopfliMaxOptions).then((bytes) => new Uint8Array(bytes))
-        : new Uint8Array(
+    const profileOptions = {
+      category: "compression",
+      args: { compressionMode, inputBytes: rawBytes.length },
+    };
+    const compressed = compressionMode === "zopfli"
+      ? profileAsync(this.profileTrack, "Compress Lua", profileOptions, async () =>
+        new Uint8Array(await zopfliZlibAsync(rawBytes, zopfliMaxOptions))
+      )
+      : profileSync(this.profileTrack, "Compress Lua", profileOptions, () =>
+        new Uint8Array(
           compressionMode === "zlib-max"
             ? deflateSync(Buffer.from(rawBytes), {
               level: zlibConstants.Z_BEST_COMPRESSION,
@@ -267,7 +278,8 @@ export class CodeResourceView extends ResourceViewBase {
               strategy: zlibConstants.Z_DEFAULT_STRATEGY,
             })
             : deflateSync(Buffer.from(rawBytes)),
-        );
+        )
+      );
     this.cachedCompressedBytes = compressed;
     this.cachedCompressedSource = minifiedSource;
     this.cachedCompressionMode = compressionMode;
@@ -401,6 +413,7 @@ export abstract class CodeResource extends ImportedResourceBase {
   private preprocessResult: LuaPreprocessResult | undefined;
   private generatedLuaPromise: Promise<GeneratedLuaSource> | undefined;
   private importSource: MaterializedImportSource | undefined;
+  protected profileTrack: TraceTrack | undefined;
 
   protected constructor(filePath: string, sourceText: string, initialized?: InitializedCodeResource) {
     super();
@@ -421,6 +434,10 @@ export abstract class CodeResource extends ImportedResourceBase {
 
   setImportSource(source: MaterializedImportSource): void {
     this.importSource = source;
+  }
+
+  setProfileTrack(track: TraceTrack | undefined): void {
+    this.profileTrack = track;
   }
 
   async getGeneratedLuaSource(project: TicbuildProjectCore): Promise<GeneratedLuaSource> {
@@ -452,16 +469,32 @@ export abstract class CodeResource extends ImportedResourceBase {
     project: TicbuildProjectCore,
     resolveCodeImport: LuaCodeImportResolver,
     resolveImportSource?: LuaImportSourceResolver,
+    parentScope?: TraceScope,
   ): Promise<void> {
     if (this.codeView) {
       return;
     }
-    const generated = await this.getGeneratedLuaSource(project);
-    const preprocessResult = await preprocessLuaCode(project, generated.source, generated.sourcePath, {
-      resolveCodeImport,
-      resolveImportSource,
-      sourceMap: generated.sourceMap,
+    using _profileScope = this.profileTrack?.enter("Initialize code resource", {
+      category: "Lua code",
+      parent: parentScope,
+      args: { resourceType: this.constructor.name },
     });
+    const generated = await profileAsync(
+      this.profileTrack,
+      "Generate Lua source",
+      { category: "code generation" },
+      () => this.getGeneratedLuaSource(project),
+    );
+    const preprocessResult = await profileAsync(
+      this.profileTrack,
+      "Lua preprocessing",
+      { category: "Lua code" },
+      () => preprocessLuaCode(project, generated.source, generated.sourcePath, {
+        resolveCodeImport,
+        resolveImportSource,
+        sourceMap: generated.sourceMap,
+      }),
+    );
     const generatedOutputPaths = new Set(this.importSource?.generatedOutputs.map(canonicalizePath) ?? []);
     const dependencyPaths = [
       ...(generated.dependencies?.map((dependency) => dependency.path) ?? []),
@@ -551,6 +584,7 @@ export abstract class CodeResource extends ImportedResourceBase {
       generatedLuaSourceMap,
       preprocessResult.sourceMap,
       preprocessResult.minifyGlobalNamesToKeep,
+      this.profileTrack,
     );
   }
 }

@@ -9,6 +9,7 @@ import { getErrorMessage } from "../utils/errorHandling";
 import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
 import { canonicalizePath } from "../utils/fileSystem";
 import { formatBytes } from "../utils/utils";
+import { TraceProfiler, TraceScope } from "../utils/traceProfiler";
 import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import type { AliasPassReport, AliasRuleName } from "../utils/lua/lua_alias_shared";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
@@ -21,13 +22,14 @@ import {
   JsonlBuildReporter,
   LuaCodeSizeEntry,
   buildReportFileName,
+  buildTraceFileName,
   reportCapturedConsoleMessage,
 } from "./buildReporter";
 
 type BuildReportSession = {
   reporter: BuildReporter;
   initialize: (filePath: string) => void;
-  reportFailure: (error: unknown) => void;
+  reportFailure: (error: unknown, tracePath?: string) => void;
   dispose: () => void;
 };
 
@@ -92,7 +94,7 @@ function createBuildReportSession(selectedReporter: BuildReporter): BuildReportS
       pendingBuildReportLines.length = 0;
       buildReportFilePath = filePath;
     },
-    reportFailure: (error) => {
+    reportFailure: (error, tracePath) => {
       if (buildReportFilePath === undefined) {
         return;
       }
@@ -101,6 +103,7 @@ function createBuildReportSession(selectedReporter: BuildReporter): BuildReportS
           type: "build.failed",
           data: {
             message: getErrorMessage(error),
+            tracePath,
           },
           humanReadable: () => undefined,
         });
@@ -115,41 +118,118 @@ function createBuildReportSession(selectedReporter: BuildReporter): BuildReportS
   };
 }
 
+//////////////////////////////////////////////////////////////////////////////////////////
+// wrapper around executeBuildCore that handles reporting, profiling, and trace file writing
 export async function buildCore(
   manifestPath?: string,
   options?: CommandLineOptions,
   reporter: BuildReporter = new HumanBuildReporter(),
 ): Promise<BuildCoreResult> {
   const reportSession = createBuildReportSession(reporter);
+  const profiler = new TraceProfiler();
+
+  // forward declarations because we need to work cross-scope a lot here
+  let traceFilePath: string | undefined;
+  let writtenTraceFilePath: string | undefined;
+  let executionResult: ExecuteBuildCoreResult | undefined;
+  let failure: { error: unknown } | undefined;
+  let totalDurationMs: number = 0;
+
   try {
-    return await executeBuildCore(manifestPath, options, reportSession.reporter, reportSession.initialize);
-  } catch (error) {
-    reportSession.reportFailure(error);
-    throw error;
+    {
+      using scope = profiler.mainTrack.enter("ticbuild build", { category: "build" });
+      try {
+        executionResult = await executeBuildCore(
+          manifestPath,
+          options,
+          reportSession.reporter,
+          reportSession.initialize,
+          profiler,
+          scope,
+          (filePath) => { traceFilePath = filePath; }, // capture this even if an exception is thrown.
+        );
+        scope.setArgs({ outcome: "succeeded" });
+      } catch (error) {
+        scope.setArgs({ outcome: "failed" });
+        failure = { error };
+      }
+      totalDurationMs = Math.round(profiler.getSpanDurationMs(scope));
+    }
+
+    if (traceFilePath) {
+      try {
+        await writeTextFile(traceFilePath, profiler.serialize(), "utf-8");
+        writtenTraceFilePath = traceFilePath;
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+
+    if (failure) {
+      reportSession.reportFailure(failure.error, writtenTraceFilePath);
+      throw failure.error;
+    }
+    if (!executionResult || !writtenTraceFilePath) {
+      throw new Error("Build completed without initializing its output artifacts");
+    }
+
+    const completedBuild = executionResult;
+    const completedTracePath = writtenTraceFilePath;
+    reportSession.reporter.message({
+      type: "build.completed",
+      data: {
+        durationMs: totalDurationMs,
+        logPath: completedBuild.logFilePath,
+        cartPath: completedBuild.outputFilePath,
+        tracePath: completedTracePath,
+      },
+      humanReadable: () => {
+        cons.success(`Build completed successfully in ${totalDurationMs}ms.`);
+        cons.info(`  Log  : ${completedBuild.logFilePath}`);
+        cons.info(`  Trace: ${completedTracePath}`);
+        cons.info(`  Cart : ${completedBuild.outputFilePath}`);
+      },
+    });
+    return { project: completedBuild.project };
   } finally {
     reportSession.dispose();
   }
 }
 
+type ExecuteBuildCoreResult = BuildCoreResult & {
+  logFilePath: string;
+  outputFilePath: string;
+};
+
+//////////////////////////////////////////////////////////////////////////////////////////
 async function executeBuildCore(
   manifestPath: string | undefined,
   options: CommandLineOptions | undefined,
   reporter: BuildReporter,
   initializeBuildReport: (filePath: string) => void,
-): Promise<BuildCoreResult> {
-  const buildStartTime = Date.now();
-  let project: TicbuildProject;
-  let projectLoadOptions = parseBuildOptions(manifestPath, options);
+  profiler: TraceProfiler,
+  buildScope: TraceScope,
+  initializeBuildTrace: (filePath: string) => void,
+): Promise<ExecuteBuildCoreResult> {
+  const projectLoadOptions = parseBuildOptions(manifestPath, options);
 
-  const loadStartTime = Date.now();
-  project = TicbuildProject.loadFromManifest(projectLoadOptions);
-  const loadDuration = Date.now() - loadStartTime;
+  const project = buildScope.profileSync(
+    "Load and resolve manifest",
+    { category: "project" },
+    () => TicbuildProject.loadFromManifest(projectLoadOptions),
+  );
+
+  buildScope.setArgs({
+    projectName: project.resolvedCore.manifest.project.name,
+    buildConfiguration: project.resolvedCore.selectedBuildConfig,
+  });
 
   // Set up build log and structured report files.
   const objDir = await project.resolvedCore.resolveObjPath();
   await ensureDir(objDir);
   const logFilePath = project.resolvedCore.resolveObjPath(`build.log`);
   initializeBuildReport(project.resolvedCore.resolveObjPath(buildReportFileName));
+  initializeBuildTrace(project.resolvedCore.resolveObjPath(buildTraceFileName));
 
   if (logFilePath) {
     // Initialize the log file from scratch otherwise you get a huge file over time.
@@ -169,34 +249,35 @@ async function executeBuildCore(
       cons.info(`  ${resolvedManifestSourcePath}`);
     },
   });
-  //cons.dim(`  (loaded in ${loadDuration}ms)`);
 
-  await syncManifestSchema(project, reporter);
+  await buildScope.profileAsync("Prepare build workspace", { category: "project" }, async () => {
+    await syncManifestSchema(project, reporter);
 
-  // output variables
-  const variablesOutputPath = project.resolvedCore.resolveObjPath("variables.json");
-  const variablesObj: Record<string, string> = {};
-  for (const [varName, varInfo] of project.resolvedCore.allVariables.entries()) {
-    variablesObj[varName] = varInfo.resolvedValue;
-  }
-  await writeTextFile(variablesOutputPath, JSON.stringify(variablesObj, null, 2), "utf-8");
+    // output variables
+    const variablesOutputPath = project.resolvedCore.resolveObjPath("variables.json");
+    const variablesObj: Record<string, string> = {};
+    for (const [varName, varInfo] of project.resolvedCore.allVariables.entries()) {
+      variablesObj[varName] = varInfo.resolvedValue;
+    }
+    await writeTextFile(variablesOutputPath, JSON.stringify(variablesObj, null, 2), "utf-8");
 
-  const outputPath = project.resolvedCore.resolveObjPath("resolvedManifest.ticbuild.jsonc");
-  reporter.message({
-    type: "manifest.resolved",
-    data: {
-      resolvedManifestPath: outputPath,
-    },
-    humanReadable: () => {
-      cons.h1("Outputting resolved manifest to");
-      cons.info(`  ${outputPath}`);
-    },
+    const outputPath = project.resolvedCore.resolveObjPath("resolvedManifest.ticbuild.jsonc");
+    reporter.message({
+      type: "manifest.resolved",
+      data: {
+        resolvedManifestPath: outputPath,
+      },
+      humanReadable: () => {
+        cons.h1("Outputting resolved manifest to");
+        cons.info(`  ${outputPath}`);
+      },
+    });
+
+    const json = JSON.stringify(project.resolvedCore.manifest, null, 2);
+    const objDirPath = await project.resolvedCore.resolveObjPath();
+    await ensureDir(objDirPath);
+    await writeTextFile(outputPath, json, "utf-8");
   });
-
-  const json = JSON.stringify(project.resolvedCore.manifest, null, 2);
-  const objDirPath = await project.resolvedCore.resolveObjPath();
-  await ensureDir(objDirPath);
-  await writeTextFile(outputPath, json, "utf-8");
 
   // import resources.
   reporter.message({
@@ -206,13 +287,52 @@ async function executeBuildCore(
     },
     humanReadable: () => cons.h1("Loading imported resources..."),
   });
-  const importStartTime = Date.now();
-  await project.loadImports();
-  const importDuration = Date.now() - importStartTime;
-  //cons.dim(`  (imported in ${importDuration}ms)`);
+
+  await buildScope.profileAsync("Process imports", { category: "imports" }, async (scope) => {
+    await project.loadImports(profiler, scope);
+  });
 
   warnExplicitCodeBanks(project, reporter);
 
+  await buildScope.profileAsync("Produce development artifacts", { category: "development artifacts" }, async (scope) => {
+    await writeDevelopmentArtifacts(project, reporter, profiler, scope);
+  });
+
+  // assemble output.
+  const assemblyOutput = await buildScope.profileAsync(
+    "Assemble cartridge",
+    { category: "assembly" },
+    (scope) => project.assembleOutput(profiler, scope),
+  );
+
+  warnDeprecatedChunks(assemblyOutput, reporter);
+  warnNonstandardCodeExtensions(assemblyOutput, reporter);
+
+  const outDir = await project.resolvedCore.resolveBinPath();
+  await ensureDir(outDir);
+  const outputFilePath = project.resolvedCore.getOutputFilePath();
+  //cons.h1("Writing output TIC-80 cartridge to:");
+
+  await buildScope.profileAsync(
+    "Write cartridge",
+    {
+      category: "filesystem",
+      args: { sizeBytes: assemblyOutput.output.length },
+    },
+    () => writeBinaryFile(outputFilePath, assemblyOutput.output),
+  );
+
+  logCartStats(assemblyOutput, reporter);
+
+  return { project, logFilePath, outputFilePath };
+}
+
+async function writeDevelopmentArtifacts(
+  project: TicbuildProject,
+  reporter: BuildReporter,
+  profiler: TraceProfiler,
+  parentScope: TraceScope,
+): Promise<void> {
   const importsLogPath = project.resolvedCore.resolveObjPath("imports.log");
   const importsLines: string[] = [];
   for (const [identifier, resource] of project.resourceMgr!.items.entries()) {
@@ -303,53 +423,22 @@ async function executeBuildCore(
     }
     importsLines.push("");
   }
-  if (project.resourceMgr) {
-    const startTime = Date.now();
-    const symbolIndex = await buildProjectSymbolIndex(project.resolvedCore, project.resourceMgr);
-    const duration = Date.now() - startTime;
-    importsLines.push(`Built symbol index in ${duration}ms.`);
+  const resourceManager = project.resourceMgr;
+  if (resourceManager) {
+    const { symbolIndex, durationMs } = await parentScope.profileAsync("Build symbol index", {}, async (scope) => {
+      const symbolIndex = await buildProjectSymbolIndex(project.resolvedCore, resourceManager);
+      return {
+        symbolIndex,
+        durationMs: Math.round(profiler.getSpanDurationMs(scope)),
+      };
+    });
+    importsLines.push(`Built symbol index in ${durationMs}ms.`);
     const symbolIndexPath = project.resolvedCore.resolveObjPath("symbols.index.json");
     await writeTextFile(symbolIndexPath, JSON.stringify(symbolIndex, null, 2), "utf-8");
     importsLines.push(`Symbol index: ${symbolIndexPath}`);
   }
 
   await writeTextFile(importsLogPath, importsLines.join("\n"), "utf-8");
-
-  // assemble output.
-  const assembleStartTime = Date.now();
-  const assemblyOutput = await project.assembleOutput();
-  const { output, chunks } = assemblyOutput;
-  const assembleDuration = Date.now() - assembleStartTime;
-
-  warnDeprecatedChunks(assemblyOutput, reporter);
-  warnNonstandardCodeExtensions(assemblyOutput, reporter);
-
-  const outDir = await project.resolvedCore.resolveBinPath();
-  await ensureDir(outDir);
-  const outputFilePath = project.resolvedCore.getOutputFilePath();
-  //cons.h1("Writing output TIC-80 cartridge to:");
-
-  const writeStartTime = Date.now();
-  await writeBinaryFile(outputFilePath, output);
-  const writeDuration = Date.now() - writeStartTime;
-
-  logCartStats(assemblyOutput, reporter);
-
-  const totalDuration = Date.now() - buildStartTime;
-  reporter.message({
-    type: "build.completed",
-    data: {
-      durationMs: totalDuration,
-      logPath: logFilePath,
-      cartPath: outputFilePath,
-    },
-    humanReadable: () => {
-      cons.success(`Build completed successfully in ${totalDuration}ms.`);
-      cons.info(`  Log : ${logFilePath}`);
-      cons.info(`  Cart: ${outputFilePath}`);
-    },
-  });
-  return { project };
 }
 
 function getBundledManifestSchemaPath(): string {
@@ -857,6 +946,7 @@ function formatUsageMeter(size: number, capacity: number, width: number = 20): s
   return `[${bar}]`;
 }
 
+// returns a string like "50.0%" or "100.0%" or "" if capacity is 0
 function formatPercent(size: number, capacity: number): string {
   if (capacity <= 0) return "";
   const pct = ((size / capacity) * 100).toFixed(1);

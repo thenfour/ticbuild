@@ -7,6 +7,7 @@ import { loadAllImports } from "./importResources";
 import { resolveAndLoadManifest } from "./manifestLoader";
 import { AssemblyBlock, AssetReference, kImportKind, Manifest, ResolvedManifest } from "./manifestTypes";
 import { calculateVars, canonicalizeAssetImport, deduceImportKindFromPath, TicbuildProjectCore } from "./projectCore";
+import { profileAsync, TraceProfiler, TraceScope, TraceTrack } from "../utils/traceProfiler";
 
 export type TicbuildProjectLoadOptions = {
   manifestPath?: string | undefined;
@@ -161,12 +162,25 @@ export class TicbuildProject {
     };
   }
 
-  async loadImports(): Promise<void> {
-    this.resourceMgr = await loadAllImports(this.resolvedCore);
+  async loadImports(profiler?: TraceProfiler, parentScope?: TraceScope): Promise<void> {
+    this.resourceMgr = await loadAllImports(this.resolvedCore, profiler, parentScope);
   }
 
   // takse a block def and returns the multiple chunks it may produce.
-  private async assembleBlock(block: AssemblyBlock): Promise<Tic80CartChunk[]> {
+  private async assembleBlock(
+    block: AssemblyBlock,
+    profileTrack?: TraceTrack,
+    parentScope?: TraceScope,
+  ): Promise<Tic80CartChunk[]> {
+    using _profileScope = profileTrack?.enter("Assemble block", {
+      category: "assembly",
+      parent: parentScope,
+      args: {
+        importName: (block.asset as AssetReference).import,
+        chunkTypes: block.chunks?.join(",") ?? "default",
+        bank: block.bank ?? "automatic",
+      },
+    });
     assert(!!this.resourceMgr);
 
     // for binary copy, just retrieve the asset data from the resource manager.
@@ -274,15 +288,17 @@ export class TicbuildProject {
     return outputChunks;
   }
 
-  async assembleOutput(): Promise<AssembleOutputResult> {
+  async assembleOutput(profiler?: TraceProfiler, parentScope?: TraceScope): Promise<AssembleOutputResult> {
     if (!this.resourceMgr) {
       throw new Error("Resources not loaded. Call loadImports() before assembleOutput().");
     }
     const assembly = this.resolvedCore.manifest.assembly;
     const tasks: Promise<Tic80CartChunk[]>[] = [];
-    for (const block of assembly.blocks) {
+    for (let blockIndex = 0; blockIndex < assembly.blocks.length; blockIndex++) {
+      const block = assembly.blocks[blockIndex];
       // generate the binary output for each requested block.
-      tasks.push(this.assembleBlock(block));
+      const profileTrack = profiler?.createTrack(`Assembly block ${blockIndex + 1}`);
+      tasks.push(this.assembleBlock(block, profileTrack, parentScope));
     }
 
     // write the final output cartridge
@@ -301,11 +317,19 @@ export class TicbuildProject {
     );
 
     // generate final tic80 cart binary
-    const output = await AssembleTic80Cart({
-      chunks: finalChunks,
-      allowExtendedCodeBanks: usesExtendedCodeBanks,
-      allowMultiBankCompressedCode: usesMultiBankCompressedCode,
-    });
+    const output = await profileAsync(
+      parentScope,
+      "Serialize cartridge chunks",
+      {
+        category: "assembly",
+        args: { chunkCount: finalChunks.length },
+      },
+      () => AssembleTic80Cart({
+        chunks: finalChunks,
+        allowExtendedCodeBanks: usesExtendedCodeBanks,
+        allowMultiBankCompressedCode: usesMultiBankCompressedCode,
+      }),
+    );
 
     return { output, chunks: finalChunks };
   }

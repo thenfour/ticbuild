@@ -37,6 +37,7 @@
 - #83 Fixed error messages that sometimes include a huge amount of noise.
 - #86 Allow running commands on connect for terminal & watch (`--on-connect`)
 - #89 Add support for `--hide-trace-containing` and `--hide-trace-matching`
+- #92 Add profile trace event report to build artifacts
 
 ### Migration notes from v1.0.22
 

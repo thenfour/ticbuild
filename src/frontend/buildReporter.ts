@@ -3,6 +3,7 @@ import type { ConsoleMessageLevel } from "../utils/console";
 
 export const buildReportVersion = 1;
 export const buildReportFileName = "build.jsonl";
+export const buildTraceFileName = "build.trace.json";
 
 export type BuildReporterName = "human" | "jsonl";
 
@@ -55,9 +56,11 @@ export type BuildMessageDataByType = {
     durationMs: number;
     logPath: string;
     cartPath: string;
+    tracePath: string;
   };
   "build.failed": {
     message: string;
+    tracePath?: string;
   };
 };
 

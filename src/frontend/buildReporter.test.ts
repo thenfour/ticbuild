@@ -7,12 +7,14 @@ import {
   HumanBuildReporter,
   JsonlBuildReporter,
   buildReportFileName,
+  buildTraceFileName,
   buildReportVersion,
   createBuildReporter,
 } from "./buildReporter";
 import { buildCore } from "./core";
 import * as cons from "../utils/console";
 import { kTic80CartChunkTypes } from "../utils/tic80/tic80";
+import type { ChromeTraceFile } from "../utils/traceProfiler";
 
 type JsonlMessage = {
   version: number;
@@ -81,6 +83,12 @@ function readBuildReport(dir: string): JsonlMessage[] {
     .split("\n")
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as JsonlMessage);
+}
+
+function readBuildTrace(dir: string): ChromeTraceFile {
+  return JSON.parse(
+    fs.readFileSync(path.join(dir, "obj", buildTraceFileName), "utf-8"),
+  ) as ChromeTraceFile;
 }
 
 describe("Build reporters", () => {
@@ -167,7 +175,20 @@ describe("Build reporters", () => {
       expect(messages.find((message) => message.type === "build.completed")?.data).toMatchObject({
         cartPath: path.join(dir, "bin", "out.tic"),
         logPath: path.join(dir, "obj", "build.log"),
+        tracePath: path.join(dir, "obj", buildTraceFileName),
       });
+      const trace = readBuildTrace(dir);
+      expect(trace.displayTimeUnit).toBe("ms");
+      expect(trace.traceEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ph: "M", name: "process_name", args: { name: "ticbuild" } }),
+        expect.objectContaining({ ph: "M", name: "thread_name", args: { name: "Build overview" } }),
+        expect.objectContaining({ ph: "M", name: "thread_name", args: { name: "Import: maincode" } }),
+        expect.objectContaining({ ph: "X", name: "ticbuild build", args: expect.objectContaining({ outcome: "succeeded" }) }),
+        expect.objectContaining({ ph: "X", name: "Process imports" }),
+        expect.objectContaining({ ph: "X", name: "Produce development artifacts" }),
+        expect.objectContaining({ ph: "X", name: "Assemble cartridge" }),
+        expect.objectContaining({ ph: "X", name: "Write cartridge" }),
+      ]));
       expect(readBuildReport(dir)).toEqual(messages);
       expect(h1Spy).not.toHaveBeenCalled();
       expect(infoSpy).not.toHaveBeenCalled();
@@ -301,6 +322,13 @@ describe("Build reporters", () => {
       expect(fs.readFileSync(path.join(dir, "obj", "imports.log"), "utf-8")).toContain(
         "Lua minification local budget",
       );
+      const traceEvents = readBuildTrace(dir).traceEvents;
+      expect(traceEvents.filter((event) => event.name === "Lua minification")).toHaveLength(1);
+      expect(traceEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ph: "X", name: "Parse Lua" }),
+        expect.objectContaining({ ph: "X", name: "Optimize Lua AST" }),
+        expect.objectContaining({ ph: "X", name: "Print and map Lua" }),
+      ]));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -366,8 +394,14 @@ describe("Build reporters", () => {
         type: "build.failed",
         data: {
           message: expect.any(String),
+          tracePath: path.join(dir, "obj", buildTraceFileName),
         },
       });
+      expect(readBuildTrace(dir).traceEvents).toContainEqual(expect.objectContaining({
+        ph: "X",
+        name: "ticbuild build",
+        args: expect.objectContaining({ outcome: "failed" }),
+      }));
       expect(process.exitCode).toBe(1);
     } finally {
       process.exitCode = previousExitCode;

@@ -17,9 +17,14 @@ import { importTic80Cart } from "./importers/tic80CartImporter";
 import { kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { ImportSourceManager, MaterializedImportSource } from "./importSources";
+import { profileAsync, TraceProfiler, TraceScope, TraceTrack } from "../utils/traceProfiler";
 
 //
-export async function loadAllImports(project: TicbuildProjectCore): Promise<ResourceManager> {
+export async function loadAllImports(
+  project: TicbuildProjectCore,
+  profiler?: TraceProfiler,
+  parentScope?: TraceScope,
+): Promise<ResourceManager> {
   //  scan imports, select appropriate importer for each import,
   //  invoke importer to get ImportedResourceBase
   //  store in map of identifier -> ImportedResourceBase
@@ -31,8 +36,28 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
   }
 
   const sourceManager = new ImportSourceManager(project);
+  const profileTracks = new Map<string, TraceTrack>();
+  for (const importDef of project.manifest.imports) {
+    const track = profiler?.createTrack(`Import: ${importDef.name}`);
+    if (track) {
+      profileTracks.set(importDef.name, track);
+    }
+  }
   const materializedSources = await Promise.all(
     project.manifest.imports.map(async (importDef) => {
+      const sourcePlan = sourceManager.describe(importDef.name);
+      using _profileScope = profileTracks.get(importDef.name)?.enter(
+        sourcePlan?.sourceKind === "command" ? "Run command import" : "Materialize import source",
+        {
+          category: sourcePlan?.sourceKind === "command" ? "external command" : "imports",
+          parent: parentScope,
+          args: {
+            importName: importDef.name,
+            importKind: importDef.kind,
+            sourceKind: sourcePlan?.sourceKind,
+          },
+        },
+      );
       const source = await sourceManager.materialize(importDef.name);
       if (!source) {
         throw new Error(`Import source not found: ${importDef.name}`);
@@ -40,37 +65,28 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
       return source;
     }),
   );
-  const tasks: Promise<ImportedResourceBase>[] = [];
-  for (let importIndex = 0; importIndex < project.manifest.imports.length; importIndex++) {
-    const importDef = project.manifest.imports[importIndex];
+  const tasks = project.manifest.imports.map(async (importDef, importIndex): Promise<ImportedResourceBase> => {
     const source: MaterializedImportSource = materializedSources[importIndex];
+    using _profileScope = profileTracks.get(importDef.name)?.enter("Load imported resource", {
+      category: "imports",
+      parent: parentScope,
+      args: { importName: importDef.name, importKind: importDef.kind },
+    });
     switch (importDef.kind) {
       case kImportKind.key.Tic80Cartridge:
-        const tic80ImportTask = importTic80Cart(project, importDef, source);
-        tasks.push(tic80ImportTask);
-        break;
+        return await importTic80Cart(project, importDef, source);
       case kImportKind.key.LuaCode:
-        const luaCodeImportTask = importLuaCode(project, importDef, source);
-        tasks.push(luaCodeImportTask);
-        break;
+        return await importLuaCode(project, importDef, source);
       case kImportKind.key.TypeScriptCode:
-        const typeScriptCodeImportTask = importTypeScriptCode(project, importDef, source);
-        tasks.push(typeScriptCodeImportTask);
-        break;
-      case kImportKind.key.binary: {
-        const binaryImportTask = importBinaryResource(project, importDef, source);
-        tasks.push(binaryImportTask);
-        break;
-      }
-      case kImportKind.key.text: {
-        const textImportTask = importTextResource(project, importDef, source);
-        tasks.push(textImportTask);
-        break;
-      }
+        return await importTypeScriptCode(project, importDef, source);
+      case kImportKind.key.binary:
+        return await importBinaryResource(project, importDef, source);
+      case kImportKind.key.text:
+        return await importTextResource(project, importDef, source);
       default:
         throw new Error(`Unsupported import kind: ${importDef.kind}`);
     }
-  }
+  });
 
   const importedResources = await Promise.all(tasks);
   const items = new Map<string, ImportedResourceBase>();
@@ -78,6 +94,9 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
     const importDef = project.manifest.imports[i];
     const resource = importedResources[i];
     items.set(importDef.name, resource);
+    if (resource instanceof CodeResource) {
+      resource.setProfileTrack(profileTracks.get(importDef.name));
+    }
   }
 
   const resourceManager = new ResourceManager(items);
@@ -85,7 +104,14 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
   // TypeScript needs to see Lua module defs on the first build. Build
   // their declarations after all raw resources exist, but before any code
   // resource starts the language-specific generation pipeline.
-  await prepareLuaAssetTypeScriptDeclarations(project, resourceManager);
+  await profileAsync(
+    parentScope,
+    "Prepare Lua asset declarations",
+    {
+      category: "TypeScript declarations",
+    },
+    () => prepareLuaAssetTypeScriptDeclarations(project, resourceManager),
+  );
 
   // code resources may have a processing step to be done here to generate its lua output.
   // (e.g. typescript transpilation)
@@ -99,6 +125,7 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
     project,
     (importName) => resourceManager.getGeneratedLuaSource(project, importName),
     (importName) => sourceManager.materialize(importName),
+    parentScope,
   );
 
   // Manifest-backed TypeScript modules need their dependency declarations on
@@ -106,11 +133,26 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
   // declaration catalog after each completed resource.
   const manifestDeclarations: TypeScriptManifestModuleDeclaration[] = [];
   if (typeScriptResources.length > 0) {
-    await writeTypeScriptManifestDeclarations(project.projectDir, manifestDeclarations);
+    await profileAsync(
+      parentScope,
+      "Initialize TypeScript manifest declarations",
+      {
+        category: "TypeScript declarations",
+      },
+      () => writeTypeScriptManifestDeclarations(project.projectDir, manifestDeclarations),
+    );
     for (const resource of orderTypeScriptResources(project, typeScriptResources)) {
       await initializeCodeResource(resource);
       manifestDeclarations.push(resource.getTypeScriptManifestModuleDeclaration());
-      await writeTypeScriptManifestDeclarations(project.projectDir, manifestDeclarations);
+      await profileAsync(
+        parentScope,
+        "Update TypeScript manifest declarations",
+        {
+          category: "TypeScript declarations",
+          args: { importName: resource.manifestImportName },
+        },
+        () => writeTypeScriptManifestDeclarations(project.projectDir, manifestDeclarations),
+      );
     }
   }
 
@@ -123,9 +165,14 @@ export async function loadAllImports(project: TicbuildProjectCore): Promise<Reso
 
   // write .d.lua for typescript code resources to give visiblity to Lua
   if (typeScriptResources.length > 0) {
-    await writeTypeScriptLuaDeclarations(
-      project.projectDir,
-      typeScriptResources.flatMap((resource) => resource.getLuaDefinitionBlocks()),
+    await profileAsync(
+      parentScope,
+      "Write Lua declarations for TypeScript",
+      { category: "TypeScript declarations" },
+      () => writeTypeScriptLuaDeclarations(
+        project.projectDir,
+        typeScriptResources.flatMap((resource) => resource.getLuaDefinitionBlocks()),
+      ),
     );
   }
 

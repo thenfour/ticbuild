@@ -124,9 +124,8 @@ reporter when another program needs to consume build messages:
 ticbuild build --reporter jsonl
 ```
 
-Every build also produces `build.jsonl` in the obj dir.
-
-The JSONL reporter writes one JSON object per line. Lines look like:
+Every build also produces `build.jsonl` in the obj dir. One JSON object per line.
+Lines look like:
 
 ```json
 {"version":1,"type":"comment","data":{"message":"Loading imported resources..."}}
@@ -147,8 +146,20 @@ Version 1 defines these message types:
 - `lua.minification`: emitted when Lua's 200-active-local limit causes profitable aliases to be omitted;
   includes the constrained function, peak existing/generated locals, per-rule omissions, and estimated bytes not saved.
 - `cart.usage`: raw emitted-cart chunk and total-size information.
-- `build.completed`: successful terminal message with duration, log path, and cart path.
-- `build.failed`: failed terminal message with the error text.
+- `build.completed`: successful terminal message with duration, log path, trace path, and cart path.
+- `build.failed`: failed terminal message with the error text and, when available, the partial trace path.
+
+`build.trace.json` is also a build output containing a performance profile of
+the build. It uses the Chrome Trace Event JSON format.
+
+- [Reference 1 Google Doc](https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview?tab=t.0#heading=h.yr4qxyxotyw)
+
+The profile trace can be opened in various tools for analysis.
+
+- Chrome dev tools (F12) - performance tab, open profile.
+- [Perfetto](https://ui.perfetto.dev/)
+- I think Speedscope also supports it
+
 
 ## REPL mode (interactive preprocessing/minification)
 

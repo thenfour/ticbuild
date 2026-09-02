@@ -8,6 +8,7 @@ import type { OptimizationRuleOptions } from "./lua_optimizer_types";
 import { createLuaPrintTransformMap } from "./lua_print_trace";
 import { unparseLua } from "./lua_printer";
 import type { LuaLineBehavior } from "./lua_printer";
+import { profileSync, type TraceTrack } from "../traceProfiler";
 import {
   LuaTransformMap,
   LuaTransformMapBuilder,
@@ -60,42 +61,48 @@ export function processLuaWithReport(
   code: string,
   ruleOptions: OptimizationRuleOptions,
   processOptions: LuaProcessOptions = {},
+  profileTrack?: TraceTrack,
 ): LuaProcessResult {
-  let processedCode = code;
-  const preparationMap = LuaTransformMapBuilder.identity(code.length);
-  processedCode = disambiguateNumericConcat(processedCode, preparationMap);
+  const prepared = profileSync(profileTrack, "Prepare Lua source", { category: "Lua minification" }, () => {
+    const preparationMap = LuaTransformMapBuilder.identity(code.length);
+    const processedCode = disambiguateNumericConcat(code, preparationMap);
 
-  // Hide verbatim regions because every AST printer is allowed to reformat them.
-  const disableMinify = extractLuaBlocks(
-    processedCode,
-    "-- MINIFICATION OFF",
-    "-- MINIFICATION ON",
-    (i) => `__SOMATIC_DISABLED_MINIFICATION_BLOCK_${i}__()`,
-    { strict: false },
-  );
-  const disabledBlockOrigins = new Map(disableMinify.blocks.map((block) => [
-    block.placeholder,
-    preparationMap.mapOffset(block.sourceContentBegin, "right")?.offset ?? 0,
-  ]));
-  for (const block of [...disableMinify.blocks].sort((a, b) => b.sourceBegin - a.sourceBegin)) {
-    const origin = preparationMap.mapOffset(block.sourceBegin, "right");
-    preparationMap.spliceRange(
-      block.sourceBegin,
-      block.sourceEnd,
-      block.replacementLength,
-      origin,
-      "anchor",
+    // Hide verbatim regions because every AST printer is allowed to reformat them.
+    const disableMinify = extractLuaBlocks(
+      processedCode,
+      "-- MINIFICATION OFF",
+      "-- MINIFICATION ON",
+      (i) => `__SOMATIC_DISABLED_MINIFICATION_BLOCK_${i}__()`,
+      { strict: false },
     );
-  }
-  processedCode = disableMinify.code;
+    const disabledBlockOrigins = new Map(disableMinify.blocks.map((block) => [
+      block.placeholder,
+      preparationMap.mapOffset(block.sourceContentBegin, "right")?.offset ?? 0,
+    ]));
+    for (const block of [...disableMinify.blocks].sort((a, b) => b.sourceBegin - a.sourceBegin)) {
+      const origin = preparationMap.mapOffset(block.sourceBegin, "right");
+      preparationMap.spliceRange(
+        block.sourceBegin,
+        block.sourceEnd,
+        block.replacementLength,
+        origin,
+        "anchor",
+      );
+    }
+    return {
+      processedCode: disableMinify.code,
+      preparationMap,
+      disableMinify,
+      disabledBlockOrigins,
+    };
+  });
 
-  let ast: luaparse.Chunk | null;
-  if (processOptions.parseFailure === "throw") {
-    ast = parseLuaOrThrow(processedCode);
-  } else {
-    ast = parseLua(processedCode);
-  }
-  if (!ast) {
+  const parsedAst = profileSync(profileTrack, "Parse Lua", { category: "Lua minification" }, () =>
+    processOptions.parseFailure === "throw"
+      ? parseLuaOrThrow(prepared.processedCode)
+      : parseLua(prepared.processedCode)
+  );
+  if (!parsedAst) {
     console.error("Failed to parse Lua code; returning original code.");
     return {
       code,
@@ -103,25 +110,33 @@ export function processLuaWithReport(
       transformMap: LuaTransformMapBuilder.identity(code.length).toMap(),
     };
   }
-  annotateLuaAstOrigins(ast, preparationMap.toMap(), code);
-  const optimizationResult = optimizeLuaAst(ast, ruleOptions);
-  ast = optimizationResult.ast;
-
-  const minified = unparseLua(ast, ruleOptions);
-  const emittedAst = parseLua(minified);
-  if (!emittedAst) {
-    throw new Error("Lua printer produced output that could not be parsed for source mapping");
-  }
-  const printedMap = createLuaPrintTransformMap(ast, emittedAst, code, minified);
-  const restored = reinsertDisableMinificationBlocksWithMap(
-    minified,
-    printedMap,
-    disableMinify.blocks.map((block) => ({
-      placeholder: block.placeholder,
-      content: block.content,
-      inputContentBegin: disabledBlockOrigins.get(block.placeholder) ?? 0,
-    })),
+  annotateLuaAstOrigins(parsedAst, prepared.preparationMap.toMap(), code);
+  const optimizationResult = profileSync(
+    profileTrack,
+    "Optimize Lua AST",
+    { category: "Lua minification" },
+    () => optimizeLuaAst(parsedAst, ruleOptions),
   );
+
+  const restored = profileSync(profileTrack, "Print and map Lua", { category: "Lua minification" }, (scope) => {
+    const minified = unparseLua(optimizationResult.ast, ruleOptions);
+    const emittedAst = parseLua(minified);
+    if (!emittedAst) {
+      throw new Error("Lua printer produced output that could not be parsed for source mapping");
+    }
+    const printedMap = createLuaPrintTransformMap(optimizationResult.ast, emittedAst, code, minified);
+    const restored = reinsertDisableMinificationBlocksWithMap(
+      minified,
+      printedMap,
+      prepared.disableMinify.blocks.map((block) => ({
+        placeholder: block.placeholder,
+        content: block.content,
+        inputContentBegin: prepared.disabledBlockOrigins.get(block.placeholder) ?? 0,
+      })),
+    );
+    scope?.setArgs({ outputCharacters: restored.code.length });
+    return restored;
+  });
   return {
     code: restored.code,
     report: optimizationResult.report,
