@@ -145,6 +145,18 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
   ensureDir(launchTargetDir);
   copyFile(launchSourcePath, launchTargetPath, options?.force === true);
 
+  // Template-specific VS Code configuration takes precedence over these
+  // recommended workspace defaults.
+  const settingsTargetPath = path.join(launchTargetDir, "settings.json");
+  if (!fileExists(settingsTargetPath)) {
+    copyFile(getPathRelativeToTemplates("vscode_settings.template.json"), settingsTargetPath, false);
+  }
+
+  const extensionsTargetPath = path.join(launchTargetDir, "extensions.json");
+  if (!fileExists(extensionsTargetPath)) {
+    copyFile(getPathRelativeToTemplates("vscode_extensions.template.json"), extensionsTargetPath, false);
+  }
+
   cons.success(`Initialized ticbuild project in ${resolvedDir}`);
 
   if (fileExists(path.join(resolvedDir, "package.json"))) {

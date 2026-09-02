@@ -842,9 +842,11 @@ do not have a LuaCATS representation are exposed as `any`.
 
 Reference: [Lua definition files](https://luals.github.io/wiki/definition-files/)
 
-For the moment this actually conflicts with the ticbuild vscode extension
-(preprocessor syntax highlighting fails to work),
-so... this needs sorting out what the recommended configuration is.
+LuaLS syntax highlighting [conflicts](https://github.com/thenfour/ticbuild_vscode/issues/11)
+with the ticbuild VS Code extension's
+preprocessor syntax highlighting. Projects created by `ticbuild init` 
+disable LuaLS semantic highlighting in the generated
+`.vscode/settings.json`.
 
 TypeScript value exports become Lua globals.
 Non-exported symbols stay local to their module scope:

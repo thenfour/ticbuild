@@ -68,9 +68,23 @@ describe("ticbuild init", () => {
 
     expect(errors.map(formatDiagnostic)).toEqual([]);
     expect(JSON.parse(fs.readFileSync(path.join(tempDir, ".vscode", "extensions.json"), "utf-8"))).toEqual({
-      recommendations: ["dbaeumer.vscode-eslint", "sumneko.lua"],
+      recommendations: ["TridentLoop.ticbuild-vs-code", "dbaeumer.vscode-eslint", "sumneko.lua"],
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(tempDir, ".vscode", "settings.json"), "utf-8"))).toEqual({
+      "Lua.semantic.enable": false,
     });
     expect(packageInstaller.installProjectDependencies).toHaveBeenCalledWith(tempDir);
+  });
+
+  it("supplies the recommended VS Code workspace setup for a minimal project", async () => {
+    await initCommand(tempDir, { name: "minimal-game" });
+
+    expect(JSON.parse(fs.readFileSync(path.join(tempDir, ".vscode", "extensions.json"), "utf-8"))).toEqual({
+      recommendations: ["TridentLoop.ticbuild-vs-code"],
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(tempDir, ".vscode", "settings.json"), "utf-8"))).toEqual({
+      "Lua.semantic.enable": false,
+    });
   });
 
   it("can install the generated project against a local ticbuild checkout", async () => {
