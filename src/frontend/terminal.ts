@@ -17,7 +17,12 @@ export interface TerminalTarget {
     port: number;
 }
 
-export interface TerminalClientOptions {
+export interface TerminalTraceFilterOptions {
+    hideTraceContaining?: string;
+    hideTraceMatching?: string;
+}
+
+export interface TerminalClientOptions extends TerminalTraceFilterOptions {
     input?: NodeJS.ReadableStream;
     output?: NodeJS.WritableStream;
     terminal?: boolean;
@@ -65,6 +70,29 @@ interface ParsedTerminalRequest {
     id: number;
     request: PendingTerminalRequest;
     wireLine: string;
+}
+
+type TraceEventFilter = (payload: string) => boolean;
+
+function createTraceEventFilter(options: TerminalTraceFilterOptions): TraceEventFilter {
+    let matching: RegExp | undefined;
+    if (options.hideTraceMatching !== undefined) {
+        try {
+            matching = new RegExp(options.hideTraceMatching);
+        } catch (error) {
+            throw new Error(
+                `Invalid --hide-trace-matching regular expression '${options.hideTraceMatching}': ${asError(error).message}`,
+            );
+        }
+    }
+
+    return (payload) =>
+        (options.hideTraceContaining !== undefined && payload.includes(options.hideTraceContaining)) ||
+        matching?.test(payload) === true;
+}
+
+export function validateTraceFilterOptions(options: TerminalTraceFilterOptions): void {
+    createTraceEventFilter(options);
 }
 
 // Prefixes decorate the command token and are terminal-only; they are removed
@@ -473,6 +501,7 @@ function connectSocket(host: string, port: number, timeoutMs: number): Promise<n
 async function runTerminalClientCore(
     target: TerminalTarget,
     options: TerminalClientOptions,
+    shouldHideTraceEvent: TraceEventFilter,
     notifyReady: () => void,
 ): Promise<void> {
     const { host, port } = target;
@@ -601,6 +630,13 @@ async function runTerminalClientCore(
                 }
             }
             const parsed = parseRemotingLine(line);
+            if (
+                parsed?.kind === "event" &&
+                parsed.eventType.toLowerCase() === "trace" &&
+                shouldHideTraceEvent(parsed.data)
+            ) {
+                return;
+            }
             if (parsed?.kind === "event" && parsed.eventType.toLowerCase() === "script_error") {
                 presentScriptError(parsed.data, line);
                 return;
@@ -762,6 +798,7 @@ async function runTerminalClientCore(
 async function startTerminalClientAttempt(
     target: TerminalTarget,
     options: TerminalClientOptions,
+    shouldHideTraceEvent: TraceEventFilter,
 ): Promise<RunningTerminalClient> {
     let ready = false;
     let resolveReady!: () => void;
@@ -771,7 +808,7 @@ async function startTerminalClientAttempt(
         rejectReady = reject;
     });
 
-    const closed = runTerminalClientCore(target, options, () => {
+    const closed = runTerminalClientCore(target, options, shouldHideTraceEvent, () => {
         ready = true;
         resolveReady();
     });
@@ -789,6 +826,7 @@ export async function startTerminalClient(
     target: TerminalTarget,
     options: TerminalClientOptions = {},
 ): Promise<RunningTerminalClient> {
+    const shouldHideTraceEvent = createTraceEventFilter(options);
     const normalizedOptions: TerminalClientOptions = {
         ...options,
         onConnectCommands: normalizeOnConnectCommands(options.onConnectCommands),
@@ -800,7 +838,7 @@ export async function startTerminalClient(
     // so use a retry mechanism.
     for (let attempt = 1; attempt <= startupAttempts; attempt += 1) {
         try {
-            return await startTerminalClientAttempt(target, normalizedOptions);
+            return await startTerminalClientAttempt(target, normalizedOptions, shouldHideTraceEvent);
         } catch (error) {
             const terminalError = asError(error);
             if (attempt >= startupAttempts) {
@@ -832,13 +870,18 @@ export async function discoCommand(): Promise<void> {
     }
 }
 
-export async function terminalCommand(hostPort?: string, onConnectCommands: readonly string[] = []): Promise<void> {
+export interface TerminalCommandOptions extends TerminalTraceFilterOptions {
+    onConnectCommands?: readonly string[];
+}
+
+export async function terminalCommand(hostPort?: string, options: TerminalCommandOptions = {}): Promise<void> {
+    validateTraceFilterOptions(options);
     const target = await resolveTerminalTarget(hostPort);
     if (!target) {
         return;
     }
     await runTerminalClient(target, {
-        onConnectCommands,
+        ...options,
         scriptErrorSourceMapper: tryCreateCurrentProjectScriptErrorSourceMaps(),
     });
 }

@@ -21,5 +21,12 @@ Example:
 
 Options:
 
+  --hide-trace-containing <text> Hide trace events whose payload contains text.
+  --hide-trace-matching <regex>  Hide trace events whose payload matches a JavaScript regex.
   --on-connect <command> Send a required remoting command after connecting.
                          Repeat for multiple commands.
+
+Examples:
+
+  ticbuild terminal --hide-trace-containing "my.token"
+  ticbuild terminal --hide-trace-matching "reg.*ex"

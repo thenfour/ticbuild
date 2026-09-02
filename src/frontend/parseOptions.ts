@@ -26,6 +26,8 @@ export interface CommandLineOptions {
   reporter?: string;
   remotingVerbose?: boolean;
   onConnect?: string[];
+  hideTraceContaining?: string;
+  hideTraceMatching?: string;
   multiLine?: boolean;
 }
 

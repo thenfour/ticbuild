@@ -170,6 +170,8 @@ async function main(): Promise<void> {
     .description("Build, launch TIC-80, and watch for changes")
     .option("-m, --mode <name>", "Build configuration name")
     .option("--remoting-verbose", "Verbose TIC-80 remoting output")
+    .option("--hide-trace-containing <text>", "Hide trace events whose payload contains text")
+    .option("--hide-trace-matching <regex>", "Hide trace events whose payload matches a regular expression")
     .option(
       "--on-connect <command>",
       "Send a required remoting command after connecting (repeatable)",
@@ -257,6 +259,8 @@ async function main(): Promise<void> {
   program
     .command("terminal [hostPort]")
     .description("Connect terminal client to TIC-80 remoting")
+    .option("--hide-trace-containing <text>", "Hide trace events whose payload contains text")
+    .option("--hide-trace-matching <regex>", "Hide trace events whose payload matches a regular expression")
     .option(
       "--on-connect <command>",
       "Send a required remoting command after connecting (repeatable)",
@@ -264,7 +268,11 @@ async function main(): Promise<void> {
       [],
     )
     .action(async (hostPort?: string, options?: CommandLineOptions) => {
-      await terminalCommand(hostPort, options?.onConnect);
+      await terminalCommand(hostPort, {
+        onConnectCommands: options?.onConnect,
+        hideTraceContaining: options?.hideTraceContaining,
+        hideTraceMatching: options?.hideTraceMatching,
+      });
     });
 
   program

@@ -3,6 +3,7 @@
 **TypeScript Support**
 
 - #64 Added support for TypeScript transpilation, and a lot of supporting features for that.
+- #88 #87 Cross-language and cross-manifest-code-asset type declaration emission
 
 **Lua preprocessor improvements**
 
@@ -34,7 +35,8 @@
 - #69 Removed support for manifest-specified Lua globals; they were not correct, unnecessary, not useful, confusing.
 - #61 added support for `lzrle` and `unlzrle`, added a search so LZ chooses most optimal profile
 - #83 Fixed error messages that sometimes include a huge amount of noise.
-- #86 Allow running commands on connect for terminal & watch.
+- #86 Allow running commands on connect for terminal & watch (`--on-connect`)
+- #89 Add support for `--hide-trace-containing` and `--hide-trace-matching`
 
 ### Migration notes from v1.0.22
 

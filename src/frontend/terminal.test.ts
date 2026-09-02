@@ -183,6 +183,63 @@ describe("terminal remoting session", () => {
         }
     });
 
+    it("hides only trace events selected by literal and regular-expression filters", async () => {
+        let connectedSocket: net.Socket | undefined;
+        const server = net.createServer((socket) => {
+            connectedSocket = socket;
+            pumpSocketLines(socket, (line) => {
+                acknowledgeTerminalSetupLine(socket, line);
+            });
+        });
+        const port = await listen(server);
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let rendered = "";
+        output.on("data", (chunk) => {
+            rendered += chunk.toString("utf8");
+        });
+
+        const terminal = await startTerminalClient(
+            { host: "127.0.0.1", port },
+            {
+                input,
+                output,
+                terminal: false,
+                hideTraceContaining: "my.token",
+                hideTraceMatching: "reg.*ex",
+            },
+        );
+
+        connectedSocket!.write([
+            '-1 trace "keep this trace"',
+            '-2 trace "hide my.token literally"',
+            '-3 trace "hide regular expression match"',
+            '-4 trace "keep myXtoken literal near miss"',
+            '-5 cart_run "my.token and regular expression are not filtered here"',
+            '7 OK "my.token and regular expression are not filtered here"',
+            "",
+        ].join("\n"));
+        await waitFor(() => rendered.includes('7 OK "my.token and regular expression are not filtered here"'));
+
+        expect(rendered).toContain('-1 trace "keep this trace"\n');
+        expect(rendered).toContain('-4 trace "keep myXtoken literal near miss"\n');
+        expect(rendered).toContain('-5 cart_run "my.token and regular expression are not filtered here"\n');
+        expect(rendered).toContain('7 OK "my.token and regular expression are not filtered here"\n');
+        expect(rendered).not.toContain('-2 trace "hide my.token literally"');
+        expect(rendered).not.toContain('-3 trace "hide regular expression match"');
+
+        input.end();
+        await terminal.closed;
+        await closeServer(server);
+    });
+
+    it("rejects an invalid trace regular expression before connecting", async () => {
+        await expect(startTerminalClient(
+            { host: "127.0.0.1", port: 1 },
+            { hideTraceMatching: "[" },
+        )).rejects.toThrow("Invalid --hide-trace-matching regular expression '['");
+    });
+
     it("runs on-connect commands serially before accepting interactive input", async () => {
         const receivedLines: string[] = [];
         let connectedSocket: net.Socket | undefined;

@@ -668,6 +668,12 @@ remoting commands immediately after terminal setup.
 An `ERR` response, timeout, or disconnect stops the sequence and ticbuild exits
 non-zero.
 
+Use `--hide-trace-containing "my.token"` or
+`--hide-trace-matching "reg.*ex"` with `terminal` or `watch` to suppress noisy
+`trace` events by payload. Case-sensitive; the matching form
+uses JavaScript regular-expression syntax. When both are supplied, either match
+hides the event.
+
 Prefix a command to select how its response is presented:
 
 - `!script_error_last` decodes and prints the structured JSON value without

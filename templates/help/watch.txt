@@ -26,6 +26,8 @@ Options:
   -m, --mode <name>    Build configuration name from manifest
   -v, --var <key=value> Override manifest variable (can be used multiple times)
   --remoting-verbose   Verbose TIC-80 remoting output
+  --hide-trace-containing <text> Hide trace events whose payload contains text
+  --hide-trace-matching <regex>  Hide trace events whose payload matches a JavaScript regex
   --on-connect <command> Send a required remoting command after connecting
                          (can be used multiple times; runs serially before load)
   -h, --help           Show this help message
@@ -41,4 +43,6 @@ Examples:
 
   ticbuild watch
   ticbuild watch mydemo.ticbuild.jsonc --mode debug
+  ticbuild watch --hide-trace-containing "my.token"
+  ticbuild watch --hide-trace-matching "reg.*ex"
   ticbuild watch --on-connect  "ping" --on-connect 'event_subscribe "cart_run|lua_profiler_stopped" 0'

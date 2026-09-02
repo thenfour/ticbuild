@@ -7,7 +7,7 @@ import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 import { ITic80Controller, Tic80RemotingTarget } from "../backend/tic80Controller/tic80Controller";
 import { mergeTic80Args } from "../utils/tic80/args";
-import { RunningTerminalClient, startTerminalClient } from "./terminal";
+import { RunningTerminalClient, startTerminalClient, validateTraceFilterOptions } from "./terminal";
 import { ScriptErrorSourceMapRegistry } from "./scriptErrorSourceMapper";
 import { ImportSourceManager } from "../backend/importSources";
 import { getErrorMessage } from "../utils/errorHandling";
@@ -52,6 +52,7 @@ export async function watchCommand(
   options?: CommandLineOptions,
   tic80Args: string[] = [],
 ): Promise<void> {
+  validateTraceFilterOptions(options ?? {});
   cons.info("ticbuild: watch command");
 
   // needs to be mutable because it depends on env for tic80 location, which relies on project dir, which can change.
@@ -111,6 +112,8 @@ export async function watchCommand(
       try {
         const session = await startTerminalClient(target, {
           onConnectCommands: requiredOnConnectCommands,
+          hideTraceContaining: options?.hideTraceContaining,
+          hideTraceMatching: options?.hideTraceMatching,
           captureConsoleOutput: true,
           keepOpenOnInputClose: true,
           startupAttempts: 3,
