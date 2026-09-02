@@ -1710,8 +1710,22 @@ correct signatures and doc comments // enough info to produce the correct index.
 
 # typescript tips
 
-The TypeScript transpiler can introduce bloaty code or performance less than expected.
-Some observations:
+The TypeScript transpiler needs to be respected; check the generated code in your
+`obj` dir to make sure nothing is happening you weren't expecting. It can easily
+introduce bloaty code or performance less than expected.
+
+## Language extensions
+
+Read about [TypeScriptToLua language extensions](https://typescripttolua.github.io/docs/advanced/language-extensions/);
+these let you emit Lua code that uses more native Lua syntax (floor division, multiple return values...)
+
+```ts
+declare const floorDiv: LuaFloorDivision<number, number, number>;
+const y = floorDiv(val, 1);
+// emits:
+// local y = val // 1
+```
+
 
 ## Array manipulation
 
