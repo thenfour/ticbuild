@@ -11,13 +11,11 @@
 // const AGE = ticbuild.MakeConstant<8>();
 // const AGE2 = AGE; // inherits the Constant<8> type and is also replaced with 8 in Lua
 // print(AGE2); // emits print(8)
-// const AGE3 : number = AGE; // type error: Constant<8> is not assignable to number
-// const AGE5 = AGE + ticbuild.MakeConstant<1>(); // type error; this kind of thing is not yet supported. coming soon-ish?
-// const AGE4 = AGE + 1; // type error; this kind of thing is not yet supported but theoretically could be
-//
-// extracting the value of constant is currently non-trivial; the following does not exist:
-// const AGE_VALUE = extractConstantValue(AGE); // emits AGE_VALUE = 8 in Lua
-// print(AGE_VALUE); // emits print(AGE_VALUE)
+// const AGE3 : number = AGE; // works; Constant is T & {brand} so it is trivially assignable to T
+// const AGE4 = AGE + 1; // emits AGE4 = 8 + 1 in lua, which the minifier can fold to AGE4 = 9.
+// const AGE5 = AGE + ticbuild.MakeConstant<1>(); // works-ish. emits AGE5 = 8 + 1.
+//   we could add support for combining constants to form a single literal, but that reaches
+// outside the intended purpose of making defines discoverable in typescript.
 
 import * as ts from "typescript";
 import * as tstl from "typescript-to-lua";

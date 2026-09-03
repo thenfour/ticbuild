@@ -746,19 +746,148 @@ provide native transpiling to Lua. So yes the output cart is in Lua.
 - See especially [the caveats section](https://typescripttolua.github.io/docs/caveats) to understand
   how to avoid problems when doing so.
 
-Preprocessor function calls can be written directly in TypeScript. Standalone Lua preprocessor directives use the
-`//--#...` spelling and are preserved into the generated Lua as `--#...`:
+# TypeScript caveat: preprocessor and compile-time constants
+
+ticbuild preprocessor directives kinda sorta work in typescript, with a lot of asterisks.
+They are NOT evaluated in typescript; they pass through to Lua and are evaluated normally
+there. Use `//--#...` spelling.
 
 ```ts
-import { drawScene } from "./drawScene"; // path-based import
-
+// This works:
 const TIC = () => {
   //--#ifdef DEBUG
   trace(__EXPAND("$(project.name) debug build"));
   //--#endif
-  drawScene();
 };
 ```
+
+However there are a LOT of asterisks. The typescript source must actually be correct
+typescript because preprocessor directives are only evaluated after tsc and transpilation.
+
+```ts
+// This fails:
+const TIC = () => {
+  //--#ifdef DEBUG
+  const a = 1;
+  //--#else
+  const a = 2; // duplicate definition of `a`.
+  //--#endif
+};
+```
+
+Another caveat is that in order for these directives to survive through transpilation,
+we mark their location with a generated marker, do the tsc & transpile step, then
+replace the markers with the source directives.
+
+Those internal markers:
+
+- look like function calls (because it's the safest syntax i could think of)
+- cannot be comments themselves; they must be "live-looking code".
+
+But a "function call" marker fails in many contexts. So the following also fails:
+
+```ts
+// This fails:
+const Strings = {
+  //--#ifdef DEBUG
+  DebugName: "James",
+  //--#else
+  ReleaseName: "Ensor",
+  //--#endif
+};
+```
+
+Even though there are no collisions or other conflicts / broken syntax, the
+intermediate representation will produce something like,
+
+```ts
+// This fails:
+const Strings = {
+  __PREPROCESSOR_MARKER("key")
+  DebugName: "James",
+  __PREPROCESSOR_MARKER("key")
+  ReleaseName: "Ensor",
+  __PREPROCESSOR_MARKER("key")
+};
+```
+
+Which will fail compilation.
+
+Solving this is non-trivial: Doing actual preprocessing before tstl is not as
+easy as it first seems. Even if the preprocessing itself is easy, tooling won't
+recognized it as valid typescript. IDE syntax highlighting will be effectively
+dead.
+
+Or we continue finding workarounds. Even if the marker issue is solved, there
+are other issues. A root issue is that preprocessor directives in TS are just
+confusing because they are evaluated in Lua. Example:
+
+TSTL actually supports `const enum` inlining, but we can't use it for defines
+because `const enum` doesn't support `boolean` or `undefined`.
+
+```
+// code.ts
+//--#macro FLOOR(x) => x // 1 -- the expression here is Lua, not TypeScript
+declare function FLOOR(x : number) : number; // you also need this in order for TypeScript to know it's accessible.
+```
+
+Lua makes it easy to introduce things like oddball `--#ifdef`s because it's such
+a permissive language that these constructs don't break language servers.
+
+The most common cases i try to facilitate:
+
+- Preprocessor defines
+- Compile-time constant creation
+- Conditional code blocks
+
+## Compile-time constants in TypeScript
+
+ticbuild's Typescript processor supports a special type for compile-time constants.
+Preprocessor "defines" are made available using this mechanism. See the `ticbuild`
+namespace (in `tic80.d.ts`) for the various utilities around this.
+
+```ts
+type DebugValue = ticbuild.Defines["DEBUG"];
+type BuildLabel = ticbuild.IfDefined<"DEBUG", "debug", "release">;
+
+const ENABLE_LOGGING = ticbuild.IsDefined("DEBUG");
+// ENABLE_LOGGING: ticbuild.Constant<true> in a build where DEBUG is present
+```
+
+`ticbuild.Constant<T>` is a compiler instruction as well as a TypeScript type.
+Every value expression with that type is emitted as the exact string, number,
+or boolean literal `T`; the original expression is not evaluated at runtime.
+`IsDefined()` returns such a constant, and `MakeConstant()` creates general
+constants that are independent of preprocessor defines:
+
+```ts
+export const AGE = ticbuild.MakeConstant<8>();
+ticbuild.assert_const(AGE); // checked by TypeScript, emits no Lua
+```
+
+Constants can be exported and imported normally. The imported reference keeps
+its `Constant<T>` type and is inlined at each use; its declaration and import
+plumbing are omitted from Lua. A module imported only for constants is therefore
+not executed at runtime. If that module also has intended side effects, import
+it separately with `import "./module"`.
+
+The mechanism is deliberately available to user-authored types and assertions,
+not restricted to ticbuild-created values. This is powerful: asserting that an
+expression is `ticbuild.Constant<8>` tells the compiler to emit `8` and discard
+that expression, including any side effects. `T` must resolve to one exact
+string, number, or boolean literal; broad primitive types and unions are errors.
+Constant bindings must use `const`. Operations normally strip the `Constant<>`
+wrap (`const x = ticbuild.MakeConstant<8> + 1` becomes `number`), so
+`ticbuild.assert_const(value)` can verify that a value is still compile-time constant.
+
+The emitted condition in `if (ticbuild.IsDefined("DEBUG"))` is currently a Lua
+literal condition. Guaranteed removal of the unreachable branch is a separate
+optimization and is not part of this first constant-inlining slice.
+
+ticbuild writes the active definition map to
+`.ticbuild/declarations/build-constants.d.ts` for ordinary TypeScript tooling.
+As with other generated declarations, build once after changing configuration
+if the editor has not refreshed it yet.
 
 Lua and TypeScript code assets declared in the project manifest are available
 as TypeScript modules under `ticbuild-assets/<manifest import name>`.
