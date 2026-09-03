@@ -136,6 +136,33 @@ declare function trace(message: unknown, color?: number): void;
 declare function reset(): void;
 declare function exit(): void;
 
+// ticbuild compile-time constants / preprocessor defines access.
+// These declarations are interpreted by
+// ticbuild's TypeScriptToLua transform and do not provide the actual runtime globals.
+declare namespace ticbuild {
+  // Scalar literal types supported by ticbuild's constant inliner.
+  type ConstantValue = string | number | boolean;
+
+  // @internal Compiler marker used to recognize Constant<T>.
+  const __constantBrand: unique symbol;
+  // A value expression that ticbuild replaces with the exact literal T during processing
+  type Constant<T extends ConstantValue> = T & { readonly [__constantBrand]: T };
+
+  // Exact values of the active manifest/build-configuration defines
+  interface Defines { }
+  // Whether Name is present in the active build's Defines map.
+  type IsDefined<Name extends string> = Name extends keyof Defines ? true : false;
+  // Selects Yes or No according to the presence of Name in Defines.
+  type IfDefined<Name extends string, Yes, No> = IsDefined<Name> extends true ? Yes : No;
+
+  // Returns a compile-time constant indicating whether the literal Name is defined.
+  function IsDefined<Name extends string>(name: string extends Name ? never : Name): Constant<IsDefined<Name>>;
+
+  // Creates a compile-time constant whose emitted value is the literal T.
+  function MakeConstant<T extends ConstantValue>(): Constant<T>;
+  function assert_const<T extends ConstantValue>(value: Constant<T>): void;
+}
+
 // ticbuild preprocessor functions.
 declare function __EXPAND(value: string): string;
 declare function __IMPORT(pipeline: string, importReference: string): any;

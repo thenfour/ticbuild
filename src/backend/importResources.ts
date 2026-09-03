@@ -18,6 +18,7 @@ import { ImportDefinition, kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore, canonicalizeAssetImport } from "./projectCore";
 import { ImportSourceManager, MaterializedImportSource } from "./importSources";
 import { profileAsync, TraceProfiler, TraceScope, TraceTrack } from "../utils/traceProfiler";
+import { writeTypeScriptBuildConstants } from "./importers/TypeScriptBuildConstants";
 
 export async function loadAllImports(
   project: TicbuildProjectCore,
@@ -139,6 +140,12 @@ export async function loadAllImports(
     if (!declarationsChanged) {
       return;
     }
+    await profileAsync(
+      parentScope,
+      "Write TypeScript build constants",
+      { category: "TypeScript declarations" },
+      () => writeTypeScriptBuildConstants(project),
+    );
     await profileAsync(
       parentScope,
       "Prepare Lua asset declarations",

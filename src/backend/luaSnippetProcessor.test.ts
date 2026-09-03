@@ -108,7 +108,9 @@ describe("Code snippet processor", () => {
   it("transpiles TypeScript, preserves directives until preprocessing, and reports each Lua stage", async () => {
     const core = makeCore();
     const source = [
+      'const ENABLED = ticbuild.IsDefined("FEATURE");',
       "export function TIC(): void {",
+      "  trace(ENABLED);",
       "  //--#ifdef FEATURE",
       '  trace("enabled");',
       "  //--#else",
@@ -125,6 +127,9 @@ describe("Code snippet processor", () => {
 
     expect(result.language).toBe("typescript");
     expect(result.generatedLuaSource).toContain("--#ifdef FEATURE");
+    expect(result.generatedLuaSource).toContain("trace(true)");
+    expect(result.generatedLuaSource).not.toContain("ticbuild");
+    expect(result.generatedLuaSource).not.toContain("ENABLED");
     expect(result.generatedLuaSource).toContain('trace("disabled")');
     expect(result.preprocessedSource).toContain('trace("enabled")');
     expect(result.preprocessedSource).not.toContain('trace("disabled")');

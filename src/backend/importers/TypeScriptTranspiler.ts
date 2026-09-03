@@ -22,6 +22,11 @@ import {
   TypeScriptManifestModuleDeclaration,
 } from "./TypeScriptManifestModules";
 import { profileSync, type TraceTrack } from "../../utils/traceProfiler";
+import {
+  getTypeScriptBuildConstantsPath,
+  renderTypeScriptBuildConstants,
+} from "./TypeScriptBuildConstants";
+import { createTypeScriptConstantPlugin } from "./TypeScriptConstantPlugin";
 
 export type TypeScriptTranspileResult = GeneratedLuaSource & {
   luaDefinitionBlocks: readonly LuaDefinitionBlock[];
@@ -75,9 +80,22 @@ export function transpileTypeScriptToLua(
     const options = createTypeScriptTranspilationOptions(configuredProject.options);
     const luaAssetDeclarationsPath = getLuaAssetDeclarationsPath(project.projectDir);
     const typeScriptManifestDeclarationsPath = getTypeScriptManifestDeclarationsPath(project.projectDir);
-    const generatedDeclarationRoots = [luaAssetDeclarationsPath, typeScriptManifestDeclarationsPath].filter(fileExists);
+    const typeScriptBuildConstantsPath = getTypeScriptBuildConstantsPath(project.projectDir);
+    const generatedDeclarationRoots = [
+      luaAssetDeclarationsPath,
+      typeScriptManifestDeclarationsPath,
+      typeScriptBuildConstantsPath,
+    ].filter((filePath) => filePath === typeScriptBuildConstantsPath || fileExists(filePath));
 
-    const compilerHost = createCompilerHost(options, entryFilePath, entrySource);
+    // generated declarations are virtual generated sources for input to the transpiler
+    const virtualSources = new Map([[typeScriptBuildConstantsPath, renderTypeScriptBuildConstants(project)]]);
+
+    const compilerHost = createCompilerHost(
+      options,
+      entryFilePath,
+      entrySource,
+      virtualSources,
+    );
     const program = ts.createProgram(
       distinctTSPaths([
         entryFilePath,
@@ -123,7 +141,7 @@ export function transpileTypeScriptToLua(
   profileSync(profileTrack, "Transpile TypeScript to Lua", { category: "TypeScript" }, () => {
     const emitResult = new tstl.Transpiler({ emitHost }).emit({
       program,
-      plugins: [staticLinker.plugin],
+      plugins: [createTypeScriptConstantPlugin(), staticLinker.plugin],
       writeFile() { },
     });
     const diagnostics = ts.sortAndDeduplicateDiagnostics([
@@ -241,16 +259,25 @@ function createCompilerHost(
   options: tstl.CompilerOptions,
   entryFilePath: string,
   entrySource: string,
+  virtualSources: ReadonlyMap<string, string>,
 ): ts.CompilerHost {
   const host = ts.createCompilerHost(options);
   const originalGetSourceFile = host.getSourceFile.bind(host);
   const canonicalEntryPath = getCanonicalTSPathKey(entryFilePath);
+  const canonicalVirtualSources = new Map(
+    Array.from(virtualSources, ([fileName, source]) => [getCanonicalTSPathKey(fileName), { fileName, source }]),
+  );
 
   host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
     const isEntry = getCanonicalTSPathKey(fileName) === canonicalEntryPath;
     if (isEntry) {
       const transformed = preserveTicbuildDirectives(entrySource);
       return ts.createSourceFile(fileName, transformed, languageVersion, true, ts.ScriptKind.TS);
+    }
+
+    const virtualSource = canonicalVirtualSources.get(getCanonicalTSPathKey(fileName));
+    if (virtualSource) {
+      return ts.createSourceFile(virtualSource.fileName, virtualSource.source, languageVersion, true, ts.ScriptKind.TS);
     }
 
     const original = originalGetSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);

@@ -6,7 +6,7 @@ import * as cons from "../../utils/console";
 import { parseLua } from "../../utils/lua/lua_processor";
 import { ResourceManager } from "../ImportedResourceTypes";
 import { loadAllImports } from "../importResources";
-import { Manifest } from "../manifestTypes";
+import { Manifest, PreprocessorValue } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { mapPreprocessedOffsetToLineColumn } from "../sourceMap";
 import { LuaCodeResource } from "./LuaCodeImporter";
@@ -14,8 +14,9 @@ import { TypeScriptCodeResource } from "./TypeScriptCodeImporter";
 import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
 import { getTypeScriptLuaDeclarationsPath } from "./TypeScriptLuaDeclarations";
 import { getTypeScriptManifestDeclarationsPath } from "./TypeScriptManifestModules";
+import { getTypeScriptBuildConstantsPath } from "./TypeScriptBuildConstants";
 
-function createProject(projectDir: string, imports: Manifest["imports"], defines?: Record<string, boolean>) {
+function createProject(projectDir: string, imports: Manifest["imports"], defines?: Record<string, PreprocessorValue>) {
   const manifest: Manifest = {
     buildConfiguration: "release",
     project: {
@@ -43,6 +44,256 @@ function getTypeScriptResource(resources: ResourceManager, name: string): TypeSc
 }
 
 describe("TypeScriptCodeResource", () => {
+  it("inlines typed build constants and writes active define declarations", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-constants-"));
+    fs.writeFileSync(
+      path.join(projectDir, "features.ts"),
+      [
+        'export const DEBUG_ENABLED = ticbuild.IsDefined("DEBUG");',
+        'export const FALSE_DEFINE_IS_PRESENT = ticbuild.IsDefined("DISABLED_FEATURE");',
+        'export const MISSING = ticbuild.IsDefined("MISSING");',
+        "export const AGE = ticbuild.MakeConstant<8>();",
+        'export const LABEL = ticbuild.MakeConstant<"hello">();',
+        "export const OFF = ticbuild.MakeConstant<false>();",
+        'trace("compile-time-only module side effect");',
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { AGE, DEBUG_ENABLED, FALSE_DEFINE_IS_PRESENT, LABEL, MISSING, OFF } from "./features";',
+        "type Selected = ticbuild.IfDefined<\"DEBUG\", \"debug\", \"release\">;",
+        "type ProjectConstant<T extends ticbuild.ConstantValue> = ticbuild.Constant<T>;",
+        'const selected: Selected = "debug";',
+        "const USER_CONSTANT = time() as unknown as ProjectConstant<9>;",
+        "ticbuild.assert_const(AGE);",
+        "export function TIC(): void {",
+        "  print(AGE);",
+        "  trace(DEBUG_ENABLED);",
+        "  trace(FALSE_DEFINE_IS_PRESENT);",
+        "  trace(MISSING);",
+        "  print(LABEL);",
+        "  trace(OFF);",
+        "  print(USER_CONSTANT);",
+        '  trace(ticbuild.IsDefined("DEBUG"));',
+        "  print(ticbuild.MakeConstant<4>());",
+        "  print(selected);",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(
+      projectDir,
+      [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }],
+      { DEBUG: true, DISABLED_FEATURE: false, MODE: "fast", COUNT: 3, PROJECT_NAME: "$(project.name)" },
+    );
+
+    try {
+      const resources = await loadAllImports(project);
+      const resource = getTypeScriptResource(resources, "main");
+      const source = resource.getCodeArtifacts(project).inputSource;
+      const declarations = fs.readFileSync(getTypeScriptBuildConstantsPath(projectDir), "utf-8");
+      const luaDeclarations = fs.readFileSync(getTypeScriptLuaDeclarationsPath(projectDir), "utf-8");
+
+      expect(source).toContain("print(8)");
+      expect(source).toContain("print(9)");
+      expect(source).toContain("print(4)");
+      expect(source).toContain("trace(true)");
+      expect(source).toContain("trace(false)");
+      expect(source).toContain('print("hello")');
+      expect(source).not.toContain("compile-time-only module side effect");
+      expect(source).not.toContain("require(");
+      expect(source).not.toContain("ticbuild");
+      expect(source).not.toContain("assert_const");
+      expect(source).not.toContain("time()");
+      expect(source).not.toContain("DEBUG_ENABLED");
+      expect(source).not.toContain("FALSE_DEFINE_IS_PRESENT");
+      expect(source).not.toContain("MISSING");
+      expect(source).not.toContain("LABEL");
+      expect(source).not.toContain("OFF");
+      expect(declarations).toContain('readonly "DEBUG": true;');
+      expect(declarations).toContain('readonly "DISABLED_FEATURE": false;');
+      expect(declarations).toContain('readonly "MODE": "fast";');
+      expect(declarations).toContain('readonly "COUNT": 3;');
+      expect(declarations).toContain('readonly "PROJECT_NAME": "typescript-test";');
+      expect(declarations).not.toContain('readonly "MISSING"');
+      expect(luaDeclarations).not.toContain("AGE = nil");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("supports compile-time constants with isolatedModules tooling", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-constant-isolated-modules-"));
+    fs.writeFileSync(
+      path.join(projectDir, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { isolatedModules: true, strict: true },
+        include: ["*.ts", ".ticbuild/declarations/**/*.d.ts"],
+      }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'const ENABLED = ticbuild.IsDefined("DEBUG");',
+        "export function TIC(): void { trace(ENABLED); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(
+      projectDir,
+      [{
+        name: "main",
+        path: "main.ts",
+        kind: "TypeScriptCode",
+        typescript: { tsconfig: "tsconfig.json" },
+      }],
+      { DEBUG: true },
+    );
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+
+      expect(source).toContain("trace(true)");
+      expect(source).not.toContain("ENABLED");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes constant bindings while preserving mixed runtime module imports", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-constant-mixed-import-"));
+    fs.writeFileSync(
+      path.join(projectDir, "features.ts"),
+      [
+        "export const AGE = ticbuild.MakeConstant<8>();",
+        "export function runtimeValue(): number { return 3; }",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { AGE, runtimeValue } from "./features";',
+        "export function TIC(): void { print(AGE + runtimeValue()); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+
+      expect(source).toContain("function runtimeValue()");
+      expect(source).toContain("8 + runtimeValue()");
+      expect(source).not.toContain("AGE");
+      expect(source).not.toContain("require(");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("inlines constants exported by manifest TypeScript modules without including their runtime", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-constant-manifest-module-"));
+    fs.writeFileSync(
+      path.join(projectDir, "features.ts"),
+      [
+        'export const ENABLE_LOGGING = ticbuild.IsDefined("DEBUG");',
+        'trace("manifest constant module side effect");',
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        'import { ENABLE_LOGGING } from "ticbuild-assets/features";',
+        "export function TIC(): void { trace(ENABLE_LOGGING); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(
+      projectDir,
+      [
+        { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+        { name: "features", path: "features.ts", kind: "TypeScriptCode" },
+      ],
+      { DEBUG: true },
+    );
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+      const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(projectDir), "utf-8");
+
+      expect(declarations).toContain("export const ENABLE_LOGGING: ticbuild.Constant<true>;");
+      expect(source).toContain("trace(true)");
+      expect(source).not.toContain("manifest constant module side effect");
+      expect(source).not.toContain("import:features");
+      expect(source).not.toContain("ENABLE_LOGGING");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports non-literal and mutable ticbuild constants intentionally", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-constant-diagnostics-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        "let BROAD = ticbuild.MakeConstant<number>();",
+        "const CHOICE = ticbuild.MakeConstant<1 | 2>();",
+        'const DEFINE_NAME: string = "DEBUG";',
+        "const DYNAMIC_DEFINE = ticbuild.IsDefined(DEFINE_NAME);",
+        "const holder = { value: ticbuild.MakeConstant<8>() };",
+        "holder.value = ticbuild.MakeConstant<8>();",
+        "export function TIC(): void { print(BROAD); }",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }]);
+
+    try {
+      let thrown: unknown;
+      try {
+        await loadAllImports(project);
+      } catch (error) {
+        thrown = error;
+      }
+      const message = String(thrown);
+      expect(message).toMatch(/ticbuild\.Constant<T> requires one exact string, number, or boolean literal; received number/);
+      expect(message).toMatch(/received 1 \| 2/);
+      expect(message).toMatch(/ticbuild\.Constant binding must be declared with const/);
+      expect(message).toMatch(/ticbuild\.Constant value cannot be used as an assignment target/);
+      expect(message).toMatch(/Argument of type 'string' is not assignable to parameter of type 'never'/);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses assert_const as an erased TypeScript type assertion", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-assert-constant-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        "const AGE = ticbuild.MakeConstant<8>();",
+        "ticbuild.assert_const(AGE + 1);",
+        "export function TIC(): void {}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }]);
+
+    try {
+      await expect(loadAllImports(project)).rejects.toThrow(/Argument of type 'number' is not assignable/);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("emits LuaCATS definitions for TypeScript globals with checker types, docs, and source links", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-definitions-"));
     const mainPath = path.join(projectDir, "main.ts");

@@ -13,6 +13,10 @@ import {
   LuaDefinitionBlock,
 } from "./TypeScriptLuaDeclarations";
 import { isLuaIdentifierName } from "../../utils/lua/lua_utils";
+import {
+  isTicbuildConstantNode,
+  isTicbuildConstantSymbol,
+} from "./TypeScriptConstantPlugin";
 
 // todo: unify all these. search for ".tsx" to see what i mean.
 export function isTypeScriptImplementationFile(fileName: string): boolean {
@@ -396,7 +400,10 @@ function collectStaticDependencies(
         throwStaticLinkError(sourceFile, clause.namedBindings, "namespace imports are not supported", projectDir);
       }
       const runtimeBindings = clause?.namedBindings && ts.isNamedImports(clause.namedBindings)
-        ? clause.namedBindings.elements.filter((element) => !element.isTypeOnly)
+        ? clause.namedBindings.elements.filter(
+          // note: constant exports are compile-time literals and don't produce Lua.
+          (element) => !element.isTypeOnly && !isTicbuildConstantNode(program.getTypeChecker(), element.name),
+        )
         : [];
       const hasRuntimeBindings = runtimeBindings.length > 0;
       if (clause && !hasRuntimeBindings) {
@@ -418,7 +425,10 @@ function collectStaticDependencies(
       if (ts.isNamespaceExport(statement.exportClause)) {
         throwStaticLinkError(sourceFile, statement.exportClause, "namespace exports are not supported", projectDir);
       }
-      const runtimeExports = statement.exportClause.elements.filter((element) => !element.isTypeOnly);
+      const runtimeExports = statement.exportClause.elements.filter(
+        // note: constant exports are compile-time literals and don't produce Lua.
+        (element) => !element.isTypeOnly && !isTicbuildConstantNode(program.getTypeChecker(), element.name),
+      );
       if (runtimeExports.some((element) => element.name.text === "default")) {
         throwStaticLinkError(sourceFile, statement, "default exports are not supported", projectDir);
       }
@@ -446,7 +456,11 @@ function getModuleValueExportNames(program: ts.Program, moduleSpecifier: ts.Stri
   return checker.getExportsOfModule(moduleSymbol)
     .filter((symbol) => {
       const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-      return (target.flags & ts.SymbolFlags.Value) !== 0;
+      return (
+        (target.flags & ts.SymbolFlags.Value) !== 0 &&
+        // constant exports are compile-time literals and don't produce Lua.
+        !isTicbuildConstantSymbol(checker, target, moduleSpecifier)
+      );
     })
     .map((symbol) => symbol.name);
 }
@@ -489,6 +503,10 @@ function validateGlobalExports(
         ? checker.getAliasedSymbol(exportedSymbol)
         : exportedSymbol;
       if ((target.flags & ts.SymbolFlags.Value) === 0) {
+        continue;
+      }
+      if (isTicbuildConstantSymbol(checker, target, module.sourceFile)) {
+        // constant exports are compile-time literals and don't produce Lua.
         continue;
       }
       validateLuaGlobalName(exportedSymbol.name, module.sourceFile, projectDir);

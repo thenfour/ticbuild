@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import * as ts from "typescript";
 import { ensureDir, fileExists, readTextFileAsync, writeTextFile } from "../../utils/fileSystem";
 import { isLuaIdentifierName } from "../../utils/lua/lua_utils";
+import { isTicbuildConstantSymbol } from "./TypeScriptConstantPlugin";
 
 export const TYPESCRIPT_LUA_DECLARATIONS_FILE = "typescript-globals.d.lua";
 
@@ -66,7 +67,10 @@ export function collectTypeScriptLuaDefinitionBlocks(
         continue;
       }
       const target = resolveAliasedSymbol(checker, exportedSymbol);
-      if ((target.flags & ts.SymbolFlags.Value) !== 0) {
+      if (
+        (target.flags & ts.SymbolFlags.Value) !== 0 &&
+        !isTicbuildConstantSymbol(checker, target, sourceFile)// note: constant exports are compile-time literals and don't produce Lua.
+      ) {
         globals.set(exportedSymbol.name, target);
       }
     }

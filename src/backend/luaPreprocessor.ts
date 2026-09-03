@@ -30,6 +30,7 @@ import {
 import { GeneratedLuaSource } from "./ImportedResourceTypes";
 import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "./importSources";
 import { profileAsync, profileSync, TraceScope } from "../utils/traceProfiler";
+import { getResolvedPreprocessorDefines } from "./preprocessorDefines";
 
 
 export type LuaPreprocessorValue = PreprocessorValue;
@@ -131,7 +132,7 @@ export async function preprocessLuaCode(
   filePath: string,
   options: LuaPreprocessorOptions = {},
 ): Promise<LuaPreprocessResult> {
-  const manifestDefines = getManifestPreprocessorDefines(project);
+  const manifestDefines = getResolvedPreprocessorDefines(project);
   const fallbackImportSources = new Map<string, Promise<MaterializedImportSource>>();
   const resolveImportSource: LuaImportSourceResolver = options.resolveImportSource ?? (async (importName) => {
     const importDef = project.manifest.imports.find((candidate) => candidate.name === importName);
@@ -217,19 +218,6 @@ export async function preprocessLuaCode(
     minifyAllowedGlobalNames: Array.from(new Set(state.minifyAllowedGlobalNames)),
     minifyGlobalNamesToKeep: Array.from(new Set(state.minifyGlobalNamesToKeep)),
   };
-}
-
-function getManifestPreprocessorDefines(project: TicbuildProjectCore): Record<string, LuaPreprocessorValue> {
-  const defines = project.manifest.preprocessor?.defines;
-  if (!defines) {
-    return {};
-  }
-
-  const resolved: Record<string, LuaPreprocessorValue> = {};
-  for (const [key, value] of Object.entries(defines)) {
-    resolved[key] = typeof value === "string" ? project.substituteVariables(value) : value;
-  }
-  return resolved;
 }
 
 type ProcessResult = {
