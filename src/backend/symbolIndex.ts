@@ -645,7 +645,11 @@ export async function buildProjectSymbolIndex(
         buildSymbolIndexForPreprocessed(builtins, project.projectDir, builder);
     }
     for (const resource of resources.items.values()) {
-        if (!(resource instanceof CodeResource) || !resource.supportsLuaSymbolIndex()) {
+        if (
+            !(resource instanceof CodeResource) ||
+            !resource.supportsLuaSymbolIndex() ||
+            !resource.hasCompletedCodePipeline()
+        ) {
             continue;
         }
         const preprocess = resource.getPreprocessResult();

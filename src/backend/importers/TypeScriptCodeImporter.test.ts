@@ -132,20 +132,20 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
-  it("aggregates declarations from every manifest TypeScript resource", async () => {
+  it("emits Lua declarations only for reachable manifest TypeScript resources", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-definitions-all-"));
     fs.writeFileSync(path.join(projectDir, "left.ts"), "export function fromLeft(value: number): number { return value; }\n", "utf-8");
-    fs.writeFileSync(path.join(projectDir, "right.ts"), "export const fromRight: string = \"right\";\n", "utf-8");
+    fs.writeFileSync(path.join(projectDir, "right.ts"), "this is not valid TypeScript @", "utf-8");
     const project = createProject(projectDir, [
       { name: "left", path: "left.ts", kind: "TypeScriptCode" },
       { name: "right", path: "right.ts", kind: "TypeScriptCode" },
     ]);
 
     try {
-      await loadAllImports(project);
+      const resources = await loadAllImports(project);
       const declarations = fs.readFileSync(getTypeScriptLuaDeclarationsPath(projectDir), "utf-8");
       expect(declarations).toContain("function fromLeft(value) end");
-      expect(declarations).toContain("---@type string\nfromRight = nil");
+      expect(resources.items.has("right")).toBe(false);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -432,9 +432,13 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
-  it("rejects duplicate Lua globals across independent manifest TypeScript resources", async () => {
+  it("rejects duplicate Lua globals across reachable manifest TypeScript resources", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-manifest-global-collision-"));
-    fs.writeFileSync(path.join(projectDir, "left.ts"), "export const SharedGlobal = 1;\n", "utf-8");
+    fs.writeFileSync(
+      path.join(projectDir, "left.ts"),
+      'import "ticbuild-assets/right"; export const SharedGlobal = 1;\n',
+      "utf-8",
+    );
     fs.writeFileSync(path.join(projectDir, "right.ts"), "export const SharedGlobal = 2;\n", "utf-8");
     const project = createProject(projectDir, [
       { name: "left", path: "left.ts", kind: "TypeScriptCode" },
@@ -443,7 +447,7 @@ describe("TypeScriptCodeResource", () => {
 
     try {
       await expect(loadAllImports(project)).rejects.toThrow(
-        "TypeScript resources both declare Lua global 'SharedGlobal'",
+        "manifest code asset 'right' and left.ts both declare Lua global 'SharedGlobal'",
       );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });

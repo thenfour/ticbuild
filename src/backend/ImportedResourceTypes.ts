@@ -48,11 +48,56 @@ export abstract class ImportedResourceBase {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+export type ImportedResourceLoader = (importName: string) => Promise<ImportedResourceBase | undefined>;
+export type GeneratedLuaPreparation = (
+  importName: string,
+  resource: ImportedResourceBase,
+) => Promise<void>;
+
 export class ResourceManager {
+
+  // `items` contains materialized resources only. Manifest imports are definitions;
+  // the loader materializes on demand (__IMPORT, inclusion, assembly reference)
   items: Map<string, ImportedResourceBase>;
-  // resource manager holds all the imported root resources (code files, imported carts.)
-  constructor(items: Map<string, ImportedResourceBase>) {
+  private readonly usedImportNames = new Set<string>();
+
+  constructor(
+    items: Map<string, ImportedResourceBase>,
+    private readonly loadResourceImpl?: ImportedResourceLoader,
+    private readonly prepareGeneratedLua?: GeneratedLuaPreparation,
+    private readonly declaredImportNames: readonly string[] = Array.from(items.keys()),
+    private readonly generatedLuaImportNames?: ReadonlySet<string>,
+  ) {
     this.items = items;
+    for (const name of items.keys()) {
+      this.usedImportNames.add(name);
+    }
+  }
+
+  async loadResource(importName: string): Promise<ImportedResourceBase | undefined> {
+    const existing = this.items.get(importName);
+    if (existing) {
+      this.usedImportNames.add(importName);
+      return existing;
+    }
+    const resource = await this.loadResourceImpl?.(importName);
+    if (resource) {
+      this.items.set(importName, resource);
+      this.usedImportNames.add(importName);
+    }
+    return resource;
+  }
+
+  markImportUsed(importName: string): void {
+    this.usedImportNames.add(importName);
+  }
+
+  isImportUsed(importName: string): boolean {
+    return this.usedImportNames.has(importName);
+  }
+
+  getDeclaredImportNames(): readonly string[] {
+    return this.declaredImportNames;
   }
 
   getResourceView(project: TicbuildProjectCore, spec: AssetReference): ResourceViewBase {
@@ -67,11 +112,15 @@ export class ResourceManager {
     project: TicbuildProjectCore,
     importName: string,
   ): Promise<GeneratedLuaSource | undefined> {
-    const resource = this.items.get(importName);
+    if (this.generatedLuaImportNames && !this.generatedLuaImportNames.has(importName)) {
+      return undefined;
+    }
+    const resource = await this.loadResource(importName);
     if (!resource?.getGeneratedLuaSource) {
       // todo: emit warning or error; this is likely a mistake authors want to know about.
       return undefined;
     }
+    await this.prepareGeneratedLua?.(importName, resource);
     return await resource.getGeneratedLuaSource(project);
   }
 

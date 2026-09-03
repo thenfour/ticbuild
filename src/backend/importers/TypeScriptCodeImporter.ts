@@ -7,9 +7,11 @@ import { transpileTypeScriptToLua } from "./TypeScriptTranspiler";
 import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
 import { LuaDefinitionBlock } from "./TypeScriptLuaDeclarations";
 import {
+  collectTypeScriptManifestCodeDependencies,
   collectTypeScriptManifestDependencies,
   TypeScriptManifestModuleDeclaration,
 } from "./TypeScriptManifestModules";
+import { ManifestCodeModuleDefinition } from "./ManifestCodeTypeScriptModules";
 
 export class TypeScriptCodeResource extends CodeResource {
   private luaDefinitionBlocks: readonly LuaDefinitionBlock[] = [];
@@ -45,6 +47,10 @@ export class TypeScriptCodeResource extends CodeResource {
 
   getTypeScriptManifestDependencies(project: TicbuildProjectCore): readonly string[] {
     return collectTypeScriptManifestDependencies(project, this.filePath, this.sourceText, this.typescriptConfig);
+  }
+
+  getManifestCodeDependencies(project: TicbuildProjectCore): readonly ManifestCodeModuleDefinition[] {
+    return collectTypeScriptManifestCodeDependencies(project, this.filePath, this.sourceText, this.typescriptConfig);
   }
 
   getTypeScriptManifestModuleDeclaration(): TypeScriptManifestModuleDeclaration {

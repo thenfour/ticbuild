@@ -336,7 +336,18 @@ async function writeDevelopmentArtifacts(
 ): Promise<void> {
   const importsLogPath = project.resolvedCore.resolveObjPath("imports.log");
   const importsLines: string[] = [];
-  for (const [identifier, resource] of project.resourceMgr!.items.entries()) {
+  const resourceManager = project.resourceMgr!;
+  for (const identifier of resourceManager.getDeclaredImportNames()) {
+    const resource = resourceManager.items.get(identifier);
+    if (!resource) {
+      importsLines.push(
+        resourceManager.isImportUsed(identifier)
+          ? `Imported resource: ${identifier} (source consumed on demand)`
+          : `Imported resource: ${identifier} (unused)`,
+      );
+      importsLines.push("");
+      continue;
+    }
     importsLines.push(`Imported resource: ${identifier} (${resource.constructor.name})`);
     importsLines.push(`  deps:`);
     for (const dep of resource.getDependencyList()) {
@@ -344,71 +355,70 @@ async function writeDevelopmentArtifacts(
     }
 
     if (resource instanceof CodeResource) {
-      const codeRequests = getLuaCodeAssemblyRequests(project, identifier);
-      const stats = resource.getCodeSizeStats(project.resolvedCore);
-      const compressedOutputs = await getLuaCompressedCodeOutputs(project, resource, codeRequests);
-      logLuaCodeSize(reporter, identifier, stats, codeRequests, compressedOutputs);
+      if (resource.hasCompletedCodePipeline()) {
+        const codeRequests = getLuaCodeAssemblyRequests(project, identifier);
+        const stats = resource.getCodeSizeStats(project.resolvedCore);
+        const compressedOutputs = await getLuaCompressedCodeOutputs(project, resource, codeRequests);
+        logLuaCodeSize(reporter, identifier, stats, codeRequests, compressedOutputs);
 
-      importsLines.push(`  Code stats:`);
-      importsLines.push(`    Input        : ${formatBytes(stats.inputBytes)}`);
-      importsLines.push(`    Preprocessed : ${formatBytes(stats.preprocessedBytes)}`);
-      importsLines.push(`    Minified     : ${formatBytes(stats.minifiedBytes)}`);
-      if (compressedOutputs.length > 0) {
-        importsLines.push(`    Compressed   : ${formatBytes(compressedOutputs[0].bytes.length)}`);
-      }
+        importsLines.push(`  Code stats:`);
+        importsLines.push(`    Input        : ${formatBytes(stats.inputBytes)}`);
+        importsLines.push(`    Preprocessed : ${formatBytes(stats.preprocessedBytes)}`);
+        importsLines.push(`    Minified     : ${formatBytes(stats.minifiedBytes)}`);
+        if (compressedOutputs.length > 0) {
+          importsLines.push(`    Compressed   : ${formatBytes(compressedOutputs[0].bytes.length)}`);
+        }
 
-      const artifacts = resource.getCodeArtifacts(project.resolvedCore);
-      reportLuaMinification(reporter, identifier, artifacts.minificationReport);
-      const generatedPath = project.resolvedCore.resolveObjPath(`${identifier}.00.generated.lua`);
-      const generatedMapPath = `${generatedPath}.map`;
-      const preprocessedPath = project.resolvedCore.resolveObjPath(`${identifier}.01.preprocessed.lua`);
-      const preprocessedMapPath = `${preprocessedPath}.map`;
-      const minifiedPathLeaf = GetFinalLuaArtifactFileLeaf(identifier);
-      const minifiedPath = project.resolvedCore.resolveObjPath(minifiedPathLeaf);
-      const minifiedMapPath = `${minifiedPath}.map`;
-
-      await writeTextFile(generatedPath, artifacts.inputSource, "utf-8");
-      await writeLuaSourceMapArtifact(
-        parentScope,
-        identifier,
-        "generated",
-        artifacts.inputSourceMap,
-        artifacts.inputSource,
-        generatedPath,
-        generatedMapPath,
-      );
-      await writeTextFile(preprocessedPath, artifacts.preprocessedSource, "utf-8");
-      await writeLuaSourceMapArtifact(
-        parentScope,
-        identifier,
-        "preprocessed",
-        artifacts.preprocessedSourceMap,
-        artifacts.preprocessedSource,
-        preprocessedPath,
-        preprocessedMapPath,
-      );
-      await writeTextFile(minifiedPath, artifacts.minifiedSource, "utf-8");
-      await writeLuaSourceMapArtifact(
-        parentScope,
-        identifier,
-        "minified",
-        artifacts.minifiedSourceMap,
-        artifacts.minifiedSource,
-        minifiedPath,
-        minifiedMapPath,
-      );
-
-      importsLines.push(`    Wrote: ${generatedPath}`);
-      importsLines.push(`    Wrote: ${generatedMapPath}`);
-      importsLines.push(`    Wrote: ${preprocessedPath}`);
-      importsLines.push(`    Wrote: ${preprocessedMapPath}`);
-      importsLines.push(`    Wrote: ${minifiedPath}`);
-      importsLines.push(`    Wrote: ${minifiedMapPath}`);
-      appendLuaMinificationLog(importsLines, artifacts.minificationReport);
-      if (compressedOutputs.length > 0) {
-        const compressedPath = project.resolvedCore.resolveObjPath(`${identifier}.03.compressed.bin`);
-        await writeBinaryFile(compressedPath, compressedOutputs[0].bytes);
-        importsLines.push(`    Wrote: ${compressedPath}`);
+        const artifacts = resource.getCodeArtifacts(project.resolvedCore);
+        reportLuaMinification(reporter, identifier, artifacts.minificationReport);
+        const writtenPaths = [
+          ...await writeLuaStageArtifact(
+            project,
+            parentScope,
+            identifier,
+            "generated",
+            artifacts.inputSource,
+            artifacts.inputSourceMap,
+          ),
+          ...await writeLuaStageArtifact(
+            project,
+            parentScope,
+            identifier,
+            "preprocessed",
+            artifacts.preprocessedSource,
+            artifacts.preprocessedSourceMap,
+          ),
+          ...await writeLuaStageArtifact(
+            project,
+            parentScope,
+            identifier,
+            "minified",
+            artifacts.minifiedSource,
+            artifacts.minifiedSourceMap,
+          ),
+        ];
+        for (const writtenPath of writtenPaths) {
+          importsLines.push(`    Wrote: ${writtenPath}`);
+        }
+        appendLuaMinificationLog(importsLines, artifacts.minificationReport);
+        if (compressedOutputs.length > 0) {
+          const compressedPath = project.resolvedCore.resolveObjPath(`${identifier}.03.compressed.bin`);
+          await writeBinaryFile(compressedPath, compressedOutputs[0].bytes);
+          importsLines.push(`    Wrote: ${compressedPath}`);
+        }
+      } else if (resource.hasGeneratedLuaSource()) {
+        const generated = await resource.getGeneratedLuaSource(project.resolvedCore);
+        const writtenPaths = await writeLuaStageArtifact(
+          project,
+          parentScope,
+          identifier,
+          "generated",
+          generated.source,
+          generated.sourceMap,
+        );
+        for (const writtenPath of writtenPaths) {
+          importsLines.push(`    Wrote: ${writtenPath}`);
+        }
       }
     }
     if (resource instanceof Tic80Resource) {
@@ -426,22 +436,47 @@ async function writeDevelopmentArtifacts(
     }
     importsLines.push("");
   }
-  const resourceManager = project.resourceMgr;
-  if (resourceManager) {
-    const { symbolIndex, durationMs } = await parentScope.profileAsync("Build symbol index", {}, async (scope) => {
-      const symbolIndex = await buildProjectSymbolIndex(project.resolvedCore, resourceManager);
-      return {
-        symbolIndex,
-        durationMs: Math.round(profiler.getSpanDurationMs(scope)),
-      };
-    });
-    importsLines.push(`Built symbol index in ${durationMs}ms.`);
-    const symbolIndexPath = project.resolvedCore.resolveObjPath("symbols.index.json");
-    await writeTextFile(symbolIndexPath, JSON.stringify(symbolIndex, null, 2), "utf-8");
-    importsLines.push(`Symbol index: ${symbolIndexPath}`);
-  }
+  const { symbolIndex, durationMs } = await parentScope.profileAsync("Build symbol index", {}, async (scope) => {
+    const symbolIndex = await buildProjectSymbolIndex(project.resolvedCore, resourceManager);
+    return {
+      symbolIndex,
+      durationMs: Math.round(profiler.getSpanDurationMs(scope)),
+    };
+  });
+  importsLines.push(`Built symbol index in ${durationMs}ms.`);
+  const symbolIndexPath = project.resolvedCore.resolveObjPath("symbols.index.json");
+  await writeTextFile(symbolIndexPath, JSON.stringify(symbolIndex, null, 2), "utf-8");
+  importsLines.push(`Symbol index: ${symbolIndexPath}`);
 
   await writeTextFile(importsLogPath, importsLines.join("\n"), "utf-8");
+}
+
+async function writeLuaStageArtifact(
+  project: TicbuildProject,
+  parentScope: TraceScope,
+  identifier: string,
+  stage: "generated" | "preprocessed" | "minified",
+  source: string,
+  sourceMap: LuaPreprocessorSourceMap,
+): Promise<[string, string]> {
+  const fileLeaf = stage === "generated"
+    ? `${identifier}.00.generated.lua`
+    : stage === "preprocessed"
+      ? `${identifier}.01.preprocessed.lua`
+      : GetFinalLuaArtifactFileLeaf(identifier);
+  const filePath = project.resolvedCore.resolveObjPath(fileLeaf);
+  const mapPath = `${filePath}.map`;
+  await writeTextFile(filePath, source, "utf-8");
+  await writeLuaSourceMapArtifact(
+    parentScope,
+    identifier,
+    stage,
+    sourceMap,
+    source,
+    filePath,
+    mapPath,
+  );
+  return [filePath, mapPath];
 }
 
 async function writeLuaSourceMapArtifact(

@@ -9,6 +9,7 @@ import { TicbuildProjectCore } from "../projectCore";
 import {
   createManifestCodeModuleCatalog,
   MANIFEST_CODE_MODULE_PREFIX,
+  ManifestCodeModuleDefinition,
   parseManifestCodeModuleSpecifier,
 } from "./ManifestCodeTypeScriptModules";
 import { createTypeScriptTranspilationOptions } from "./TypeScriptTranspilationOptions";
@@ -104,10 +105,21 @@ export function collectTypeScriptManifestDependencies(
   entrySource: string,
   typescriptConfig?: TypeScriptImportConfig,
 ): string[] {
+  return collectTypeScriptManifestCodeDependencies(project, entryFilePath, entrySource, typescriptConfig)
+    .filter((dependency) => dependency.kind === "TypeScriptCode")
+    .map((dependency) => dependency.importName);
+}
+
+export function collectTypeScriptManifestCodeDependencies(
+  project: TicbuildProjectCore,
+  entryFilePath: string,
+  entrySource: string,
+  typescriptConfig?: TypeScriptImportConfig,
+): ManifestCodeModuleDefinition[] {
   const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
   const options = createTypeScriptTranspilationOptions(configuredProject.options);
   const catalog = createManifestCodeModuleCatalog(project);
-  const dependencies = new Set<string>();
+  const dependencies = new Map<string, ManifestCodeModuleDefinition>();
   const visited = new Set<string>();
   const entryKey = canonicalTypeScriptPath(entryFilePath);
 
@@ -139,9 +151,7 @@ export function collectTypeScriptManifestDependencies(
           // The static linker reports the source-located validation error.
           return;
         }
-        if (definition.kind === "TypeScriptCode") {
-          dependencies.add(importName);
-        }
+        dependencies.set(importName, definition);
         return;
       }
 
@@ -172,10 +182,20 @@ export function collectTypeScriptManifestDependencies(
   };
 
   visitFile(entryFilePath);
+  const generatedDeclarationsDir = path.join(project.projectDir, ".ticbuild", "declarations");
   for (const declarationRootPath of configuredProject.declarationRootPaths) {
+    const relativeToGeneratedDeclarations = path.relative(generatedDeclarationsDir, declarationRootPath);
+    if (
+      relativeToGeneratedDeclarations === "" ||
+      (!relativeToGeneratedDeclarations.startsWith("..") && !path.isAbsolute(relativeToGeneratedDeclarations))
+    ) {
+      // Generated aggregate declarations describe work from a previous or
+      // partially completed build; they are outputs, not graph-discovery roots.
+      continue;
+    }
     visitFile(declarationRootPath);
   }
-  return Array.from(dependencies).sort();
+  return Array.from(dependencies.values()).sort((left, right) => left.importName.localeCompare(right.importName));
 }
 
 export function emitTypeScriptManifestModuleDeclaration(

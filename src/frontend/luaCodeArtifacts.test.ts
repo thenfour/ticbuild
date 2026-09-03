@@ -58,6 +58,47 @@ function makeHighEntropyLuaComment(length: number): string {
 }
 
 describe("Lua code build artifacts", () => {
+  it("writes full artifacts only for roots and skips unused manifest imports", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-lua-artifact-reachability-"));
+    writeFile(path.join(dir, "main.lua"), '--#include "import:helper"\nprint(helperValue)\n');
+    writeFile(path.join(dir, "helper.lua"), "helperValue = 42\n");
+    writeFile(path.join(dir, "unused.lua"), "this is not valid Lua @");
+    const manifestPath = path.join(dir, "project.ticbuild.jsonc");
+    writeFile(manifestPath, JSON.stringify({
+      buildConfiguration: "release",
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "out.tic",
+      },
+      imports: [
+        { name: "maincode", path: "main.lua", kind: "LuaCode" },
+        { name: "helper", path: "helper.lua", kind: "LuaCode" },
+        { name: "unused", path: "unused.lua", kind: "LuaCode" },
+      ],
+      assembly: {
+        lua: { minify: false },
+        blocks: [{ chunks: ["CODE"], asset: "maincode" }],
+      },
+    }, null, 2));
+
+    try {
+      await buildCore(manifestPath);
+
+      expect(fs.existsSync(path.join(dir, "obj", "maincode.02.minified.lua"))).toBe(true);
+      expect(fs.existsSync(path.join(dir, "obj", "helper.00.generated.lua"))).toBe(true);
+      expect(fs.existsSync(path.join(dir, "obj", "helper.01.preprocessed.lua"))).toBe(false);
+      expect(fs.existsSync(path.join(dir, "obj", "helper.02.minified.lua"))).toBe(false);
+      expect(fs.existsSync(path.join(dir, "obj", "unused.00.generated.lua"))).toBe(false);
+      expect(fs.readFileSync(path.join(dir, "obj", "imports.log"), "utf-8")).toContain(
+        "Imported resource: unused (unused)",
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not write compressed diagnostics when CODE_COMPRESSED is not assembled", async () => {
     const { dir, manifestPath } = createTempProject("print('ok')", {
       chunks: ["CODE"],

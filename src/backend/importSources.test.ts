@@ -7,6 +7,7 @@ import { Manifest } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 
 function createProject(projectDir: string, imports: Manifest["imports"]): TicbuildProjectCore {
+  const mainImport = imports.find((importDef) => importDef.name === "main");
   const manifest: Manifest = {
     buildConfiguration: "release",
     project: {
@@ -16,7 +17,7 @@ function createProject(projectDir: string, imports: Manifest["imports"]): Ticbui
       outputCartName: "test.tic",
     },
     imports,
-    assembly: { blocks: [] },
+    assembly: { blocks: mainImport ? [{ asset: mainImport.name }] : [] },
   };
   return new TicbuildProjectCore({
     manifest,
@@ -93,6 +94,29 @@ describe("import source engines", () => {
     manager.getDeclaredWatchDependencies();
 
     expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
+  it("does not materialize an unused command import", async () => {
+    const markerPath = path.join(projectDir, "unused-command-ran.txt");
+    fs.writeFileSync(path.join(projectDir, "main.lua"), "print('root')", "utf-8");
+    const project = createProject(projectDir, [
+      { name: "main", kind: "LuaCode", path: "main.lua" },
+      {
+        name: "unused",
+        kind: "binary",
+        command: {
+          executable: process.execPath,
+          args: ["-e", 'require("fs").writeFileSync("unused-command-ran.txt", "yes")'],
+          outputFile: "generated/unused.bin",
+        },
+      },
+    ]);
+
+    const resources = await loadAllImports(project);
+
+    expect(fs.existsSync(markerPath)).toBe(false);
+    expect(resources.items.has("unused")).toBe(false);
+    expect(resources.isImportUsed("unused")).toBe(false);
   });
 
   it("materializes a command once when the asset is also consumed by Lua __IMPORT", async () => {

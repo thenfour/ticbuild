@@ -52,17 +52,14 @@ export async function prepareLuaAssetTypeScriptDeclarations(
   project: TicbuildProjectCore,
   resources: ResourceManager,
   parentScope?: TraceScope,
+  importNames?: ReadonlySet<string>,
 ): Promise<void> {
-  const hasTypeScript = project.manifest.imports.some(
-    (importDef) => importDef.kind === kImportKind.key.TypeScriptCode,
-  );
-  if (!hasTypeScript) {
-    return;
-  }
-
   const modules: Array<{ definition: LuaAssetModuleDefinition; declarations: LuaGlobalDeclaration[] }> = [];
   for (const definition of createLuaAssetModuleCatalog(project).values()) {
-    const resource = resources.items.get(definition.importName);
+    if (importNames && !importNames.has(definition.importName)) {
+      continue;
+    }
+    const resource = await resources.loadResource(definition.importName);
     if (!(resource instanceof LuaCodeResource)) {
       throw new Error(`Cannot generate TypeScript declarations for missing LuaCode asset '${definition.importName}'`);
     }
@@ -105,10 +102,7 @@ async function resolveDeclarationInclude(
       sourceMap: createIdentitySourceMap("", `import:${importName}`),
     };
   }
-  const resource = resources.items.get(importName);
-  return resource instanceof LuaCodeResource
-    ? resource.getGeneratedLuaSource(project)
-    : undefined;
+  return resources.getGeneratedLuaSource(project, importName);
 }
 
 function extractLuaGlobalDeclarations(preprocess: LuaPreprocessResult): LuaGlobalDeclaration[] {

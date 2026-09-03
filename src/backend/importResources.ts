@@ -2,7 +2,7 @@
 
 import { assert } from "../utils/errorHandling";
 import { ImportedResourceBase, ResourceManager } from "./ImportedResourceTypes";
-import { importLuaCode } from "./importers/LuaCodeImporter";
+import { importLuaCode, LuaCodeResource } from "./importers/LuaCodeImporter";
 import { CodeResource } from "./importers/CodeResource";
 import { importTypeScriptCode, TypeScriptCodeResource } from "./importers/TypeScriptCodeImporter";
 import { prepareLuaAssetTypeScriptDeclarations } from "./importers/LuaAssetTypeScriptModules";
@@ -14,164 +14,232 @@ import {
 import { importBinaryResource } from "./importers/binaryResourceImporter";
 import { importTextResource } from "./importers/textResourceImporter";
 import { importTic80Cart } from "./importers/tic80CartImporter";
-import { kImportKind } from "./manifestTypes";
-import { TicbuildProjectCore } from "./projectCore";
+import { ImportDefinition, kImportKind } from "./manifestTypes";
+import { TicbuildProjectCore, canonicalizeAssetImport } from "./projectCore";
 import { ImportSourceManager, MaterializedImportSource } from "./importSources";
 import { profileAsync, TraceProfiler, TraceScope, TraceTrack } from "../utils/traceProfiler";
 
-//
 export async function loadAllImports(
   project: TicbuildProjectCore,
   profiler?: TraceProfiler,
   parentScope?: TraceScope,
 ): Promise<ResourceManager> {
-  //  scan imports, select appropriate importer for each import,
-  //  invoke importer to get ImportedResourceBase
-  //  store in map of identifier -> ImportedResourceBase
+  const importDefinitions = new Map<string, ImportDefinition>();
   for (const importDef of project.manifest.imports) {
     if (!importDef.kind) {
       throw new Error(`Import ${importDef.name} is missing kind`);
     }
     assert(importDef.kind in kImportKind.key);
+    if (importDefinitions.has(importDef.name)) {
+      throw new Error(`Duplicate import name: ${importDef.name}`);
+    }
+    importDefinitions.set(importDef.name, importDef);
   }
 
+  // Construction validates every declaration without reading sources or running commands.
   const sourceManager = new ImportSourceManager(project);
   const profileTracks = new Map<string, TraceTrack>();
-  for (const importDef of project.manifest.imports) {
-    const track = profiler?.createTrack(`Import: ${importDef.name}`);
-    if (track) {
-      profileTracks.set(importDef.name, track);
-    }
-  }
-  const materializedSources = await Promise.all(
-    project.manifest.imports.map(async (importDef) => {
-      const sourcePlan = sourceManager.describe(importDef.name);
-      using _profileScope = profileTracks.get(importDef.name)?.enter(
-        sourcePlan?.sourceKind === "command" ? "Run command import" : "Materialize import source",
-        {
-          category: sourcePlan?.sourceKind === "command" ? "external command" : "imports",
-          parent: parentScope,
-          args: {
-            importName: importDef.name,
-            importKind: importDef.kind,
-            sourceKind: sourcePlan?.sourceKind,
-          },
-        },
-      );
-      const source = await sourceManager.materialize(importDef.name);
-      if (!source) {
-        throw new Error(`Import source not found: ${importDef.name}`);
+  const getProfileTrack = (importName: string): TraceTrack | undefined => {
+    let track = profileTracks.get(importName);
+    if (!track) {
+      track = profiler?.createTrack(`Import: ${importName}`);
+      if (track) {
+        profileTracks.set(importName, track);
       }
-      return source;
-    }),
-  );
-  const tasks = project.manifest.imports.map(async (importDef, importIndex): Promise<ImportedResourceBase> => {
-    const source: MaterializedImportSource = materializedSources[importIndex];
-    using _profileScope = profileTracks.get(importDef.name)?.enter("Load imported resource", {
-      category: "imports",
-      parent: parentScope,
-      args: { importName: importDef.name, importKind: importDef.kind },
-    });
-    switch (importDef.kind) {
-      case kImportKind.key.Tic80Cartridge:
-        return await importTic80Cart(project, importDef, source);
-      case kImportKind.key.LuaCode:
-        return await importLuaCode(project, importDef, source);
-      case kImportKind.key.TypeScriptCode:
-        return await importTypeScriptCode(project, importDef, source);
-      case kImportKind.key.binary:
-        return await importBinaryResource(project, importDef, source);
-      case kImportKind.key.text:
-        return await importTextResource(project, importDef, source);
-      default:
-        throw new Error(`Unsupported import kind: ${importDef.kind}`);
     }
-  });
+    return track;
+  };
 
-  const importedResources = await Promise.all(tasks);
   const items = new Map<string, ImportedResourceBase>();
-  for (let i = 0; i < importedResources.length; i++) {
-    const importDef = project.manifest.imports[i];
-    const resource = importedResources[i];
-    items.set(importDef.name, resource);
-    if (resource instanceof CodeResource) {
-      resource.setProfileTrack(profileTracks.get(importDef.name));
+  const loadTasks = new Map<string, Promise<ImportedResourceBase | undefined>>();
+  const loadResource = (importName: string): Promise<ImportedResourceBase | undefined> => {
+    const existing = items.get(importName);
+    if (existing) {
+      return Promise.resolve(existing);
     }
-  }
+    let task = loadTasks.get(importName);
+    if (!task) {
+      task = (async () => {
+        const importDef = importDefinitions.get(importName);
+        if (!importDef) {
+          return undefined;
+        }
+        const sourcePlan = sourceManager.describe(importName);
+        const track = getProfileTrack(importName);
+        const source = await profileAsync(
+          track,
+          sourcePlan?.sourceKind === "command" ? "Run command import" : "Materialize import source",
+          {
+            category: sourcePlan?.sourceKind === "command" ? "external command" : "imports",
+            parent: parentScope,
+            args: {
+              importName: importDef.name,
+              importKind: importDef.kind,
+              sourceKind: sourcePlan?.sourceKind,
+            },
+          },
+          () => sourceManager.materialize(importName),
+        );
+        if (!source) {
+          throw new Error(`Import source not found: ${importName}`);
+        }
+        const resource = await profileAsync(
+          track,
+          "Load imported resource",
+          {
+            category: "imports",
+            parent: parentScope,
+            args: { importName: importDef.name, importKind: importDef.kind },
+          },
+          () => importResource(project, importDef, source),
+        );
+        if (resource instanceof CodeResource) {
+          resource.setProfileTrack(track);
+        }
+        items.set(importName, resource);
+        return resource;
+      })();
+      loadTasks.set(importName, task);
+    }
+    return task;
+  };
 
-  const resourceManager = new ResourceManager(items);
-
-  // TypeScript needs to see Lua module defs on the first build. Build
-  // their declarations after all raw resources exist, but before any code
-  // resource starts the language-specific generation pipeline.
-  await profileAsync(
-    parentScope,
-    "Prepare Lua asset declarations",
-    {
-      category: "TypeScript declarations",
-    },
-    (scope) => prepareLuaAssetTypeScriptDeclarations(project, resourceManager, scope),
+  let prepareGeneratedLua = async (_resource: ImportedResourceBase): Promise<void> => undefined;
+  const resourceManager = new ResourceManager(
+    items,
+    loadResource,
+    (_importName, resource) => prepareGeneratedLua(resource),
+    project.manifest.imports.map((importDef) => importDef.name),
+    new Set(
+      project.manifest.imports
+        .filter((importDef) =>
+          importDef.kind === kImportKind.key.LuaCode || importDef.kind === kImportKind.key.TypeScriptCode)
+        .map((importDef) => importDef.name),
+    ),
   );
 
-  // code resources may have a processing step to be done here to generate its lua output.
-  // (e.g. typescript transpilation)
-  const codeResources = Array.from(items.values()).filter(
-    (resource): resource is CodeResource => resource instanceof CodeResource,
-  );
-  const typeScriptResources: TypeScriptCodeResource[] = codeResources.filter(
-    (resource): resource is TypeScriptCodeResource => resource instanceof TypeScriptCodeResource,
-  );
-  const initializeCodeResource = (resource: CodeResource) => resource.initialize(
-    project,
-    (importName) => resourceManager.getGeneratedLuaSource(project, importName),
-    (importName) => sourceManager.materialize(importName),
-    parentScope,
-  );
+  const resolveImportSource = (importName: string) => {
+    resourceManager.markImportUsed(importName);
+    return sourceManager.materialize(importName);
+  };
 
-  // Manifest-backed TypeScript modules need their dependency declarations on
-  // the first build. Compile them dependency-first, refreshing the aggregate
-  // declaration catalog after each completed resource.
-  const manifestDeclarations: TypeScriptManifestModuleDeclaration[] = [];
-  if (typeScriptResources.length > 0) {
+  const typeScriptDeclarations = new Map<string, TypeScriptManifestModuleDeclaration>();
+  const luaDeclarationImports = new Set<string>();
+  let declarationFilesInitialized = false;
+  let typeScriptGenerationQueue: Promise<void> = Promise.resolve();
+
+  const prepareDeclarationFiles = async (requiredLuaImports: ReadonlySet<string>): Promise<void> => {
+    let declarationsChanged = !declarationFilesInitialized;
+    for (const importName of requiredLuaImports) {
+      if (!luaDeclarationImports.has(importName)) {
+        luaDeclarationImports.add(importName);
+        declarationsChanged = true;
+      }
+    }
+    if (!declarationsChanged) {
+      return;
+    }
+    await profileAsync(
+      parentScope,
+      "Prepare Lua asset declarations",
+      { category: "TypeScript declarations" },
+      (scope) => prepareLuaAssetTypeScriptDeclarations(project, resourceManager, scope, luaDeclarationImports),
+    );
     await profileAsync(
       parentScope,
       "Initialize TypeScript manifest declarations",
-      {
-        category: "TypeScript declarations",
-      },
-      () => writeTypeScriptManifestDeclarations(project.projectDir, manifestDeclarations),
+      { category: "TypeScript declarations" },
+      () => writeTypeScriptManifestDeclarations(project.projectDir, Array.from(typeScriptDeclarations.values())),
     );
-    for (const resource of orderTypeScriptResources(project, typeScriptResources)) {
-      await initializeCodeResource(resource);
-      manifestDeclarations.push(resource.getTypeScriptManifestModuleDeclaration());
-      await profileAsync(
-        parentScope,
-        "Update TypeScript manifest declarations",
-        {
-          category: "TypeScript declarations",
-          args: { importName: resource.manifestImportName },
-        },
-        () => writeTypeScriptManifestDeclarations(project.projectDir, manifestDeclarations),
-      );
-    }
-  }
+    declarationFilesInitialized = true;
+  };
 
-  const typeScriptResourceSet = new Set<CodeResource>(typeScriptResources);
+  const ensureTypeScriptGenerated = async (target: TypeScriptCodeResource): Promise<void> => {
+    if (target.hasGeneratedLuaSource()) {
+      return;
+    }
+    const task = typeScriptGenerationQueue.then(async () => {
+      if (target.hasGeneratedLuaSource()) {
+        return;
+      }
+      // The dependency scanner follows configured declaration roots. Clear
+      // aggregate declarations from the previous build before they can create
+      // stale manifest-module edges (including false self-cycles).
+      await prepareDeclarationFiles(new Set());
+      const { ordered, luaImports } = await collectReachableTypeScriptResources(project, resourceManager, target);
+      await prepareDeclarationFiles(luaImports);
+      for (const resource of ordered) {
+        if (!resource.hasGeneratedLuaSource()) {
+          await resource.getGeneratedLuaSource(project);
+        }
+        if (!typeScriptDeclarations.has(resource.manifestImportName)) {
+          typeScriptDeclarations.set(resource.manifestImportName, resource.getTypeScriptManifestModuleDeclaration());
+          await profileAsync(
+            parentScope,
+            "Update TypeScript manifest declarations",
+            {
+              category: "TypeScript declarations",
+              args: { importName: resource.manifestImportName },
+            },
+            () => writeTypeScriptManifestDeclarations(project.projectDir, Array.from(typeScriptDeclarations.values())),
+          );
+        }
+      }
+    });
+    typeScriptGenerationQueue = task.catch(() => undefined);
+    await task;
+  };
+
+  prepareGeneratedLua = async (resource) => {
+    if (resource instanceof TypeScriptCodeResource) {
+      await ensureTypeScriptGenerated(resource);
+    }
+  };
+
+  const assemblyRootNames = Array.from(new Set(
+    project.manifest.assembly.blocks.map((block) => canonicalizeAssetImport(block.asset).import),
+  ));
+  const assemblyRoots = await Promise.all(assemblyRootNames.map(async (importName) => {
+    const resource = await resourceManager.loadResource(importName);
+    if (!resource) {
+      throw new Error(`Imported resource not found: ${importName}`);
+    }
+    return resource;
+  }));
+
+  const initializeCodeRoot = async (resource: CodeResource) => {
+    await prepareGeneratedLua(resource);
+    await resource.initialize(
+      project,
+      (importName) => resourceManager.getGeneratedLuaSource(project, importName),
+      resolveImportSource,
+      parentScope,
+    );
+  };
   await Promise.all(
-    codeResources
-      .filter((resource) => !typeScriptResourceSet.has(resource))
-      .map(initializeCodeResource),
+    assemblyRoots
+      .filter((resource): resource is CodeResource => resource instanceof CodeResource)
+      .map(initializeCodeRoot),
   );
 
-  // write .d.lua for typescript code resources to give visiblity to Lua
-  if (typeScriptResources.length > 0) {
+  const hasTypeScriptDefinitions = project.manifest.imports.some(
+    (importDef) => importDef.kind === kImportKind.key.TypeScriptCode,
+  );
+  if (hasTypeScriptDefinitions) {
+    // Keep generated editor declaration files accurate even when no TypeScript
+    // resource is reachable. Empty files are cheap and prevent stale symbols.
+    await prepareDeclarationFiles(new Set());
+    const generatedTypeScriptResources = Array.from(items.values()).filter(
+      (resource): resource is TypeScriptCodeResource =>
+        resource instanceof TypeScriptCodeResource && resource.hasGeneratedLuaSource(),
+    );
     await profileAsync(
       parentScope,
       "Write Lua declarations for TypeScript",
       { category: "TypeScript declarations" },
       () => writeTypeScriptLuaDeclarations(
         project.projectDir,
-        typeScriptResources.flatMap((resource) => resource.getLuaDefinitionBlocks()),
+        generatedTypeScriptResources.flatMap((resource) => resource.getLuaDefinitionBlocks()),
       ),
     );
   }
@@ -179,23 +247,38 @@ export async function loadAllImports(
   return resourceManager;
 }
 
-// rearrange based on dependencies.
-function orderTypeScriptResources(
+async function importResource(
   project: TicbuildProjectCore,
-  resources: readonly TypeScriptCodeResource[],
-): TypeScriptCodeResource[] {
-  const byName = new Map(resources.map((resource) => [resource.manifestImportName, resource] as const));
-  const dependencies = new Map(
-    resources.map((resource) => [
-      resource.manifestImportName,
-      resource.getTypeScriptManifestDependencies(project),
-    ] as const),
-  );
+  importDef: ImportDefinition,
+  source: MaterializedImportSource,
+): Promise<ImportedResourceBase> {
+  switch (importDef.kind) {
+    case kImportKind.key.Tic80Cartridge:
+      return importTic80Cart(project, importDef, source);
+    case kImportKind.key.LuaCode:
+      return importLuaCode(project, importDef, source);
+    case kImportKind.key.TypeScriptCode:
+      return importTypeScriptCode(project, importDef, source);
+    case kImportKind.key.binary:
+      return importBinaryResource(project, importDef, source);
+    case kImportKind.key.text:
+      return importTextResource(project, importDef, source);
+    default:
+      throw new Error(`Unsupported import kind: ${importDef.kind}`);
+  }
+}
+
+async function collectReachableTypeScriptResources(
+  project: TicbuildProjectCore,
+  resources: ResourceManager,
+  root: TypeScriptCodeResource,
+): Promise<{ ordered: TypeScriptCodeResource[]; luaImports: Set<string> }> {
   const state = new Map<string, "visiting" | "visited">();
   const stack: string[] = [];
   const ordered: TypeScriptCodeResource[] = [];
+  const luaImports = new Set<string>();
 
-  const visit = (resource: TypeScriptCodeResource) => {
+  const visit = async (resource: TypeScriptCodeResource): Promise<void> => {
     const name = resource.manifestImportName;
     const currentState = state.get(name);
     if (currentState === "visited") {
@@ -208,20 +291,25 @@ function orderTypeScriptResources(
     }
     state.set(name, "visiting");
     stack.push(name);
-    for (const dependencyName of dependencies.get(name) ?? []) {
-      const dependency = byName.get(dependencyName);
-      if (!dependency) {
-        throw new Error(`TypeScript manifest module '${name}' depends on missing TypeScriptCode asset '${dependencyName}'`);
+    for (const dependency of resource.getManifestCodeDependencies(project)) {
+      const dependencyResource = await resources.loadResource(dependency.importName);
+      if (dependency.kind === kImportKind.key.LuaCode) {
+        if (!(dependencyResource instanceof LuaCodeResource)) {
+          throw new Error(`TypeScript manifest module '${name}' depends on missing LuaCode asset '${dependency.importName}'`);
+        }
+        luaImports.add(dependency.importName);
+        continue;
       }
-      visit(dependency);
+      if (!(dependencyResource instanceof TypeScriptCodeResource)) {
+        throw new Error(`TypeScript manifest module '${name}' depends on missing TypeScriptCode asset '${dependency.importName}'`);
+      }
+      await visit(dependencyResource);
     }
     stack.pop();
     state.set(name, "visited");
     ordered.push(resource);
   };
 
-  for (const resource of resources) {
-    visit(resource);
-  }
-  return ordered;
+  await visit(root);
+  return { ordered, luaImports };
 }

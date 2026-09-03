@@ -504,7 +504,8 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
     },
     {
       // A command source produces an asset via a system command.
-      // The command runs once per build with CWD = project directory
+      // The command runs once per build when used.
+      // CWD = project directory
       "name": "shipLarge_png",
       "kind": "binary",
       "command": {

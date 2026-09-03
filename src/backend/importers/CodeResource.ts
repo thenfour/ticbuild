@@ -442,27 +442,41 @@ export abstract class CodeResource extends ImportedResourceBase {
 
   async getGeneratedLuaSource(project: TicbuildProjectCore): Promise<GeneratedLuaSource> {
     if (!this.generatedLuaPromise) {
-      this.generatedLuaPromise = this.generateLuaSource(project).then((generated) => {
-        if (!this.importSource) {
-          return generated;
-        }
-        const generatedOutputPaths = new Set(this.importSource.generatedOutputs.map(canonicalizePath));
-        return {
-          ...generated,
-          dependencies: [
-            ...(generated.dependencies ?? []).filter(
-              (dependency) => !generatedOutputPaths.has(canonicalizePath(dependency.path)),
-            ),
-            ...this.importSource.watchDependencies,
-          ],
-          generatedOutputs: [
-            ...(generated.generatedOutputs ?? []),
-            ...this.importSource.generatedOutputs,
-          ],
-        };
+      this.generatedLuaPromise = profileAsync(
+        this.profileTrack,
+        "Generate Lua source",
+        { category: "code generation" },
+        () => this.generateLuaSource(project),
+      ).then((generated) => {
+        const generatedOutputPaths = new Set(this.importSource?.generatedOutputs.map(canonicalizePath) ?? []);
+        const dependencies = [
+          ...(generated.dependencies ?? []).filter(
+            (dependency) => !generatedOutputPaths.has(canonicalizePath(dependency.path)),
+          ),
+          ...(this.importSource?.watchDependencies ?? []),
+        ];
+        this.mergeDependencies(dependencies);
+        return this.importSource
+          ? {
+            ...generated,
+            dependencies,
+            generatedOutputs: [
+              ...(generated.generatedOutputs ?? []),
+              ...this.importSource.generatedOutputs,
+            ],
+          }
+          : generated;
       });
     }
     return await this.generatedLuaPromise;
+  }
+
+  hasGeneratedLuaSource(): boolean {
+    return this.generatedLuaPromise !== undefined;
+  }
+
+  hasCompletedCodePipeline(): boolean {
+    return this.codeView !== undefined;
   }
 
   async initialize(
@@ -479,12 +493,7 @@ export abstract class CodeResource extends ImportedResourceBase {
       parent: parentScope,
       args: { resourceType: this.constructor.name },
     });
-    const generated = await profileAsync(
-      this.profileTrack,
-      "Generate Lua source",
-      { category: "code generation" },
-      () => this.getGeneratedLuaSource(project),
-    );
+    const generated = await this.getGeneratedLuaSource(project);
     const preprocessResult = await profileAsync(
       this.profileTrack,
       "Lua preprocessing",
@@ -566,6 +575,13 @@ export abstract class CodeResource extends ImportedResourceBase {
 
   supportsLuaSymbolIndex(): boolean {
     return true;
+  }
+
+  private mergeDependencies(dependencies: readonly ExternalDependency[]): void {
+    for (const dependency of dependencies) {
+      this.dependencies.push(dependency.path);
+      this.dependencyReasons.set(dependency.path, dependency.reason);
+    }
   }
 
   private setPreprocessResult(
