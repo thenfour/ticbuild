@@ -1909,17 +1909,55 @@ function applyReplacementsWithMap(
       },
     },
     (scope) => {
-      let out = result.code;
-      let macroDefinitions = result.macroDefinitions;
-      for (const rep of replacements) {
-        out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
-        const origin = result.map.mapOffset(rep.start, "right") ?? { file: filePath, offset: 0 };
-        result.map.spliceRange(rep.start, rep.end, rep.text.length, origin);
-        macroDefinitions = macroDefinitions.map((event) => ({
-          offset: mapOffsetThroughReplacement(event.offset, rep.start, rep.end, rep.text.length),
-          definition: event.definition,
-        }));
+      // original implementation was inefficient:
+      // for each replacement,
+      // {
+      //   perform the replacement via (slice begin + text + slice end)
+      //   update the source map via mapOffset and result.map.spliceRange()
+      //   -> spliceRange visits every segment to update offsets
+      //      so every segment is just getting pushed and pushed over and over again.
+      //      more efficient to build a map of all replacements, and apply in one sweep.
+      // }
+
+      const ascending = [...replacements].sort((a, b) => a.start - b.start || a.end - b.end);
+      // build list of origins
+      const mappedReplacements = ascending.map((replacement) => ({
+        start: replacement.start,
+        end: replacement.end,
+        newLength: replacement.text.length,
+        origin: result.map.mapOffset(replacement.start, "right") ?? { file: filePath, offset: 0 },
+      }));
+
+      // apply replacements in one go, building the output string in a stream of chunks
+      const outputParts: string[] = [];
+      let sourceCursor = 0;
+      for (const replacement of ascending) {
+        outputParts.push(result.code.slice(sourceCursor, replacement.start), replacement.text);
+        sourceCursor = replacement.end;
       }
+      outputParts.push(result.code.slice(sourceCursor));
+      const out = outputParts.join("");
+
+      // update the map also in one go using all the mapped replacements
+      result.map.spliceRanges(mappedReplacements);
+
+      // update macro definition offsets based on the replacements
+      const descending = [...ascending].reverse();
+      const macroDefinitions = result.macroDefinitions.map((event) => {
+        let offset = event.offset;
+        for (const replacement of descending) {
+          offset = mapOffsetThroughReplacement(
+            offset,
+            replacement.start,
+            replacement.end,
+            replacement.text.length,
+          );
+        }
+        return {
+          offset,
+          definition: event.definition,
+        };
+      });
       scope?.setArgs({
         outputCharacters: out.length,
         outputSourceMapSegments: result.map.getSegments().length,

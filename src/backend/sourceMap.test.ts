@@ -2,6 +2,7 @@ import {
     assertSourceMapMatchesSource,
     createIdentitySourceMap,
     SourceMapBuilder,
+    SourceMapReplacement,
     mapPreprocessedOffset,
 } from "./sourceMap";
 
@@ -52,6 +53,48 @@ describe("Source map builder", () => {
 
         expect(mapPreprocessedOffset(map, 0, "right")).toEqual({ file: "src/main.lua", offset: 20 });
         expect(mapPreprocessedOffset(map, 8, "right")).toEqual({ file: "src/main.lua", offset: 20 });
+    });
+
+    it("should batch non-overlapping replacements with the same mappings as descending splices", () => {
+        const source = "abc__defgh!!ijk";
+        const original = new SourceMapBuilder();
+        original.appendOriginal("abc", "src/a.lua", 10);
+        original.appendGenerated("__", null);
+        original.appendOriginal("defgh", "src/b.lua", 20);
+        original.appendGenerated("!!", { file: "src/generated.lua", offset: 99 });
+        original.appendOriginal("ijk", "src/c.lua", 30);
+        const originalMap = original.toSourceMap(source);
+        const replacements: SourceMapReplacement[] = [
+            { start: 0, end: 0, newLength: 2, origin: { file: "src/a.lua", offset: 10 } },
+            { start: 2, end: 4, newLength: 1, origin: { file: "src/a.lua", offset: 12 } },
+            { start: 7, end: 10, newLength: 0, origin: { file: "src/b.lua", offset: 22 } },
+            { start: 12, end: 12, newLength: 3, origin: { file: "src/c.lua", offset: 30 } },
+        ];
+
+        const sequential = SourceMapBuilder.fromSourceMap(originalMap);
+        for (const replacement of [...replacements].sort((a, b) => b.start - a.start)) {
+            sequential.spliceRange(
+                replacement.start,
+                replacement.end,
+                replacement.newLength,
+                replacement.origin,
+            );
+        }
+        const batched = SourceMapBuilder.fromSourceMap(originalMap);
+        batched.spliceRanges(replacements);
+
+        expect(batched.getCharLength()).toBe(sequential.getCharLength());
+        expect(batched.getSegments()).toEqual(sequential.getSegments());
+    });
+
+    it("should reject overlapping batch replacement ranges", () => {
+        const builder = new SourceMapBuilder();
+        builder.appendOriginal("abcdef", "src/main.lua", 0);
+
+        expect(() => builder.spliceRanges([
+            { start: 1, end: 4, newLength: 1, origin: null },
+            { start: 3, end: 5, newLength: 1, origin: null },
+        ])).toThrow("Overlapping source-map replacement ranges");
     });
 
     it("copies mapped slices without attributing unmapped gaps", () => {

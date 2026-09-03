@@ -42,6 +42,13 @@ export type SourceMapLineColumn = SourceMapLocation & {
 
 export type SourceMapBias = "left" | "right";
 
+export type SourceMapReplacement = {
+  start: number;
+  end: number;
+  newLength: number;
+  origin: SourceMapLocation | null;
+};
+
 function segmentKind(segment: SourceMapSegment): SourceMapSegmentKind {
   return segment.kind ?? "identity";
 }
@@ -349,6 +356,91 @@ export class SourceMapBuilder {
     nextSegments.sort((a, b) => a.ppBegin - b.ppBegin || a.ppEnd - b.ppEnd);
     this.segments = nextSegments;
     this.length += delta;
+  }
+
+  // Applies non-overlapping ranges expressed against the current map in one ordered sweep.
+  spliceRanges(replacements: readonly SourceMapReplacement[]): void {
+    if (replacements.length === 0) {
+      return;
+    }
+
+    const originalLength = this.length;
+    const sorted = [...replacements].sort((a, b) => a.start - b.start || a.end - b.end);
+    for (let i = 0; i < sorted.length; i++) {
+      const replacement = sorted[i];
+      if (
+        replacement.start < 0
+        || replacement.start > replacement.end
+        || replacement.end > originalLength
+        || replacement.newLength < 0
+      ) {
+        throw new Error(`Invalid source-map replacement range ${replacement.start}..${replacement.end}`);
+      }
+      const previous = sorted[i - 1];
+      if (previous && (replacement.start < previous.end || replacement.start === previous.start)) {
+        throw new Error(
+          `Overlapping source-map replacement ranges ${previous.start}..${previous.end} and ${replacement.start}..${replacement.end}`,
+        );
+      }
+    }
+
+    const originalSegments = this.segments;
+    const nextSegments: SourceMapSegment[] = [];
+    let segmentIndex = 0;
+
+    const appendMappedRange = (start: number, end: number, delta: number) => {
+      if (start >= end) {
+        return;
+      }
+      while (segmentIndex < originalSegments.length && originalSegments[segmentIndex].ppEnd <= start) {
+        segmentIndex++;
+      }
+      while (segmentIndex < originalSegments.length) {
+        const segment = originalSegments[segmentIndex];
+        if (segment.ppBegin >= end) {
+          break;
+        }
+        const intersectionStart = Math.max(start, segment.ppBegin);
+        const intersectionEnd = Math.min(end, segment.ppEnd);
+        if (intersectionStart < intersectionEnd) {
+          nextSegments.push({
+            ...segment,
+            ppBegin: intersectionStart + delta,
+            ppEnd: intersectionEnd + delta,
+            originalOffset:
+              segmentKind(segment) === "identity"
+                ? segment.originalOffset + (intersectionStart - segment.ppBegin)
+                : segment.originalOffset,
+          });
+        }
+        if (segment.ppEnd > end) {
+          break;
+        }
+        segmentIndex++;
+      }
+    };
+
+    let sourceCursor = 0;
+    let delta = 0;
+    for (const replacement of sorted) {
+      appendMappedRange(sourceCursor, replacement.start, delta);
+      const outputStart = replacement.start + delta;
+      if (replacement.newLength > 0 && replacement.origin?.file) {
+        nextSegments.push({
+          ppBegin: outputStart,
+          ppEnd: outputStart + replacement.newLength,
+          originalFile: replacement.origin.file,
+          originalOffset: replacement.origin.offset,
+          kind: "anchor",
+        });
+      }
+      sourceCursor = replacement.end;
+      delta += replacement.newLength - (replacement.end - replacement.start);
+    }
+    appendMappedRange(sourceCursor, originalLength, delta);
+
+    this.segments = nextSegments;
+    this.length = originalLength + delta;
   }
 
   toSourceMap(code: string): LuaPreprocessorSourceMap {
