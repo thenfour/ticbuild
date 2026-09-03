@@ -49,6 +49,18 @@ export type SourceMapReplacement = {
   origin: SourceMapLocation | null;
 };
 
+type SourceLineIndex = {
+  content: string;
+  lineStarts: number[];
+};
+
+type MappedSliceCursor = {
+  inputStart: number;
+  segmentIndex: number;
+};
+
+const sourceLineIndexes = new WeakMap<LuaPreprocessorSourceMap, Map<string, SourceLineIndex>>();
+
 function segmentKind(segment: SourceMapSegment): SourceMapSegmentKind {
   return segment.kind ?? "identity";
 }
@@ -126,25 +138,56 @@ export function mapPreprocessedOffsetToLineColumn(
   if (!location) {
     return null;
   }
-  const content = getSourceMapSourceContent(map, location.file);
-  if (content === undefined) {
+  const source = map.sources?.[location.file];
+  if (!source) {
     return { ...location, line: 1, column: location.offset };
   }
-  const position = offsetToLineColumn(content, location.offset);
+  let mapIndexes = sourceLineIndexes.get(map);
+  if (!mapIndexes) {
+    mapIndexes = new Map();
+    sourceLineIndexes.set(map, mapIndexes);
+  }
+  let index = mapIndexes.get(location.file);
+  if (!index || index.content !== source.content) {
+    index = { content: source.content, lineStarts: getLineStarts(source.content) };
+    mapIndexes.set(location.file, index);
+  }
+  const position = offsetToLineColumnFromStarts(source.content.length, index.lineStarts, location.offset);
   return { ...location, ...position };
 }
 
 export function offsetToLineColumn(content: string, offset: number): { line: number; column: number } {
-  const clampedOffset = Math.max(0, Math.min(offset, content.length));
-  let line = 1;
-  let lineStart = 0;
-  for (let i = 0; i < clampedOffset; i++) {
+  return offsetToLineColumnFromStarts(content.length, getLineStarts(content), offset);
+}
+
+function getLineStarts(content: string): number[] {
+  const lineStarts = [0];
+  for (let i = 0; i < content.length; i++) {
     if (content.charCodeAt(i) === 10) {
-      line++;
-      lineStart = i + 1;
+      lineStarts.push(i + 1);
     }
   }
-  return { line, column: clampedOffset - lineStart };
+  return lineStarts;
+}
+
+function offsetToLineColumnFromStarts(
+  contentLength: number,
+  lineStarts: readonly number[],
+  offset: number,
+): { line: number; column: number } {
+  const clampedOffset = Math.max(0, Math.min(offset, contentLength));
+  let lo = 0;
+  let hi = lineStarts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (lineStarts[mid] <= clampedOffset) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  const lineIndex = Math.max(0, lo - 1);
+  return { line: lineIndex + 1, column: clampedOffset - lineStarts[lineIndex] };
 }
 
 // Progressively builds a source map by appending mapped slices and splicing replacements.
@@ -152,6 +195,8 @@ export class SourceMapBuilder {
   private segments: SourceMapSegment[];
   private sources: Map<string, SourceMapSource>;
   private length: number;
+  private importedSourceMaps = new WeakSet<LuaPreprocessorSourceMap>();
+  private mappedSliceCursors = new WeakMap<LuaPreprocessorSourceMap, MappedSliceCursor>();
 
   constructor(length = 0, segments: SourceMapSegment[] = [], sources: Record<string, SourceMapSource> = {}) {
     this.length = length;
@@ -234,22 +279,40 @@ export class SourceMapBuilder {
       throw new Error(`Source-map slice ${inputStart}..${inputEnd} is outside input length ${inputMap.preprocessedFile.charLength}`);
     }
 
-    for (const [filePath, source] of Object.entries(inputMap.sources ?? {})) {
-      this.sources.set(filePath, { ...source });
+    if (!this.importedSourceMaps.has(inputMap)) {
+      for (const [filePath, source] of Object.entries(inputMap.sources ?? {})) {
+        this.sources.set(filePath, { ...source });
+      }
+      this.importedSourceMaps.add(inputMap);
     }
 
     const outputStart = this.length;
-    let lo = 0;
-    let hi = inputMap.segments.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (inputMap.segments[mid].ppEnd <= inputStart) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
+    const previousCursor = this.mappedSliceCursors.get(inputMap);
+    let segmentIndex: number;
+    if (previousCursor && previousCursor.inputStart <= inputStart) {
+      segmentIndex = previousCursor.segmentIndex;
+      while (
+        segmentIndex < inputMap.segments.length
+        && inputMap.segments[segmentIndex].ppEnd <= inputStart
+      ) {
+        segmentIndex++;
       }
+    } else {
+      let lo = 0;
+      let hi = inputMap.segments.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (inputMap.segments[mid].ppEnd <= inputStart) {
+          lo = mid + 1;
+        } else {
+          hi = mid;
+        }
+      }
+      segmentIndex = lo;
     }
-    for (let i = lo; i < inputMap.segments.length; i++) {
+    this.mappedSliceCursors.set(inputMap, { inputStart, segmentIndex });
+
+    for (let i = segmentIndex; i < inputMap.segments.length; i++) {
       const segment = inputMap.segments[i];
       if (segment.ppBegin >= inputEnd) {
         break;

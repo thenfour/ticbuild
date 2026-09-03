@@ -4,6 +4,7 @@ import {
     SourceMapBuilder,
     SourceMapReplacement,
     mapPreprocessedOffset,
+    mapPreprocessedOffsetToLineColumn,
 } from "./sourceMap";
 
 describe("Source map builder", () => {
@@ -107,6 +108,38 @@ describe("Source map builder", () => {
         expect(mapPreprocessedOffset(map, 2, "right")).toBeNull();
         expect(mapPreprocessedOffset(map, 7, "right")).toEqual({ file: "src/main.lua", offset: 6 });
         expect(map.sources?.["src/main.lua"].content).toBe("first\nsecond");
+    });
+
+    it("maps sequential and out-of-order slices from the same input map", () => {
+        const inputBuilder = new SourceMapBuilder();
+        inputBuilder.appendOriginal("ab", "src/a.lua", 10, "          ab");
+        inputBuilder.appendGenerated("--", { file: "src/generated.lua", offset: 30 });
+        inputBuilder.appendOriginal("cd", "src/b.lua", 20, "                    cd");
+        const input = inputBuilder.toSourceMap("ab--cd");
+
+        const sequential = new SourceMapBuilder();
+        sequential.appendMappedSlice("ab", input, 0);
+        sequential.appendMappedSlice("--", input, 2);
+        sequential.appendMappedSlice("cd", input, 4);
+        expect(sequential.toSourceMap("ab--cd").segments).toEqual(input.segments);
+
+        const outOfOrder = new SourceMapBuilder();
+        outOfOrder.appendMappedSlice("cd", input, 4);
+        outOfOrder.appendMappedSlice("ab", input, 0);
+        const outOfOrderMap = outOfOrder.toSourceMap("cdab");
+        expect(mapPreprocessedOffset(outOfOrderMap, 0, "right")).toEqual({ file: "src/b.lua", offset: 20 });
+        expect(mapPreprocessedOffset(outOfOrderMap, 2, "right")).toEqual({ file: "src/a.lua", offset: 10 });
+        expect(outOfOrderMap.sources?.["src/a.lua"].content).toBe("          ab");
+        expect(outOfOrderMap.sources?.["src/b.lua"].content).toBe("                    cd");
+    });
+
+    it("maps offsets to line and column across LF and CRLF boundaries", () => {
+        const map = createIdentitySourceMap("zero\r\none\ntwo", "src/main.lua");
+
+        expect(mapPreprocessedOffsetToLineColumn(map, 4, "right")).toMatchObject({ line: 1, column: 4 });
+        expect(mapPreprocessedOffsetToLineColumn(map, 5, "right")).toMatchObject({ line: 1, column: 5 });
+        expect(mapPreprocessedOffsetToLineColumn(map, 6, "right")).toMatchObject({ line: 2, column: 0 });
+        expect(mapPreprocessedOffsetToLineColumn(map, 10, "right")).toMatchObject({ line: 3, column: 0 });
     });
 
     it("detects a stale map at a mapped-code boundary", () => {
