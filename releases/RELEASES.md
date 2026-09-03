@@ -38,6 +38,7 @@
 - #86 Allow running commands on connect for terminal & watch (`--on-connect`)
 - #89 Add support for `--hide-trace-containing` and `--hide-trace-matching`
 - #92 Add profile trace event report to build artifacts
+- #93 #94 #95 optimizations and tweaks
 
 ### Migration notes from v1.0.22
 

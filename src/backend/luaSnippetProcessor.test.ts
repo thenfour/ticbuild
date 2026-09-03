@@ -109,11 +109,11 @@ describe("Code snippet processor", () => {
     const core = makeCore();
     const source = [
       "export function TIC(): void {",
-      "  //#ifdef FEATURE",
+      "  //--#ifdef FEATURE",
       '  trace("enabled");',
-      "  //#else",
+      "  //--#else",
       '  trace("disabled");',
-      "  //#endif",
+      "  //--#endif",
       "}",
     ].join("\n");
 

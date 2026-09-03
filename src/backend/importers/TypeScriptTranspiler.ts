@@ -31,7 +31,7 @@ export type TypeScriptTranspileResult = GeneratedLuaSource & {
 const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const tic80CallbackNames = new Set(["TIC", "BOOT", "BDR", "SCN", "OVR", "MENU"]);
 const preprocessorDirectivePattern =
-  /^([ \t]*)\/\/(?:--)?#(pragma|define|undef|include|if|ifdef|ifndef|else|endif|warning|error|macro|endmacro|minify)\b(.*)$/;
+  /^([ \t]*)\/\/--#(pragma|define|undef|include|if|ifdef|ifndef|else|endif|warning|error|macro|endmacro|minify)\b(.*)$/;
 const builtinsName = "tic80.d.ts";
 
 function formatDiagnostic(diagnostic: ts.Diagnostic, projectDir: string): string {
@@ -270,7 +270,7 @@ function createCompilerHost(
 function preserveTicbuildDirectives(source: string): string {
   // convert preprocessor directive lines to a marker with the directive payload base64-encoded.
   // e.g.,
-  // //#include "foo.lua"
+  // //--#include "foo.lua"
   // becomes
   // __TICBUILD_PREPROCESSOR_DIRECTIVE__("IyNpbmNsdWRlICJmb28ubHVhIg==");
   return source

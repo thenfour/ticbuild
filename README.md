@@ -746,16 +746,16 @@ provide native transpiling to Lua. So yes the output cart is in Lua.
 - See especially [the caveats section](https://typescripttolua.github.io/docs/caveats) to understand
   how to avoid problems when doing so.
 
-Preprocessor function calls can be written directly in TypeScript. Standalone comment directives use TypeScript
-comment syntax and are preserved into the generated Lua:
+Preprocessor function calls can be written directly in TypeScript. Standalone Lua preprocessor directives use the
+`//--#...` spelling and are preserved into the generated Lua as `--#...`:
 
 ```ts
 import { drawScene } from "./drawScene"; // path-based import
 
 const TIC = () => {
-  //#ifdef DEBUG
+  //--#ifdef DEBUG
   trace(__EXPAND("$(project.name) debug build"));
-  //#endif
+  //--#endif
   drawScene();
 };
 ```
@@ -882,7 +882,7 @@ and dynamic `import()` are not allowed.
 You can still opt-in to global renaming in the minifier:
 
 ```ts
-//#minify allow_rename
+//--#minify allow_rename
 export function longInternalApiName(): number {
   return 1;
 }
@@ -924,7 +924,7 @@ local p = y * 240
 print("title = " .. "aoeuaoeu")
 ```
 
-So that reduces the need for `//#macro`, though that still exists.
+So that reduces the need for `//--#macro`, though that still exists.
 
 # Lua preprocessor
 

@@ -473,11 +473,11 @@ describe("TypeScriptCodeResource", () => {
       [
         'import { helper } from "./helper";',
         "const TIC = () => {",
-        "  //#ifdef FEATURE",
+        "  //--#ifdef FEATURE",
         '  print(__EXPAND("$(project.name)") + helper.getSuffix());',
-        "  //#else",
+        "  //--#else",
         '  print("disabled");',
-        "  //#endif",
+        "  //--#endif",
         "};",
       ].join("\n"),
       "utf-8",
@@ -827,7 +827,7 @@ describe("TypeScriptCodeResource", () => {
     fs.writeFileSync(
       path.join(projectDir, "main.ts"),
       [
-        "//#minify allow_rename",
+        "//--#minify allow_rename",
         "export function VeryLongTypeScriptFunction(): number { return 7; }",
         "export function TIC(): void { print(VeryLongTypeScriptFunction()); }",
       ].join("\n"),
@@ -857,7 +857,7 @@ describe("TypeScriptCodeResource", () => {
     fs.writeFileSync(
       path.join(projectDir, "main.ts"),
       [
-        "//#minify no_rename",
+        "//--#minify no_rename",
         "export function PublicTypeScriptApi(): number { return InternalTypeScriptHelper(); }",
         "export function InternalTypeScriptHelper(): number { return 7; }",
         "export function TIC(): void { print(PublicTypeScriptApi()); }",
@@ -1206,13 +1206,13 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
-  it("rejects directives that include a space between // and #", async () => {
+  it("does not transport the legacy //# directive spelling", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-include-"));
     fs.writeFileSync(
       path.join(projectDir, "main.ts"),
       [
         "declare const fromLua: string;",
-        '// #include "import:luaHelper"',
+        '//#include "import:luaHelper"',
         "const TIC = () => print(fromLua);",
       ].join("\n"),
       "utf-8",
