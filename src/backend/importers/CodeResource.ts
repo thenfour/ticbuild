@@ -489,10 +489,11 @@ export abstract class CodeResource extends ImportedResourceBase {
       this.profileTrack,
       "Lua preprocessing",
       { category: "Lua code" },
-      () => preprocessLuaCode(project, generated.source, generated.sourcePath, {
+      (scope) => preprocessLuaCode(project, generated.source, generated.sourcePath, {
         resolveCodeImport,
         resolveImportSource,
         sourceMap: generated.sourceMap,
+        profileScope: scope,
       }),
     );
     const generatedOutputPaths = new Set(this.importSource?.generatedOutputs.map(canonicalizePath) ?? []);

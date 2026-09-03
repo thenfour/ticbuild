@@ -110,7 +110,7 @@ export async function loadAllImports(
     {
       category: "TypeScript declarations",
     },
-    () => prepareLuaAssetTypeScriptDeclarations(project, resourceManager),
+    (scope) => prepareLuaAssetTypeScriptDeclarations(project, resourceManager, scope),
   );
 
   // code resources may have a processing step to be done here to generate its lua output.

@@ -4,6 +4,7 @@ import { CodeResource, CodeSizeStats } from "../backend/importers/CodeResource";
 import { Tic80Resource } from "../backend/importers/tic80CartImporter";
 import { AssetReference, CodeAssemblyOptions } from "../backend/manifestTypes";
 import { serializeSourceMapV3 } from "../backend/sourceMapV3";
+import type { LuaPreprocessorSourceMap } from "../backend/sourceMap";
 import * as cons from "../utils/console";
 import { getErrorMessage } from "../utils/errorHandling";
 import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
@@ -367,32 +368,34 @@ async function writeDevelopmentArtifacts(
       const minifiedMapPath = `${minifiedPath}.map`;
 
       await writeTextFile(generatedPath, artifacts.inputSource, "utf-8");
-      await writeTextFile(
+      await writeLuaSourceMapArtifact(
+        parentScope,
+        identifier,
+        "generated",
+        artifacts.inputSourceMap,
+        artifacts.inputSource,
+        generatedPath,
         generatedMapPath,
-        serializeSourceMapV3(artifacts.inputSourceMap, artifacts.inputSource, generatedPath, generatedMapPath),
-        "utf-8",
       );
       await writeTextFile(preprocessedPath, artifacts.preprocessedSource, "utf-8");
-      await writeTextFile(
+      await writeLuaSourceMapArtifact(
+        parentScope,
+        identifier,
+        "preprocessed",
+        artifacts.preprocessedSourceMap,
+        artifacts.preprocessedSource,
+        preprocessedPath,
         preprocessedMapPath,
-        serializeSourceMapV3(
-          artifacts.preprocessedSourceMap,
-          artifacts.preprocessedSource,
-          preprocessedPath,
-          preprocessedMapPath,
-        ),
-        "utf-8",
       );
       await writeTextFile(minifiedPath, artifacts.minifiedSource, "utf-8");
-      await writeTextFile(
+      await writeLuaSourceMapArtifact(
+        parentScope,
+        identifier,
+        "minified",
+        artifacts.minifiedSourceMap,
+        artifacts.minifiedSource,
+        minifiedPath,
         minifiedMapPath,
-        serializeSourceMapV3(
-          artifacts.minifiedSourceMap,
-          artifacts.minifiedSource,
-          minifiedPath,
-          minifiedMapPath,
-        ),
-        "utf-8",
       );
 
       importsLines.push(`    Wrote: ${generatedPath}`);
@@ -439,6 +442,47 @@ async function writeDevelopmentArtifacts(
   }
 
   await writeTextFile(importsLogPath, importsLines.join("\n"), "utf-8");
+}
+
+async function writeLuaSourceMapArtifact(
+  parentScope: TraceScope,
+  resource: string,
+  stage: "generated" | "preprocessed" | "minified",
+  sourceMap: LuaPreprocessorSourceMap,
+  source: string,
+  generatedPath: string,
+  mapPath: string,
+): Promise<void> {
+  const serialized = parentScope.profileSync(
+    "Serialize Lua source map",
+    {
+      category: "source maps",
+      args: {
+        resource,
+        stage,
+        sourceCharacters: source.length,
+        sourceMapSegments: sourceMap.segments.length,
+        sourceFiles: Object.keys(sourceMap.sources ?? {}).length,
+      },
+    },
+    (scope) => {
+      const output = serializeSourceMapV3(sourceMap, source, generatedPath, mapPath);
+      scope.setArgs({ outputCharacters: output.length });
+      return output;
+    },
+  );
+  await parentScope.profileAsync(
+    "Write Lua source map",
+    {
+      category: "filesystem",
+      args: {
+        resource,
+        stage,
+        outputCharacters: serialized.length,
+      },
+    },
+    () => writeTextFile(mapPath, serialized, "utf-8"),
+  );
 }
 
 function getBundledManifestSchemaPath(): string {

@@ -186,6 +186,16 @@ describe("Build reporters", () => {
         expect.objectContaining({ ph: "X", name: "ticbuild build", args: expect.objectContaining({ outcome: "succeeded" }) }),
         expect.objectContaining({ ph: "X", name: "Process imports" }),
         expect.objectContaining({ ph: "X", name: "Produce development artifacts" }),
+        expect.objectContaining({
+          ph: "X",
+          name: "Serialize Lua source map",
+          args: expect.objectContaining({ resource: "maincode", stage: "preprocessed" }),
+        }),
+        expect.objectContaining({
+          ph: "X",
+          name: "Write Lua source map",
+          args: expect.objectContaining({ resource: "maincode", stage: "preprocessed" }),
+        }),
         expect.objectContaining({ ph: "X", name: "Assemble cartridge" }),
         expect.objectContaining({ ph: "X", name: "Write cartridge" }),
       ]));

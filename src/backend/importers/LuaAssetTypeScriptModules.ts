@@ -9,6 +9,7 @@ import { LuaPreprocessResult, preprocessLuaCode } from "../luaPreprocessor";
 import { kImportKind } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { createIdentitySourceMap, mapPreprocessedOffset } from "../sourceMap";
+import { profileAsync, TraceScope } from "../../utils/traceProfiler";
 import { LuaCodeResource } from "./LuaCodeImporter";
 import {
   createManifestCodeModuleCatalog,
@@ -50,6 +51,7 @@ export function createLuaAssetModuleCatalog(project: TicbuildProjectCore): Reado
 export async function prepareLuaAssetTypeScriptDeclarations(
   project: TicbuildProjectCore,
   resources: ResourceManager,
+  parentScope?: TraceScope,
 ): Promise<void> {
   const hasTypeScript = project.manifest.imports.some(
     (importDef) => importDef.kind === kImportKind.key.TypeScriptCode,
@@ -65,10 +67,19 @@ export async function prepareLuaAssetTypeScriptDeclarations(
       throw new Error(`Cannot generate TypeScript declarations for missing LuaCode asset '${definition.importName}'`);
     }
     const generated = await resource.getGeneratedLuaSource(project);
-    const preprocess = await preprocessLuaCode(project, generated.source, generated.sourcePath, {
-      sourceMap: generated.sourceMap,
-      resolveCodeImport: async (importName) => resolveDeclarationInclude(project, resources, importName),
-    });
+    const preprocess = await profileAsync(
+      parentScope,
+      "Lua asset declaration preprocessing",
+      {
+        category: "TypeScript declarations",
+        args: { importName: definition.importName },
+      },
+      (scope) => preprocessLuaCode(project, generated.source, generated.sourcePath, {
+        sourceMap: generated.sourceMap,
+        resolveCodeImport: async (importName) => resolveDeclarationInclude(project, resources, importName),
+        profileScope: scope,
+      }),
+    );
     modules.push({ definition, declarations: extractLuaGlobalDeclarations(preprocess) });
   }
 

@@ -29,6 +29,7 @@ import {
 } from "./luaEncode";
 import { GeneratedLuaSource } from "./ImportedResourceTypes";
 import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "./importSources";
+import { profileAsync, profileSync, TraceScope } from "../utils/traceProfiler";
 
 
 export type LuaPreprocessorValue = PreprocessorValue;
@@ -50,6 +51,7 @@ export type LuaPreprocessorOptions = {
   resolveImportSource?: LuaImportSourceResolver;
   sourceMap?: LuaPreprocessorSourceMap;
   quietParseFailures?: boolean;
+  profileScope?: TraceScope;
 };
 
 export type PreprocessorSymbol = {
@@ -76,6 +78,17 @@ type PreprocessorState = {
   minifyGlobalNamesToKeep: string[];
   resolveCodeImport?: LuaCodeImportResolver;
   resolveImportSource: LuaImportSourceResolver;
+  diagnostics: SourceProcessingDiagnostics;
+};
+
+type SourceProcessingDiagnostics = {
+  sourcesProcessed: number;
+  sourceCharacters: number;
+  includeDirectives: number;
+  fileIncludes: number;
+  codeImportIncludes: number;
+  cartridgeCodeIncludes: number;
+  pragmaOnceSkips: number;
 };
 
 type MinifyRenameDirective = "allow_rename" | "no_rename";
@@ -142,25 +155,64 @@ export async function preprocessLuaCode(
     minifyGlobalNamesToKeep: [],
     resolveCodeImport: options.resolveCodeImport,
     resolveImportSource,
+    diagnostics: {
+      sourcesProcessed: 0,
+      sourceCharacters: 0,
+      includeDirectives: 0,
+      fileIncludes: 0,
+      codeImportIncludes: 0,
+      cartridgeCodeIncludes: 0,
+      pragmaOnceSkips: 0,
+    },
   };
 
   const includeKey = makeIncludeKey(filePath, {});
   const inputSourceMap = options.sourceMap ?? createIdentitySourceMap(source, filePath);
   assertSourceMapMatchesSource(inputSourceMap, source);
-  const rawResult = await processSource(project, source, inputSourceMap, filePath, includeKey, state, {});
-  const expandedResult = expandMacros(rawResult, filePath);
+  const rawResult = await profileAsync(
+    options.profileScope,
+    "Resolve Lua includes and directives",
+    {
+      category: "Lua preprocessing",
+      args: { inputCharacters: source.length },
+    },
+    async (scope) => {
+      const result = await processSource(project, source, inputSourceMap, filePath, includeKey, state, {});
+      scope?.setArgs({
+        outputCharacters: result.code.length,
+        sourceMapSegments: result.map.getSegments().length,
+        macroDefinitions: result.macroDefinitions.length,
+        ...state.diagnostics,
+      });
+      return result;
+    },
+  );
+  const expandedResult = expandMacros(rawResult, filePath, options.profileScope);
   const finalResult = await expandPreprocessorCalls(
     project,
     expandedResult,
     filePath,
     state,
     options.quietParseFailures ?? false,
+    options.profileScope,
+  );
+  const sourceMap = profileSync(
+    options.profileScope,
+    "Finalize Lua source map",
+    {
+      category: "Lua preprocessing",
+      args: {
+        outputCharacters: finalResult.code.length,
+        sourceMapSegments: finalResult.map.getSegments().length,
+      },
+    },
+    () => finalResult.map.toSourceMap(finalResult.code),
   );
 
   return {
     code: finalResult.code,
     dependencies: Array.from(state.dependencies.values()),
-    sourceMap: finalResult.map.toSourceMap(finalResult.code),
+    sourceMap,
     preprocessorSymbols: state.macroSymbols,
     minifyAllowedGlobalNames: Array.from(new Set(state.minifyAllowedGlobalNames)),
     minifyGlobalNamesToKeep: Array.from(new Set(state.minifyGlobalNamesToKeep)),
@@ -197,12 +249,15 @@ async function processSource(
   trackDependency: boolean = true,
 ): Promise<ProcessResult> {
   if (state.pragmaOnceKeys.has(includeKey)) {
+    state.diagnostics.pragmaOnceSkips++;
     return { code: "", map: new SourceMapBuilder(), macroDefinitions: [] };
   }
   if (state.includeStack.includes(includeKey)) {
     const cycle = [...state.includeStack, includeKey].join(" -> ");
     throw new Error(`Lua preprocessor include cycle detected: ${cycle}`);
   }
+  state.diagnostics.sourcesProcessed++;
+  state.diagnostics.sourceCharacters += source.length;
 
   state.includeStack.push(includeKey);
   if (trackDependency) {
@@ -489,6 +544,7 @@ async function processSource(
         if (!isActive()) {
           break;
         }
+        state.diagnostics.includeDirectives++;
         const includeMatch = rest.trim().match(/^"([^"]+)"(.*)$/);
         if (!includeMatch) {
           throw new Error(formatError(authoredFilePath, authoredLineNumber, `Invalid --#include syntax: ${line}`));
@@ -609,6 +665,7 @@ async function resolveInclude(
   if (includeTarget.startsWith("import:")) {
     return await resolveImportInclude(project, includeTarget, overrides, state, lineNumber);
   }
+  state.diagnostics.fileIncludes++;
 
   const substituted = project.substituteVariables(includeTarget);
   let resolvedPath: string;
@@ -627,6 +684,7 @@ async function resolveInclude(
   const includeKey = makeIncludeKey(resolvedPath, overrides);
 
   if (state.pragmaOnceKeys.has(includeKey)) {
+    state.diagnostics.pragmaOnceSkips++;
     return { code: "", map: new SourceMapBuilder(), macroDefinitions: [] };
   }
 
@@ -661,6 +719,7 @@ async function resolveImportInclude(
 
   const generatedLua = await state.resolveCodeImport?.(importName);
   if (generatedLua) {
+    state.diagnostics.codeImportIncludes++;
     if (chunkSpec) {
       throw new Error(
         formatError(generatedLua.sourcePath, lineNumber, `Code imports do not support a chunk selector`),
@@ -671,6 +730,7 @@ async function resolveImportInclude(
     }
     const includeKey = makeIncludeKey(generatedLua.sourcePath, overrides);
     if (state.pragmaOnceKeys.has(includeKey)) {
+      state.diagnostics.pragmaOnceSkips++;
       return { code: "", map: new SourceMapBuilder(), macroDefinitions: [] };
     }
     const included = await processSource(
@@ -687,6 +747,7 @@ async function resolveImportInclude(
   }
 
   if (importDef.kind === kImportKind.key.Tic80Cartridge) {
+    state.diagnostics.cartridgeCodeIncludes++;
     const importSource = await state.resolveImportSource(importName);
     if (!importSource) {
       throw new Error(formatError("<include>", lineNumber, `Import source not found: ${importName}`));
@@ -1259,116 +1320,207 @@ function readMacroBody(
 function expandMacros(
   result: ProcessResult,
   filePath: string,
+  parentScope?: TraceScope,
 ): ProcessResult {
-  if (result.macroDefinitions.length === 0) {
-    return result;
-  }
+  return profileSync(
+    parentScope,
+    "Expand Lua macros",
+    {
+      category: "Lua preprocessing",
+      args: {
+        inputCharacters: result.code.length,
+        inputSourceMapSegments: result.map.getSegments().length,
+        macroDefinitions: result.macroDefinitions.length,
+      },
+    },
+    (scope) => {
+      if (result.macroDefinitions.length === 0) {
+        scope?.setArgs({ passesAttempted: 0, expansionPasses: 0, replacements: 0 });
+        return result;
+      }
 
-  let current = result;
-  const maxPasses = 25;
-  for (let pass = 0; pass < maxPasses; pass++) {
-    const passResult = applyMacroPass(current, filePath);
-    if (!passResult.changed) {
-      return current;
+      let current = result;
+      let passesAttempted = 0;
+      let expansionPasses = 0;
+      let replacementCount = 0;
+      const maxPasses = 25;
+      for (let pass = 0; pass < maxPasses; pass++) {
+        const passResult = profileSync(
+          scope,
+          "Lua macro expansion pass",
+          {
+            category: "Lua preprocessing",
+            args: {
+              pass: pass + 1,
+              inputCharacters: current.code.length,
+              inputSourceMapSegments: current.map.getSegments().length,
+            },
+          },
+          (passScope) => {
+            const expanded = applyMacroPass(current, filePath, passScope);
+            passScope?.setArgs({
+              changed: expanded.changed,
+              replacements: expanded.replacementCount,
+              outputCharacters: expanded.code.length,
+              outputSourceMapSegments: expanded.map.getSegments().length,
+            });
+            return expanded;
+          },
+        );
+        passesAttempted++;
+        replacementCount += passResult.replacementCount;
+        if (!passResult.changed) {
+          scope?.setArgs({
+            passesAttempted,
+            expansionPasses,
+            replacements: replacementCount,
+            outputCharacters: current.code.length,
+            outputSourceMapSegments: current.map.getSegments().length,
+          });
+          return current;
+        }
+        expansionPasses++;
+        current = {
+          code: passResult.code,
+          map: passResult.map,
+          macroDefinitions: passResult.macroDefinitions,
+        };
+      }
+
+      scope?.setArgs({
+        passesAttempted,
+        expansionPasses,
+        replacements: replacementCount,
+        outputCharacters: current.code.length,
+        outputSourceMapSegments: current.map.getSegments().length,
+      });
+      throw new Error(formatError(filePath, 1, `Macro expansion exceeded ${maxPasses} passes (possible recursion)`));
     }
-    current = {
-      code: passResult.code,
-      map: passResult.map,
-      macroDefinitions: passResult.macroDefinitions,
-    };
-  }
-
-  throw new Error(formatError(filePath, 1, `Macro expansion exceeded ${maxPasses} passes (possible recursion)`));
+  );
 }
 
 function applyMacroPass(
   result: ProcessResult,
   filePath: string,
-): ProcessResult & { changed: boolean } {
-  const chunk = parseLuaForMacroExpansion(result.code, filePath);
+  parentScope?: TraceScope,
+): ProcessResult & { changed: boolean; replacementCount: number } {
+  const chunk = profileSync(
+    parentScope,
+    "Parse Lua for macro expansion",
+    {
+      category: "Lua preprocessing",
+      args: { inputCharacters: result.code.length },
+    },
+    () => parseLuaForMacroExpansion(result.code, filePath),
+  );
   const replacements: Array<{ start: number; end: number; text: string }> = [];
+  let identifierNodes = 0;
+  let callExpressionNodes = 0;
+  let definitionLookups = 0;
 
-  walkLuaAst(chunk, (node, parent) => {
-    if (node.type === "Identifier") {
-      if (isIdentifierKeyPosition(node, parent)) {
-        return;
-      }
-      const range = getRange(node, filePath);
-      const macroDef = findMacroDefinitionAtOffset(result.macroDefinitions, node.name, range[0]);
-      if (!macroDef || macroDef.invocationStyle !== "object") {
-        return;
-      }
-      replacements.push({
-        start: range[0],
-        end: range[1],
-        text: expandMacroBody(macroDef, []),
+  const filtered = profileSync(
+    parentScope,
+    "Find Lua macro expansions",
+    {
+      category: "Lua preprocessing",
+      args: { macroDefinitions: result.macroDefinitions.length },
+    },
+    (scope) => {
+      walkLuaAst(chunk, (node, parent) => {
+        if (node.type === "Identifier") {
+          identifierNodes++;
+          if (isIdentifierKeyPosition(node, parent)) {
+            return;
+          }
+          const range = getRange(node, filePath);
+          definitionLookups++;
+          const macroDef = findMacroDefinitionAtOffset(result.macroDefinitions, node.name, range[0]);
+          if (!macroDef || macroDef.invocationStyle !== "object") {
+            return;
+          }
+          replacements.push({
+            start: range[0],
+            end: range[1],
+            text: expandMacroBody(macroDef, []),
+          });
+          return;
+        }
+
+        if (node.type !== "CallExpression") {
+          return;
+        }
+        callExpressionNodes++;
+        const callNode = node as luaparse.CallExpression;
+        if (callNode.base.type !== "Identifier") {
+          return;
+        }
+        const range = getRange(callNode, filePath);
+        definitionLookups++;
+        const macroDef = findMacroDefinitionAtOffset(result.macroDefinitions, callNode.base.name, range[0]);
+        if (!macroDef || macroDef.invocationStyle !== "function") {
+          return;
+        }
+
+        const lineNumber = getLineNumber(callNode, 1);
+        if (macroDef.bodyKind !== "expression" && parent?.type !== "CallStatement") {
+          const bodyLabel = macroDef.bodyKind === "empty" ? "Empty" : "Statement-list";
+          throw new Error(
+            formatError(
+              filePath,
+              lineNumber,
+              `${bodyLabel} macro ${macroDef.name} can only be used as a standalone call statement`,
+            ),
+          );
+        }
+        const args = callNode.arguments || [];
+        if (args.length !== macroDef.params.length) {
+          throw new Error(
+            formatError(
+              filePath,
+              lineNumber,
+              `Macro ${macroDef.name} expects ${macroDef.params.length} args but got ${args.length}`,
+            ),
+          );
+        }
+
+        const argTexts = args.map((arg) =>
+          stripLuaCommentsPreserveNewlines(sliceRange(result.code, getRange(arg, filePath))),
+        );
+        const expanded = expandMacroBody(macroDef, argTexts);
+        replacements.push({ start: range[0], end: range[1], text: expanded });
       });
-      return;
-    }
 
-    if (node.type !== "CallExpression") {
-      return;
-    }
-    const callNode = node as luaparse.CallExpression;
-    if (callNode.base.type !== "Identifier") {
-      return;
-    }
-    const range = getRange(callNode, filePath);
-    const macroDef = findMacroDefinitionAtOffset(result.macroDefinitions, callNode.base.name, range[0]);
-    if (!macroDef || macroDef.invocationStyle !== "function") {
-      return;
-    }
+      const sortedByStart = [...replacements].sort((a, b) => a.start - b.start || b.end - a.end);
 
-    const lineNumber = getLineNumber(callNode, 1);
-    if (macroDef.bodyKind !== "expression" && parent?.type !== "CallStatement") {
-      const bodyLabel = macroDef.bodyKind === "empty" ? "Empty" : "Statement-list";
-      throw new Error(
-        formatError(
-          filePath,
-          lineNumber,
-          `${bodyLabel} macro ${macroDef.name} can only be used as a standalone call statement`,
-        ),
-      );
-    }
-    const args = callNode.arguments || [];
-    if (args.length !== macroDef.params.length) {
-      throw new Error(
-        formatError(
-          filePath,
-          lineNumber,
-          `Macro ${macroDef.name} expects ${macroDef.params.length} args but got ${args.length}`,
-        ),
-      );
-    }
+      // filter out nested replacements; only keep outermost
+      // this prevents overlapping edits
+      const nonOverlapping: Array<{ start: number; end: number; text: string }> = [];
+      let currentOuter: { start: number; end: number; text: string } | null = null;
+      for (const rep of sortedByStart) {
+        if (currentOuter && rep.start >= currentOuter.start && rep.end <= currentOuter.end) {
+          continue;
+        }
+        nonOverlapping.push(rep);
+        currentOuter = rep;
+      }
+      scope?.setArgs({
+        identifierNodes,
+        callExpressionNodes,
+        definitionLookups,
+        replacementsFound: replacements.length,
+        replacementsApplied: nonOverlapping.length,
+      });
+      return nonOverlapping;
+    },
+  );
 
-    const argTexts = args.map((arg) =>
-      stripLuaCommentsPreserveNewlines(sliceRange(result.code, getRange(arg, filePath))),
-    );
-    const expanded = expandMacroBody(macroDef, argTexts);
-    replacements.push({ start: range[0], end: range[1], text: expanded });
-  });
-
-  if (replacements.length === 0) {
-    return { ...result, changed: false };
-  }
-
-  const sortedByStart = [...replacements].sort((a, b) => a.start - b.start || b.end - a.end);
-
-  // filter out nested replacements; only keep outermost
-  // this prevents overlapping edits
-  const filtered: Array<{ start: number; end: number; text: string }> = [];
-  let currentOuter: { start: number; end: number; text: string } | null = null;
-  for (const rep of sortedByStart) {
-    if (currentOuter && rep.start >= currentOuter.start && rep.end <= currentOuter.end) {
-      continue;
-    }
-    filtered.push(rep);
-    currentOuter = rep;
+  if (filtered.length === 0) {
+    return { ...result, changed: false, replacementCount: 0 };
   }
 
   const sorted = filtered.sort((a, b) => b.start - a.start);
-  const updated = applyReplacementsWithMap(result, sorted, filePath);
-  return { ...updated, changed: true };
+  const updated = applyReplacementsWithMap(result, sorted, filePath, parentScope);
+  return { ...updated, changed: true, replacementCount: sorted.length };
 }
 
 function parseLuaForMacroExpansion(code: string, filePath: string): luaparse.Chunk {
@@ -1466,10 +1618,45 @@ async function expandPreprocessorCalls(
   filePath: string,
   state: PreprocessorState,
   quietParseFailures: boolean,
+  parentScope?: TraceScope,
 ): Promise<ProcessResult> {
-  const chunk = (quietParseFailures ? parseLuaQuiet(result.code) : parseLua(result.code))!;
+  return profileAsync(
+    parentScope,
+    "Expand Lua preprocessor calls",
+    {
+      category: "Lua preprocessing",
+      args: {
+        inputCharacters: result.code.length,
+        inputSourceMapSegments: result.map.getSegments().length,
+      },
+    },
+    (scope) => expandPreprocessorCallsCore(project, result, filePath, state, quietParseFailures, scope),
+  );
+}
+
+async function expandPreprocessorCallsCore(
+  project: TicbuildProjectCore,
+  result: ProcessResult,
+  filePath: string,
+  state: PreprocessorState,
+  quietParseFailures: boolean,
+  parentScope?: TraceScope,
+): Promise<ProcessResult> {
+  const chunk = profileSync(
+    parentScope,
+    "Parse Lua for preprocessor calls",
+    {
+      category: "Lua preprocessing",
+      args: { inputCharacters: result.code.length },
+    },
+    () => (quietParseFailures ? parseLuaQuiet(result.code) : parseLua(result.code))!,
+  );
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   const tasks: Promise<void>[] = [];
+  let callExpressionNodes = 0;
+  let expandCalls = 0;
+  let importCalls = 0;
+  let encodeCalls = 0;
 
   const addReplacement = (node: luaparse.Node, text: string) => {
     const range = getRange(node, filePath);
@@ -1524,10 +1711,11 @@ async function expandPreprocessorCalls(
     return importDef;
   };
 
-  walkLuaAst(chunk, (node) => {
+  const visitCall = (node: luaparse.Node) => {
     if (node.type !== "CallExpression") {
       return;
     }
+    callExpressionNodes++;
     const callNode = node as luaparse.CallExpression;
     if (callNode.base.type !== "Identifier") {
       return;
@@ -1535,6 +1723,7 @@ async function expandPreprocessorCalls(
 
     const fnName = callNode.base.name;
     if (fnName === "__EXPAND") {
+      expandCalls++;
       tasks.push(
         (async () => {
           const lineNumber = getLineNumber(callNode, 1);
@@ -1551,6 +1740,7 @@ async function expandPreprocessorCalls(
     }
 
     if (fnName === "__IMPORT") {
+      importCalls++;
       tasks.push(
         (async () => {
           const lineNumber = getLineNumber(callNode, 1);
@@ -1597,6 +1787,7 @@ async function expandPreprocessorCalls(
     }
 
     if (fnName === "__ENCODE") {
+      encodeCalls++;
       tasks.push(
         (async () => {
           const lineNumber = getLineNumber(callNode, 1);
@@ -1623,39 +1814,119 @@ async function expandPreprocessorCalls(
         })(),
       );
     }
-  });
+  };
+
+  profileSync(
+    parentScope,
+    "Find Lua preprocessor calls",
+    { category: "Lua preprocessing" },
+    (scope) => {
+      walkLuaAst(chunk, visitCall);
+      scope?.setArgs({
+        callExpressionNodes,
+        preprocessorCalls: expandCalls + importCalls + encodeCalls,
+        expandCalls,
+        importCalls,
+        encodeCalls,
+      });
+    },
+  );
 
   if (tasks.length === 0) {
+    parentScope?.setArgs({
+      callExpressionNodes,
+      preprocessorCalls: 0,
+      expandCalls: 0,
+      importCalls: 0,
+      encodeCalls: 0,
+      replacements: 0,
+      outputCharacters: result.code.length,
+      outputSourceMapSegments: result.map.getSegments().length,
+    });
     return result;
   }
 
-  await Promise.all(tasks);
+  await profileAsync(
+    parentScope,
+    "Complete Lua preprocessor calls",
+    {
+      category: "Lua preprocessing",
+      args: { preprocessorCalls: tasks.length },
+    },
+    async (scope) => {
+      await Promise.all(tasks);
+      scope?.setArgs({ replacements: replacements.length });
+    },
+  );
 
   if (replacements.length === 0) {
+    parentScope?.setArgs({
+      callExpressionNodes,
+      preprocessorCalls: expandCalls + importCalls + encodeCalls,
+      expandCalls,
+      importCalls,
+      encodeCalls,
+      replacements: 0,
+      outputCharacters: result.code.length,
+      outputSourceMapSegments: result.map.getSegments().length,
+    });
     return result;
   }
 
   const sorted = replacements.sort((a, b) => b.start - a.start);
-  return applyReplacementsWithMap(result, sorted, filePath);
+  const updated = applyReplacementsWithMap(result, sorted, filePath, parentScope);
+  parentScope?.setArgs({
+    callExpressionNodes,
+    preprocessorCalls: expandCalls + importCalls + encodeCalls,
+    expandCalls,
+    importCalls,
+    encodeCalls,
+    replacements: replacements.length,
+    outputCharacters: updated.code.length,
+    outputSourceMapSegments: updated.map.getSegments().length,
+  });
+  return updated;
 }
 
 function applyReplacementsWithMap(
   result: ProcessResult,
   replacements: Array<{ start: number; end: number; text: string }>,
   filePath: string,
+  parentScope?: TraceScope,
 ): ProcessResult {
-  let out = result.code;
-  let macroDefinitions = result.macroDefinitions;
-  for (const rep of replacements) {
-    out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
-    const origin = result.map.mapOffset(rep.start, "right") ?? { file: filePath, offset: 0 };
-    result.map.spliceRange(rep.start, rep.end, rep.text.length, origin);
-    macroDefinitions = macroDefinitions.map((event) => ({
-      offset: mapOffsetThroughReplacement(event.offset, rep.start, rep.end, rep.text.length),
-      definition: event.definition,
-    }));
-  }
-  return { code: out, map: result.map, macroDefinitions };
+  return profileSync(
+    parentScope,
+    "Apply Lua replacements",
+    {
+      category: "Lua preprocessing",
+      args: {
+        replacements: replacements.length,
+        inputCharacters: result.code.length,
+        inputSourceMapSegments: result.map.getSegments().length,
+        macroDefinitions: result.macroDefinitions.length,
+        replacedCharacters: replacements.reduce((total, rep) => total + rep.end - rep.start, 0),
+        insertedCharacters: replacements.reduce((total, rep) => total + rep.text.length, 0),
+      },
+    },
+    (scope) => {
+      let out = result.code;
+      let macroDefinitions = result.macroDefinitions;
+      for (const rep of replacements) {
+        out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
+        const origin = result.map.mapOffset(rep.start, "right") ?? { file: filePath, offset: 0 };
+        result.map.spliceRange(rep.start, rep.end, rep.text.length, origin);
+        macroDefinitions = macroDefinitions.map((event) => ({
+          offset: mapOffsetThroughReplacement(event.offset, rep.start, rep.end, rep.text.length),
+          definition: event.definition,
+        }));
+      }
+      scope?.setArgs({
+        outputCharacters: out.length,
+        outputSourceMapSegments: result.map.getSegments().length,
+      });
+      return { code: out, map: result.map, macroDefinitions };
+    },
+  );
 }
 
 function mapOffsetThroughReplacement(offset: number, start: number, end: number, replacementLength: number): number {

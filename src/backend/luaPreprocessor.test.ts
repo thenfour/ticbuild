@@ -5,6 +5,7 @@ import * as cons from "../utils/console";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { TraceProfiler } from "../utils/traceProfiler";
 
 type Manifest = Omit<TicbuildManifest, "buildConfiguration">;
 
@@ -782,6 +783,90 @@ local y = x`);
 });
 
 describe("Lua preprocessor include resolution", () => {
+  it("records aggregate diagnostics for includes, macro passes, and preprocessor calls", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-preproc-trace-"));
+    const includePath = path.join(tempRoot, "macros.lua");
+    const includeSource = `--#pragma once
+--#macro DOUBLE(x) => x+x`;
+    fs.writeFileSync(includePath, includeSource, "utf-8");
+
+    const manifest: Manifest = {
+      project: {
+        name: "test",
+        binDir: "./bin",
+        objDir: "./obj",
+        outputCartName: "test.tic",
+      },
+      variables: { greeting: "hello" },
+      imports: [],
+      assembly: {
+        blocks: [],
+      },
+    };
+    const project = new TicbuildProjectCore({
+      manifest: { buildConfiguration: "release", ...manifest },
+      manifestPath: path.join(tempRoot, "manifest.ticbuild.jsonc"),
+      projectDir: tempRoot,
+    });
+    const source = `--#include "macros.lua"
+--#include "macros.lua"
+local value = DOUBLE(3)
+local label = __EXPAND("$(greeting)")`;
+    const profiler = new TraceProfiler();
+    const rootScope = profiler.mainTrack.enter("Lua preprocessing");
+
+    try {
+      const result = await preprocessLuaCode(project, source, path.join(tempRoot, "main.lua"), {
+        profileScope: rootScope,
+      });
+      rootScope.close();
+
+      expect(result.code).toContain("local value = 3+3");
+      expect(result.code).toContain('local label = "hello"');
+
+      const events = profiler.toChromeTrace().traceEvents.filter((event) => event.ph === "X");
+      expect(events.find((event) => event.name === "Resolve Lua includes and directives")?.args).toMatchObject({
+        inputCharacters: source.length,
+        outputCharacters: expect.any(Number),
+        sourcesProcessed: 2,
+        sourceCharacters: source.length + includeSource.length,
+        includeDirectives: 2,
+        fileIncludes: 2,
+        codeImportIncludes: 0,
+        cartridgeCodeIncludes: 0,
+        pragmaOnceSkips: 1,
+        macroDefinitions: 1,
+      });
+      expect(events.find((event) => event.name === "Expand Lua macros")?.args).toMatchObject({
+        macroDefinitions: 1,
+        passesAttempted: 2,
+        expansionPasses: 1,
+        replacements: 1,
+      });
+      expect(events.filter((event) => event.name === "Lua macro expansion pass")).toHaveLength(2);
+      expect(events.find((event) => event.name === "Find Lua macro expansions")?.args).toMatchObject({
+        definitionLookups: expect.any(Number),
+        replacementsFound: 1,
+        replacementsApplied: 1,
+      });
+      expect(events.find((event) => event.name === "Expand Lua preprocessor calls")?.args).toMatchObject({
+        preprocessorCalls: 1,
+        expandCalls: 1,
+        importCalls: 0,
+        encodeCalls: 0,
+        replacements: 1,
+      });
+      expect(events.filter((event) => event.name === "Apply Lua replacements")).toHaveLength(2);
+      expect(events.find((event) => event.name === "Finalize Lua source map")?.args).toMatchObject({
+        outputCharacters: result.code.length,
+        sourceMapSegments: result.sourceMap.segments.length,
+      });
+    } finally {
+      rootScope.close();
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("should resolve --#include relative to including file", async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-preproc-"));
     const srcDir = path.join(tempRoot, "src");
