@@ -166,7 +166,21 @@ declare namespace ticbuild {
   ): IfDefined<Name, Yes, No>;
 
   // Creates a compile-time constant whose emitted value is the literal T.
-  function MakeConstant<T extends ConstantValue>(): Constant<T>;
+  // has no body, because its return value is produced at compile time. The visitor plugin
+  // doesn't match MakeConstant, it matches its return type, e.g.,
+  // const value = MakeConstant<"hi">();
+  // plugin sees the expression's return type and replaces the whole thing with
+  // the literal T.
+  //
+  // note that Constant<Constant<T>> is equivalent to Constant<T>.
+  // so this also handles cases where T is already a Constant.
+  // TODO: that's not a perfect solution for nested constants; the correct solution
+  // involves handling this at the Constant<> type level rather than its support helpers.
+  // but that would also impose changes on the plugins i don't feel like doing.
+  function MakeConstant<T extends ConstantValue>():
+    T extends Constant<infer Value>
+    ? Constant<Value>
+    : Constant<T>;
   function assert_const<T extends ConstantValue>(value: Constant<T>): void;
 }
 
