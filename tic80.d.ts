@@ -157,6 +157,13 @@ declare namespace ticbuild {
 
   // Returns a compile-time constant indicating whether the literal Name is defined.
   function IsDefined<Name extends string>(name: string extends Name ? never : Name): Constant<IsDefined<Name>>;
+  // Selects one expression at compile time. Only the selected expression is emitted
+  // and evaluated; its ordinary TypeScript type is preserved.
+  function IfDefined<Name extends string, Yes, No>(
+    name: string extends Name ? never : Name,
+    whenDefined: Yes,
+    whenMissing: No,
+  ): IfDefined<Name, Yes, No>;
 
   // Creates a compile-time constant whose emitted value is the literal T.
   function MakeConstant<T extends ConstantValue>(): Constant<T>;

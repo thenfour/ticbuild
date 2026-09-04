@@ -195,10 +195,51 @@ function isTicbuildFunctionCall(checker: ts.TypeChecker, node: ts.CallExpression
   return isTicbuildFunctionDeclaration(checker.getResolvedSignature(node)?.declaration, name);
 }
 
+function transformIfDefinedCall(
+  node: ts.CallExpression,
+  context: tstl.TransformationContext,
+  definedNames: ReadonlySet<string>,
+): tstl.Expression {
+  const [nameExpression, whenDefined, whenMissing] = node.arguments;
+  if (!nameExpression || !whenDefined || !whenMissing || node.arguments.length !== 3) {
+    // TypeScript normally reports arity errors first, but keep the intrinsic
+    // transform safe and intentional if it is reached with malformed input.
+    context.diagnostics.push(createError(node, "ticbuild.IfDefined() requires exactly three arguments"));
+    return tstl.createNilLiteral(node);
+  }
+
+  // Accept expressions whose checker type is one exact string literal, not
+  // merely direct string syntax. Thus both IfDefined("DEBUG", ...) and a
+  // `const DEFINE_NAME = "DEBUG"` argument work, while a runtime string or a
+  // union such as "DEBUG" | "RELEASE" is rejected.
+  const nameType = context.checker.getTypeAtLocation(nameExpression);
+  if (!(nameType.flags & ts.TypeFlags.StringLiteral)) {
+    context.diagnostics.push(createError(
+      nameExpression,
+      `ticbuild.IfDefined() requires one exact string literal define name; received ${context.checker.typeToString(nameType)}`,
+    ));
+    return tstl.createNilLiteral(node);
+  }
+
+  const name = (nameType as ts.StringLiteralType).value;
+  const selectedExpression = definedNames.has(name) ? whenDefined : whenMissing;
+
+  // IfDefined is a compile-time conditional rather than a normal eager
+  // function call. Transforming only the selected child means, for example,
+  // IfDefined("DEBUG", debugValue(), releaseValue()) emits exactly one call.
+  // Re-enter plugin dispatch so a selected Constant<T> is still inlined.
+  return context.transformExpression(selectedExpression);
+}
+
 function transformConstantExpression(
   node: ts.Expression,
   context: tstl.TransformationContext,
+  definedNames: ReadonlySet<string>,
 ): tstl.Expression {
+  if (ts.isCallExpression(node) && isTicbuildFunctionCall(context.checker, node, "IfDefined")) {
+    return transformIfDefinedCall(node, context, definedNames);
+  }
+
   // `ticbuild.assert_const(AGE);` is handled and erased by the statement visitor.
   // Using it as a value, such as `const x = assert_const(AGE)`, is nonsensical
   // because no runtime function exists, so diagnose that form explicitly.
@@ -393,7 +434,7 @@ const constantExpressionKinds: readonly ts.SyntaxKind[] = [
   ts.SyntaxKind.SatisfiesExpression,
 ];
 
-export function createTypeScriptConstantPlugin(): tstl.Plugin {
+export function createTypeScriptConstantPlugin(definedNames: ReadonlySet<string>): tstl.Plugin {
   const visitors: tstl.Visitors = {
     [ts.SyntaxKind.VariableStatement]: { transform: transformVariableStatement, priority: 100 },
     [ts.SyntaxKind.ImportDeclaration]: { transform: transformImportDeclaration, priority: 100 },
@@ -403,7 +444,7 @@ export function createTypeScriptConstantPlugin(): tstl.Plugin {
   for (const kind of constantExpressionKinds) {
     // Run before TSTL's stock visitors so this acts in the spirit of a preprocessor
     (visitors as Record<number, tstl.ObjectVisitor<ts.Expression>>)[kind] = {
-      transform: transformConstantExpression,
+      transform: (node, context) => transformConstantExpression(node, context, definedNames),
       priority: 100,
     };
   }

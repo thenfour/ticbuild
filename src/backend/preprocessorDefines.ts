@@ -1,6 +1,7 @@
 import { PreprocessorValue } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 
+// TODO: cache.
 export function getResolvedPreprocessorDefines(
   project: TicbuildProjectCore,
 ): Readonly<Record<string, PreprocessorValue>> {

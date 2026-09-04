@@ -164,6 +164,49 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
+  it("selects arbitrary IfDefined expressions at compile time", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-if-defined-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        "declare function debugString(): string;",
+        "declare function releaseString(): string;",
+        "declare function discardedDebugString(): string;",
+        "declare function discardedReleaseString(): string;",
+        'const DEFINE_NAME = "DEBUG" as const;',
+        "export function TIC(): void {",
+        '  print(ticbuild.IfDefined("DEBUG", debugString(), discardedReleaseString()));',
+        '  print(ticbuild.IfDefined("MISSING", discardedDebugString(), releaseString()));',
+        "  print(ticbuild.IfDefined(DEFINE_NAME, 10, 20));",
+        '  trace(ticbuild.IfDefined("DEBUG", ticbuild.MakeConstant<true>(), ticbuild.MakeConstant<false>()));',
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(
+      projectDir,
+      [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }],
+      // Presence, rather than the define's truthiness, selects the first branch.
+      { DEBUG: false },
+    );
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+
+      expect(source).toContain("print(debugString())");
+      expect(source).toContain("print(releaseString())");
+      expect(source).toContain("print(10)");
+      expect(source).toContain("trace(true)");
+      expect(source).not.toContain("discardedDebugString");
+      expect(source).not.toContain("discardedReleaseString");
+      expect(source).not.toContain("ticbuild");
+      expect(() => parseLua(source)).not.toThrow();
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("removes constant bindings while preserving mixed runtime module imports", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-constant-mixed-import-"));
     fs.writeFileSync(
@@ -248,6 +291,8 @@ describe("TypeScriptCodeResource", () => {
         "const CHOICE = ticbuild.MakeConstant<1 | 2>();",
         'const DEFINE_NAME: string = "DEBUG";',
         "const DYNAMIC_DEFINE = ticbuild.IsDefined(DEFINE_NAME);",
+        'const DEFINE_CHOICE = "" as "DEBUG" | "RELEASE";',
+        "ticbuild.IfDefined(DEFINE_CHOICE, 1, 0);",
         "const holder = { value: ticbuild.MakeConstant<8>() };",
         "holder.value = ticbuild.MakeConstant<8>();",
         "export function TIC(): void { print(BROAD); }",
@@ -269,6 +314,7 @@ describe("TypeScriptCodeResource", () => {
       expect(message).toMatch(/ticbuild\.Constant binding must be declared with const/);
       expect(message).toMatch(/ticbuild\.Constant value cannot be used as an assignment target/);
       expect(message).toMatch(/Argument of type 'string' is not assignable to parameter of type 'never'/);
+      expect(message).toMatch(/ticbuild\.IfDefined\(\) requires one exact string literal define name; received "DEBUG" \| "RELEASE"/);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }

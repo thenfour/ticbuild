@@ -865,6 +865,70 @@ export const AGE = ticbuild.MakeConstant<8>();
 ticbuild.assert_const(AGE); // checked by TypeScript, emits no Lua
 ```
 
+The main motivators for introducing `Constant<>`:
+
+- allow typescript to be able to work with compile-time constants beyond just
+  read-only defines (e.g., `#define` is just not functional in typescript)
+- lift constant manips out of weird unnerving `//#define` and into real TS syntax,
+  where it feels more natural and tooling-supported.
+
+For example this is a `Constant<>`:
+
+```ts
+//--#ifdef DEBUG
+//--#define ENABLE_EDITOR
+//--#endif
+
+//--#ifdef ENABLE_EDITOR
+initEditor();
+//--#endif
+```
+
+**const enum**
+
+This is also not possible:
+
+```ts
+const enum XYZ {
+  HUD_HEIGHT = ticbuild.IfDefined("DEBUG", 9, 0)
+};
+```
+
+But then again, `const enum` is always very restrictive, even the following is
+also invalid TypeScript: `const enum XYZ { HUD_HEIGHT = true ? 9 : 0 }`.
+
+Conclusion: we don't support that.
+
+**Selecting an expression with `IfDefined()`**
+
+`IfDefined()` is a compile-time conditional expression, value-level. Its
+branches can be ordinary TS expressions; only the selected expression
+is emitted and evaluated:
+
+```ts
+print(ticbuild.IfDefined(
+  "DEBUG",
+  getDebugString(),
+  getReleaseString(),
+));
+```
+
+This emits either `print(getDebugString())` or
+`print(getReleaseString())`. TypeScript still checks both expressions, and
+static imports retain their normal eager module semantics.
+
+The selected expression keeps its ordinary TypeScript type. `IfDefined()` does
+not turn a runtime `string` or `number` into a `Constant<>`. To make the result
+a transportable constant, supply constant branches explicitly:
+
+```ts
+const VALUE = ticbuild.IfDefined(
+  "DEBUG",
+  ticbuild.MakeConstant<1>(),
+  ticbuild.MakeConstant<0>(),
+);
+```
+
 Constants can be exported and imported normally. The imported reference keeps
 its `Constant<T>` type and is inlined at each use; its declaration and import
 plumbing are omitted from Lua. A module imported only for constants is therefore
@@ -885,9 +949,12 @@ literal condition. Guaranteed removal of the unreachable branch is a separate
 optimization and is not part of this first constant-inlining slice.
 
 ticbuild writes the active definition map to
-`.ticbuild/declarations/build-constants.d.ts` for ordinary TypeScript tooling.
+`.ticbuild/declarations/build-constants.d.ts` for ordinary TypeScript tooling
+(like IDE syntax highlighting / error reporting).
 As with other generated declarations, build once after changing configuration
 if the editor has not refreshed it yet.
+
+---
 
 Lua and TypeScript code assets declared in the project manifest are available
 as TypeScript modules under `ticbuild-assets/<manifest import name>`.

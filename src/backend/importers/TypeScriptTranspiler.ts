@@ -6,6 +6,7 @@ import { getPathRelativeToPackageRoot } from "../../utils/templates";
 import * as cons from "../../utils/console";
 import { ExternalDependency, GeneratedLuaSource } from "../ImportedResourceTypes";
 import { TypeScriptImportConfig } from "../manifestTypes";
+import { getResolvedPreprocessorDefines } from "../preprocessorDefines";
 import { TicbuildProjectCore } from "../projectCore";
 import { createTypeScriptTranspilationOptions } from "./TypeScriptTranspilationOptions";
 import { createTypeScriptStaticLinker, getCanonicalTSPathKey, isTypeScriptImplementationFile } from "./TypeScriptStaticLinker";
@@ -67,6 +68,7 @@ export function transpileTypeScriptToLua(
   manifestImportName?: string,
   profileTrack?: TraceTrack,
 ): TypeScriptTranspileResult {
+  const definedNames = new Set(Object.keys(getResolvedPreprocessorDefines(project)));
   const {
     builtinsPath,
     configuredProject,
@@ -141,7 +143,7 @@ export function transpileTypeScriptToLua(
   profileSync(profileTrack, "Transpile TypeScript to Lua", { category: "TypeScript" }, () => {
     const emitResult = new tstl.Transpiler({ emitHost }).emit({
       program,
-      plugins: [createTypeScriptConstantPlugin(), staticLinker.plugin],
+      plugins: [createTypeScriptConstantPlugin(definedNames), staticLinker.plugin],
       writeFile() { },
     });
     const diagnostics = ts.sortAndDeduplicateDiagnostics([
