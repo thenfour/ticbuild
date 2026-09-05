@@ -143,7 +143,10 @@ export function transpileTypeScriptToLua(
   profileSync(profileTrack, "Transpile TypeScript to Lua", { category: "TypeScript" }, () => {
     const emitResult = new tstl.Transpiler({ emitHost }).emit({
       program,
-      plugins: [createTypeScriptConstantPlugin(definedNames), staticLinker.plugin],
+      plugins: [
+        createTypeScriptConstantPlugin(definedNames, (value) => project.substituteVariables(value)),
+        staticLinker.plugin,
+      ],
       writeFile() { },
     });
     const diagnostics = ts.sortAndDeduplicateDiagnostics([

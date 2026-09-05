@@ -148,12 +148,37 @@ declare namespace ticbuild {
   // A value expression that ticbuild replaces with the exact literal T during processing
   type Constant<T extends ConstantValue> = T & { readonly [__constantBrand]: T };
 
+  // Presents every scalar property of a generated type map as a compile-time
+  // constant value. For example, Vars["project.name"] has the plain string
+  // literal type in a type position, while the value expression with the same
+  // spelling has type Constant<"MyProject">.
+  type ConstantMap<T> = {
+    readonly [Name in keyof T]: T[Name] extends ConstantValue ? Constant<T[Name]> : never;
+  };
+
   // Exact values of the active manifest/build-configuration defines
   interface Defines { }
   // Whether Name is present in the active build's Defines map.
   type IsDefined<Name extends string> = Name extends keyof Defines ? true : false;
   // Selects Yes or No according to the presence of Name in Defines.
   type IfDefined<Name extends string, Yes, No> = IsDefined<Name> extends true ? Yes : No;
+
+  // Exact resolved strings in the active project's substitution-variable map.
+  // The interface is populated in .ticbuild/declarations/build-constants.d.ts.
+  interface Vars { }
+  const Vars: ConstantMap<Vars>;
+
+  // Computes the literal result type of substituting $(variable) references.
+  // Generated Vars values are already fully resolved, so only the input string
+  // needs to be scanned recursively here.
+  type Expand<Text extends string> =
+    Text extends `${infer Before}$(${infer Name})${infer After}`
+    ? Name extends keyof Vars
+    ? Vars[Name] extends string
+    ? `${Before}${Vars[Name]}${Expand<After>}`
+    : never
+    : never
+    : Text;
 
   // Returns a compile-time constant indicating whether the literal Name is defined.
   function IsDefined<Name extends string>(name: string extends Name ? never : Name): Constant<IsDefined<Name>>;
@@ -164,6 +189,11 @@ declare namespace ticbuild {
     whenDefined: Yes,
     whenMissing: No,
   ): IfDefined<Name, Yes, No>;
+
+  // Substitutes project variables at compile time.
+  function Expand<Text extends string>(
+    value: string extends Text ? never : Expand<Text> extends never ? never : Text,
+  ): Constant<Expand<Text>>;
 
   // Creates a compile-time constant whose emitted value is the literal T.
   // has no body, because its return value is produced at compile time. The visitor plugin

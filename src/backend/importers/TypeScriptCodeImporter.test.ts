@@ -16,7 +16,12 @@ import { getTypeScriptLuaDeclarationsPath } from "./TypeScriptLuaDeclarations";
 import { getTypeScriptManifestDeclarationsPath } from "./TypeScriptManifestModules";
 import { getTypeScriptBuildConstantsPath } from "./TypeScriptBuildConstants";
 
-function createProject(projectDir: string, imports: Manifest["imports"], defines?: Record<string, PreprocessorValue>) {
+function createProject(
+  projectDir: string,
+  imports: Manifest["imports"],
+  defines?: Record<string, PreprocessorValue>,
+  variables: Record<string, string> = { "project.name": "typescript-test" },
+) {
   const manifest: Manifest = {
     buildConfiguration: "release",
     project: {
@@ -26,7 +31,7 @@ function createProject(projectDir: string, imports: Manifest["imports"], defines
       outputCartName: "test.tic",
     },
     preprocessor: defines ? { defines } : undefined,
-    variables: { "project.name": "typescript-test" },
+    variables,
     imports,
     assembly: { blocks: [{ asset: imports[0].name }] },
   };
@@ -119,6 +124,95 @@ describe("TypeScriptCodeResource", () => {
       expect(declarations).toContain('readonly "PROJECT_NAME": "typescript-test";');
       expect(declarations).not.toContain('readonly "MISSING"');
       expect(luaDeclarations).not.toContain("AGE = nil");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes resolved project variables and expands exact string constants", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-vars-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        "type Equal<Left, Right> =",
+        "  (<T>() => T extends Left ? 1 : 2) extends (<T>() => T extends Right ? 1 : 2) ? true : false;",
+        "type Assert<T extends true> = T;",
+        'type ProjectNameIsExact = Assert<Equal<ticbuild.Vars["project.name"], "typescript-test">>;',
+        'type ExpandedIsExact = Assert<Equal<ticbuild.Expand<"this project is $(project.description)">, "this project is typescript-test cartridge">>;',
+        'const TEMPLATE = "this project is $(project.description)" as const;',
+        'const PROJECT_NAME = ticbuild.Vars["project.name"];',
+        "const DESCRIPTION = ticbuild.Expand(TEMPLATE);",
+        "ticbuild.assert_const(PROJECT_NAME);",
+        "ticbuild.assert_const(DESCRIPTION);",
+        "export function TIC(): void {",
+        "  print(PROJECT_NAME);",
+        "  print(DESCRIPTION);",
+        '  print(ticbuild.Expand("direct $(project.name)"));',
+        '  trace(ticbuild.IsDefined("project.name"));',
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(
+      projectDir,
+      [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }],
+      // A colliding key intentionally proves that Vars and Defines remain separate maps.
+      { "project.name": false },
+      {
+        "project.name": "typescript-test",
+        "project.description": "$(project.name) cartridge",
+      },
+    );
+
+    try {
+      const resources = await loadAllImports(project);
+      const resource = getTypeScriptResource(resources, "main");
+      const source = resource.getCodeArtifacts(project).inputSource;
+      const declarations = fs.readFileSync(getTypeScriptBuildConstantsPath(projectDir), "utf-8");
+
+      expect(source).toContain('print("typescript-test")');
+      expect(source).toContain('print("this project is typescript-test cartridge")');
+      expect(source).toContain('print("direct typescript-test")');
+      expect(source).toContain("trace(true)");
+      expect(source).not.toContain("PROJECT_NAME");
+      expect(source).not.toContain("DESCRIPTION");
+      expect(source).not.toContain("ticbuild");
+      expect(declarations).toContain("interface Defines");
+      expect(declarations).toContain('readonly "project.name": false;');
+      expect(declarations).toContain("interface Vars");
+      expect(declarations).toContain('readonly "project.name": "typescript-test";');
+      expect(declarations).toContain('readonly "project.description": "typescript-test cartridge";');
+      expect(() => parseLua(source)).not.toThrow();
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid TypeScript variable expansion intentionally", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-expand-diagnostics-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        "declare const runtimeText: string;",
+        "export function TIC(): void {",
+        "  print(ticbuild.Expand(runtimeText));",
+        '  print(ticbuild.Expand("$(missing.variable)"));',
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }]);
+
+    try {
+      let thrown: unknown;
+      try {
+        await loadAllImports(project);
+      } catch (error) {
+        thrown = error;
+      }
+      const message = String(thrown);
+      expect(message).toMatch(/ticbuild\.Expand\(\) requires one exact string literal; received string/);
+      expect(message).toMatch(/ticbuild\.Expand\(\): Undefined variable: missing\.variable/);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }

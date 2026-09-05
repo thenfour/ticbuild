@@ -231,13 +231,54 @@ function transformIfDefinedCall(
   return context.transformExpression(selectedExpression);
 }
 
+function transformExpandCall(
+  node: ts.CallExpression,
+  context: tstl.TransformationContext,
+  substituteVariables: (value: string) => string,
+): tstl.Expression {
+  const [valueExpression] = node.arguments;
+  if (!valueExpression || node.arguments.length !== 1) {
+    // TypeScript normally diagnoses arity first. Keep this intrinsic guarded as
+    // well because there is no runtime ticbuild.Expand function to fall back to.
+    context.diagnostics.push(createError(node, "ticbuild.Expand() requires exactly one argument"));
+    return tstl.createNilLiteral(node);
+  }
+
+  // Accepted: Expand("$(project.name)") and Expand(TEMPLATE), where TEMPLATE is
+  // a const with one string-literal type. Rejected: a runtime `string` or a union
+  // such as "$(left)" | "$(right)"; neither denotes one expansion to emit.
+  const valueType = context.checker.getTypeAtLocation(valueExpression);
+  if (!(valueType.flags & ts.TypeFlags.StringLiteral)) {
+    context.diagnostics.push(createError(
+      valueExpression,
+      `ticbuild.Expand() requires one exact string literal; received ${context.checker.typeToString(valueType)}`,
+    ));
+    return tstl.createNilLiteral(node);
+  }
+
+  try {
+    // Use the same substitution implementation as __EXPAND rather than making
+    // the TSTL plugin a second source of truth for recursion and diagnostics.
+    const expanded = substituteVariables((valueType as ts.StringLiteralType).value);
+    return tstl.createStringLiteral(expanded, node);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    context.diagnostics.push(createError(valueExpression, `ticbuild.Expand(): ${message}`));
+    return tstl.createNilLiteral(node);
+  }
+}
+
 function transformConstantExpression(
   node: ts.Expression,
   context: tstl.TransformationContext,
   definedNames: ReadonlySet<string>,
+  substituteVariables: (value: string) => string,
 ): tstl.Expression {
   if (ts.isCallExpression(node) && isTicbuildFunctionCall(context.checker, node, "IfDefined")) {
     return transformIfDefinedCall(node, context, definedNames);
+  }
+  if (ts.isCallExpression(node) && isTicbuildFunctionCall(context.checker, node, "Expand")) {
+    return transformExpandCall(node, context, substituteVariables);
   }
 
   // `ticbuild.assert_const(AGE);` is handled and erased by the statement visitor.
@@ -434,7 +475,10 @@ const constantExpressionKinds: readonly ts.SyntaxKind[] = [
   ts.SyntaxKind.SatisfiesExpression,
 ];
 
-export function createTypeScriptConstantPlugin(definedNames: ReadonlySet<string>): tstl.Plugin {
+export function createTypeScriptConstantPlugin(
+  definedNames: ReadonlySet<string>,
+  substituteVariables: (value: string) => string,
+): tstl.Plugin {
   const visitors: tstl.Visitors = {
     [ts.SyntaxKind.VariableStatement]: { transform: transformVariableStatement, priority: 100 },
     [ts.SyntaxKind.ImportDeclaration]: { transform: transformImportDeclaration, priority: 100 },
@@ -444,7 +488,12 @@ export function createTypeScriptConstantPlugin(definedNames: ReadonlySet<string>
   for (const kind of constantExpressionKinds) {
     // Run before TSTL's stock visitors so this acts in the spirit of a preprocessor
     (visitors as Record<number, tstl.ObjectVisitor<ts.Expression>>)[kind] = {
-      transform: (node, context) => transformConstantExpression(node, context, definedNames),
+      transform: (node, context) => transformConstantExpression(
+        node,
+        context,
+        definedNames,
+        substituteVariables,
+      ),
       priority: 100,
     };
   }

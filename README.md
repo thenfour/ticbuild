@@ -865,6 +865,41 @@ export const AGE = ticbuild.MakeConstant<8>();
 ticbuild.assert_const(AGE); // checked by TypeScript, emits no Lua
 ```
 
+**Project variables and string expansion**
+
+Project substitution variables are exposed similarly, but separately,
+from preprocessor defines. Access them via `ticbuild.Vars` in Typescript code.
+
+```ts
+type ProjectName = ticbuild.Vars["project.name"]; // "MyProject"
+
+const PROJECT_NAME = ticbuild.Vars["project.name"];
+// PROJECT_NAME: ticbuild.Constant<"MyProject">
+```
+
+`ticbuild.Expand()` performs the same recursive `$(variable)` substitution as
+Lua's `__EXPAND()`, while preserving the exact result in TypeScript:
+
+```ts
+const DESCRIPTION = ticbuild.Expand("this project is $(project.name)");
+// DESCRIPTION: ticbuild.Constant<"this project is MyProject">
+
+// Its argument a single compile-time string literal (string vars are not accepted).
+
+// this is also acceptible for interpolated strings, but only for compile-time literal
+// arguments, such as:
+const X = ticbuild.Expand(`$(project.name) version ${12.34}}`);
+
+// Not valid (not compiletime literal)
+const X = ticbuild.Expand("this project is" + "$(project.name)");
+const verString : string = "1.0.1";
+const X = ticbuild.Expand(verString);
+
+// Not valid (not compiletime literal)
+const verString : string = "1.0.1";
+const X = ticbuild.Expand(`$(project.name) version ${verString}}`);
+```
+
 The main motivators for introducing `Constant<>`:
 
 - allow typescript to be able to work with compile-time constants beyond just
@@ -948,7 +983,7 @@ The emitted condition in `if (ticbuild.IsDefined("DEBUG"))` is currently a Lua
 literal condition. Guaranteed removal of the unreachable branch is a separate
 optimization and is not part of this first constant-inlining slice.
 
-ticbuild writes the active definition map to
+ticbuild writes the active definition and resolved variable maps to
 `.ticbuild/declarations/build-constants.d.ts` for ordinary TypeScript tooling
 (like IDE syntax highlighting / error reporting).
 As with other generated declarations, build once after changing configuration
