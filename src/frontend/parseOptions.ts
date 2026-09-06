@@ -31,7 +31,6 @@ export interface CommandLineOptions {
   onConnect?: string[];
   hideTraceContaining?: string;
   hideTraceMatching?: string;
-  multiLine?: boolean;
 }
 
 export function parseBuildOptions(

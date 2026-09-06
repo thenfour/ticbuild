@@ -3,11 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Manifest } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
-import {
-  getLuaSnippetProjectConfig,
-  processCodeSnippet,
-  processLuaSnippet,
-} from "./codeSnippetProcessor";
+import { getCodeSnippetProjectConfig, processCodeSnippet } from "./codeSnippetProcessor";
 import { luaOptimizationRules } from "../utils/lua/lua_optimizer_rules";
 import { getBundledTic80DeclarationsPath } from "./projectFiles";
 
@@ -40,9 +36,9 @@ function makeCore(): TicbuildProjectCore {
   });
 }
 
-describe("Code snippet processor", () => {
+describe("Code snippet processing", () => {
   it("describes the selected project and every registered optimization rule", () => {
-    const config = getLuaSnippetProjectConfig(makeCore());
+    const config = getCodeSnippetProjectConfig(makeCore());
 
     expect(config.projectName).toBe("optimizer-test");
     expect(config.buildConfig).toBe("release");
@@ -59,7 +55,7 @@ describe("Code snippet processor", () => {
 
   it("runs preprocessing and minification with GUI-provided settings", async () => {
     const core = makeCore();
-    const config = getLuaSnippetProjectConfig(core);
+    const config = getCodeSnippetProjectConfig(core);
     const source = [
       "--#ifdef FEATURE",
       "-- removed comment",
@@ -68,10 +64,14 @@ describe("Code snippet processor", () => {
       "return descriptiveName",
     ].join("\n");
 
-    const result = await processLuaSnippet(source, core, {
-      minifyEnabled: true,
-      minificationOverrides: config.presets.release,
-    });
+    const result = await processCodeSnippet(
+      { language: "lua", source },
+      core,
+      {
+        minifyEnabled: true,
+        minificationOverrides: config.presets.release,
+      },
+    );
 
     expect(result.preprocessedSource).toContain("local descriptiveName = 1");
     expect(result.preprocessedSource).not.toContain("#ifdef");
@@ -86,10 +86,14 @@ describe("Code snippet processor", () => {
     const core = makeCore();
     const source = "-- keep me\nreturn 1\n";
 
-    const result = await processLuaSnippet(source, core, {
-      minifyEnabled: false,
-      minificationOverrides: {},
-    });
+    const result = await processCodeSnippet(
+      { language: "lua", source },
+      core,
+      {
+        minifyEnabled: false,
+        minificationOverrides: {},
+      },
+    );
 
     expect(result.minifiedSource).toBe(result.preprocessedSource);
     expect(result.minifiedSource).toContain("-- keep me");
@@ -98,9 +102,13 @@ describe("Code snippet processor", () => {
 
   it("surfaces parser diagnostics in strict mode", async () => {
     const core = makeCore();
-    const config = getLuaSnippetProjectConfig(core);
+    const config = getCodeSnippetProjectConfig(core);
 
-    await expect(processLuaSnippet("return (", core, config.settings)).rejects.toMatchObject({
+    await expect(processCodeSnippet(
+      { language: "lua", source: "return (" },
+      core,
+      config.settings,
+    )).rejects.toMatchObject({
       name: "SyntaxError",
       line: 1,
     });
@@ -172,7 +180,7 @@ describe("Code snippet processor", () => {
     });
 
     try {
-      const config = getLuaSnippetProjectConfig(core);
+      const config = getCodeSnippetProjectConfig(core);
       expect(config.defaultTypeScriptProfileId).toBe("import:main");
       expect(config.typeScriptProfiles).toEqual(expect.arrayContaining([
         expect.objectContaining({

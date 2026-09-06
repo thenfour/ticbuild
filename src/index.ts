@@ -7,7 +7,6 @@ import { buildInfo } from "./buildInfo";
 import { buildCommand } from "./frontend/build";
 import { initCommand, InitOptions } from "./frontend/init";
 import { CommandLineOptions } from "./frontend/parseOptions";
-import { replCommand } from "./frontend/repl";
 import { runCommand } from "./frontend/run";
 import { attachTerminalToLaunchedTic80, discoCommand, terminalCommand } from "./frontend/terminal";
 import { templateListCommand } from "./frontend/templateList";
@@ -20,7 +19,6 @@ import {
   printInitHelp,
   printMainHelp,
   printProjectHelp,
-  printReplHelp,
   printRunHelp,
   printTerminalHelp,
   printTemplateListHelp,
@@ -93,9 +91,6 @@ async function main(): Promise<void> {
         return;
       case "project":
         printProjectHelp();
-        return;
-      case "repl":
-        printReplHelp();
         return;
       case "templatelist":
       case "tl":
@@ -211,29 +206,6 @@ async function main(): Promise<void> {
     )
     .action(async (manifest?: string, options?: CommandLineOptions) => {
       await watchCommand(manifest, options, forwardedArgs);
-    });
-
-  program
-    .command("repl [manifest]")
-    .description("Launch a Lua preprocessing/minification REPL")
-    .option("-m, --mode <name>", "Build configuration name")
-    .option(
-      "-v, --var <key=value>",
-      "Override manifest variable",
-      (value, previous: string[] = []) => {
-        return [...previous, value];
-      },
-      [],
-    )
-    .option(
-      "--env <key=value>",
-      "Override project environment value",
-      (value, previous: string[] = []) => [...previous, value],
-      [],
-    )
-    .option("--multi-line", "Use multi-line input mode")
-    .action(async (manifest?: string, options?: CommandLineOptions) => {
-      await replCommand(manifest, options);
     });
 
   program
@@ -360,9 +332,6 @@ async function main(): Promise<void> {
           case "templatelist":
           case "tl":
             printTemplateListHelp();
-            break;
-          case "repl":
-            printReplHelp();
             break;
           case "tic80":
           case "t":

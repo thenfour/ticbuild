@@ -42,7 +42,8 @@
 - #98 Fixed priority of `.env` and `.env.local`, cleaned up this feature; env
   values now require `$(env:MY_VAR)` syntax
 - #99 added `project update` and `project check` commands
-- #100 `--env` is now supported on command line to override environment
+- #101 `--env` is now supported on command line to override environment
+- #100 Removed the obsolete `repl` command.
 
 ### Migration notes from v1.0.22
 

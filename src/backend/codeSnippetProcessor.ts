@@ -53,8 +53,6 @@ export type CodeSnippetSizeStats = {
   minifiedBytes: number;
 };
 
-export type LuaSnippetSizeStats = CodeSnippetSizeStats;
-
 export type CodeSnippetResult = {
   language: CodeSnippetLanguage;
   sourcePath: string;
@@ -72,8 +70,6 @@ export type CodeSnippetResult = {
   ruleStates: LuaOptimizationRuleState[];
 };
 
-export type LuaSnippetResult = CodeSnippetResult;
-
 export type CodeSnippetProjectConfig = {
   projectName: string;
   manifestPath: string;
@@ -88,8 +84,6 @@ export type CodeSnippetProjectConfig = {
   typeScriptProfiles: TypeScriptSnippetProfile[];
   defaultTypeScriptProfileId: string;
 };
-
-export type LuaSnippetProjectConfig = CodeSnippetProjectConfig;
 
 export type CodeSnippetRequest = {
   language: CodeSnippetLanguage;
@@ -167,7 +161,7 @@ export function getLuaOptimizationRuleStates(options: OptimizationRuleOptions): 
   });
 }
 
-export function createLuaSnippetCore(
+export function createCodeSnippetCore(
   baseCore: TicbuildProjectCore,
   settings: CodeSnippetSettings,
 ): TicbuildProjectCore {
@@ -247,8 +241,6 @@ export function getCodeSnippetProjectConfig(baseCore: TicbuildProjectCore): Code
   };
 }
 
-export const getLuaSnippetProjectConfig = getCodeSnippetProjectConfig;
-
 function resolveTypeScriptProfile(
   baseCore: TicbuildProjectCore,
   profileId: string | undefined,
@@ -303,7 +295,7 @@ export async function processCodeSnippet(
   settings: CodeSnippetSettings,
   processOptions: CodeSnippetProcessOptions = { parseFailure: "throw" },
 ): Promise<CodeSnippetResult> {
-  const core = createLuaSnippetCore(baseCore, settings);
+  const core = createCodeSnippetCore(baseCore, settings);
   const generated = generateLuaSource(request, core, processOptions);
 
   let preprocessed;
@@ -357,20 +349,4 @@ export async function processCodeSnippet(
     effectiveOptions,
     ruleStates: getLuaOptimizationRuleStates(effectiveOptions),
   };
-}
-
-// used only by repl which is lua-only.
-export function processLuaSnippet(
-  source: string,
-  baseCore: TicbuildProjectCore,
-  settings: CodeSnippetSettings,
-  sourcePath: string = path.join(baseCore.projectDir, "__lua_optimizer_playground__.lua"),
-  processOptions: LuaProcessOptions = { parseFailure: "throw" },
-): Promise<LuaSnippetResult> {
-  return processCodeSnippet(
-    { language: "lua", source, sourcePath },
-    baseCore,
-    settings,
-    processOptions,
-  );
 }
