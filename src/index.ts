@@ -148,6 +148,12 @@ async function main(): Promise<void> {
       },
       [],
     )
+    .option(
+      "--env <key=value>",
+      "Override project environment value",
+      (value, previous: string[] = []) => [...previous, value],
+      [],
+    )
     .action(async (manifest?: string, options?: CommandLineOptions) => {
       await buildCommand(manifest, options);
     });
@@ -163,6 +169,12 @@ async function main(): Promise<void> {
       (value, previous: string[] = []) => {
         return [...previous, value];
       },
+      [],
+    )
+    .option(
+      "--env <key=value>",
+      "Override project environment value",
+      (value, previous: string[] = []) => [...previous, value],
       [],
     )
     .action(async (manifest?: string, options?: CommandLineOptions) => {
@@ -191,6 +203,12 @@ async function main(): Promise<void> {
       },
       [],
     )
+    .option(
+      "--env <key=value>",
+      "Override project environment value",
+      (value, previous: string[] = []) => [...previous, value],
+      [],
+    )
     .action(async (manifest?: string, options?: CommandLineOptions) => {
       await watchCommand(manifest, options, forwardedArgs);
     });
@@ -205,6 +223,12 @@ async function main(): Promise<void> {
       (value, previous: string[] = []) => {
         return [...previous, value];
       },
+      [],
+    )
+    .option(
+      "--env <key=value>",
+      "Override project environment value",
+      (value, previous: string[] = []) => [...previous, value],
       [],
     )
     .option("--multi-line", "Use multi-line input mode")

@@ -25,6 +25,7 @@ function readEnvironmentFile(filePath: string): Record<string, string> {
 export function loadProjectEnvironment(
   projectDir: string,
   ambientEnvironment: NodeJS.ProcessEnv = process.env,
+  overrideEnvironment?: Record<string, string>,
 ): ProjectEnvironment {
   const [envPath, envLocalPath] = getProjectEnvironmentPaths(projectDir);
   const declaredVariables = {
@@ -37,6 +38,9 @@ export function loadProjectEnvironment(
     if (value !== undefined) {
       processEnvironment[name] = value;
     }
+  }
+  for (const [name, value] of Object.entries(overrideEnvironment ?? {})) {
+    processEnvironment[name] = value;
   }
 
   return { processEnvironment };

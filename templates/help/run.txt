@@ -13,6 +13,7 @@ Options:
 
   -m, --mode <name>    Build configuration name from manifest
   -v, --var <key=value> Override manifest variable (can be used multiple times)
+  --env <key=value>    Override project environment value (can be used multiple times)
   -h, --help           Show this help message
 
 Forwarding to TIC-80:

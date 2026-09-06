@@ -25,6 +25,7 @@ Options:
 
   -m, --mode <name>    Build configuration name from manifest
   -v, --var <key=value> Override manifest variable (can be used multiple times)
+  --env <key=value>    Override project environment value (can be used multiple times)
   --remoting-verbose   Verbose TIC-80 remoting output
   --hide-trace-containing <text> Hide trace events whose payload contains text
   --hide-trace-matching <regex>  Hide trace events whose payload matches a JavaScript regex

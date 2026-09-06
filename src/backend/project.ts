@@ -14,6 +14,7 @@ export type TicbuildProjectLoadOptions = {
   manifestPath?: string | undefined;
   buildConfigName?: string | undefined;
   overrideVariables?: Record<string, string>;
+  overrideEnvironment?: Record<string, string>;
   ambientEnvironment?: NodeJS.ProcessEnv;
 };
 
@@ -42,6 +43,7 @@ export class TicbuildProject {
     const projectEnvironment = loadProjectEnvironment(
       loadedManifest.projectDir,
       options?.ambientEnvironment,
+      options?.overrideEnvironment,
     );
     return new TicbuildProject(
       loadedManifest.manifest, //

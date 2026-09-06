@@ -158,17 +158,26 @@ local debugDefined = true
         AMBIENT_ONLY: "ambient",
       },
       overrideVariables: { PROJECT_VALUE: "cli" },
+      overrideEnvironment: {
+        ENV_VALUE: "cli-env",
+        CLI_ONLY: "cli-env",
+        PROJECT_VALUE: "environment",
+      },
     });
 
     expect(project.resolvedCore.substituteVariables("$(PROJECT_VALUE)")).toBe("cli");
-    expect(project.resolvedCore.substituteVariables("$(env:ENV_VALUE)")).toBe("process");
+    expect(project.resolvedCore.substituteVariables("$(env:PROJECT_VALUE)")).toBe("environment");
+    expect(project.resolvedCore.substituteVariables("$(env:ENV_VALUE)")).toBe("cli-env");
     expect(project.resolvedCore.substituteVariables("$(env:LOCAL_VALUE)")).toBe("local");
     expect(project.resolvedCore.substituteVariables("$(env:AMBIENT_ONLY)")).toBe("ambient");
-    expect(project.resolvedCore.allVariables.get("ENV_REFERENCE")?.resolvedValue).toBe("process");
+    expect(project.resolvedCore.substituteVariables("$(env:CLI_ONLY)")).toBe("cli-env");
+    expect(project.resolvedCore.allVariables.get("ENV_REFERENCE")?.resolvedValue).toBe("cli-env");
     expect(project.resolvedCore.allVariables.has("ENV_VALUE")).toBe(false);
     expect(project.resolvedCore.allVariables.has("LOCAL_VALUE")).toBe(false);
     expect(project.resolvedCore.allVariables.has("AMBIENT_ONLY")).toBe(false);
+    expect(project.resolvedCore.allVariables.has("CLI_ONLY")).toBe(false);
     expect(project.resolvedCore.processEnvironment.AMBIENT_ONLY).toBe("ambient");
+    expect(project.resolvedCore.processEnvironment.CLI_ONLY).toBe("cli-env");
 
     const declarations = renderTypeScriptBuildConstants(project.resolvedCore);
     expect(declarations).toContain('readonly "PROJECT_VALUE": "cli";');

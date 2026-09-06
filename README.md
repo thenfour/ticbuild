@@ -391,6 +391,17 @@ end
 Project variables and environment values are in separate buckets but both available
 in your project:
 
+Environment is applied in this priority (high to low):
+
+1. `--env NAME=value` via command line
+2. Actuall calling process environment variables
+2. `.env.local` file
+3. `.env` file
+
+```bash
+ticbuild build --env BUILD_MODE=debug --env FEATURE_X=1
+```
+
 From Lua:
 
 ```lua
