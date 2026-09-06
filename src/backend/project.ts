@@ -8,11 +8,13 @@ import { resolveAndLoadManifest } from "./manifestLoader";
 import { AssemblyBlock, AssetReference, kImportKind, Manifest, ResolvedManifest } from "./manifestTypes";
 import { calculateVars, canonicalizeAssetImport, deduceImportKindFromPath, TicbuildProjectCore } from "./projectCore";
 import { profileAsync, TraceProfiler, TraceScope, TraceTrack } from "../utils/traceProfiler";
+import { loadProjectEnvironment, ProjectEnvironment } from "./projectEnvironment";
 
 export type TicbuildProjectLoadOptions = {
   manifestPath?: string | undefined;
   buildConfigName?: string | undefined;
   overrideVariables?: Record<string, string>;
+  ambientEnvironment?: NodeJS.ProcessEnv;
 };
 
 export type AssembleOutputResult = {
@@ -33,13 +35,19 @@ export class TicbuildProject {
   resolvedCore: TicbuildProjectCore; // core with resolved manifest
 
   resourceMgr: ResourceManager | undefined;
+  projectEnvironment: ProjectEnvironment;
 
   static loadFromManifest(options?: TicbuildProjectLoadOptions): TicbuildProject {
     const loadedManifest = resolveAndLoadManifest(options?.manifestPath);
+    const projectEnvironment = loadProjectEnvironment(
+      loadedManifest.projectDir,
+      options?.ambientEnvironment,
+    );
     return new TicbuildProject(
       loadedManifest.manifest, //
       loadedManifest.filePath,
       loadedManifest.projectDir,
+      projectEnvironment,
       options,
     );
   }
@@ -48,8 +56,10 @@ export class TicbuildProject {
     manifest: Manifest,
     manifestPath: string,
     projectDir: string,
+    projectEnvironment: ProjectEnvironment,
     options?: TicbuildProjectLoadOptions,
   ) {
+    this.projectEnvironment = projectEnvironment;
     const effectiveBuildConfigName = options?.buildConfigName ?? manifest.buildConfiguration;
 
     this.unresolvedCore = new TicbuildProjectCore({
@@ -58,6 +68,7 @@ export class TicbuildProject {
       projectDir,
       buildConfigName: effectiveBuildConfigName,
       overrideVariables: options?.overrideVariables,
+      processEnvironment: projectEnvironment.processEnvironment,
     });
 
     const resolvedManifest = this.resolveManifest(
@@ -72,6 +83,7 @@ export class TicbuildProject {
       projectDir,
       buildConfigName: resolvedManifest.selectedBuildConfig,
       overrideVariables: options?.overrideVariables,
+      processEnvironment: projectEnvironment.processEnvironment,
     });
   }
 
@@ -133,6 +145,7 @@ export class TicbuildProject {
       projectDir,
       buildConfigName,
       overrideVariables,
+      this.projectEnvironment.processEnvironment,
     );
 
     // ensure all imports have "kind" -- deduce if missing.

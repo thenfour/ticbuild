@@ -36,25 +36,6 @@ export async function writeBinaryFile(filePath: string, data: Uint8Array): Promi
   await fs.promises.writeFile(filePath, Buffer.from(data));
 }
 
-export function findExecutableInPath(executable: string): string | undefined {
-  const pathEnv = process.env.PATH || "";
-  const pathSeparator = process.platform === "win32" ? ";" : ":";
-  const paths = pathEnv.split(pathSeparator);
-
-  const exeExtensions = process.platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
-
-  for (const dir of paths) {
-    for (const ext of exeExtensions) {
-      const fullPath = path.join(dir, executable + ext);
-      if (fileExists(fullPath)) {
-        return fullPath;
-      }
-    }
-  }
-
-  return undefined;
-}
-
 export function isAbsolutePath(p: string): boolean {
   return path.isAbsolute(p);
 }

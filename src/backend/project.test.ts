@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { preprocessLuaCode } from "./luaPreprocessor";
 import { Manifest } from "./manifestTypes";
 import { TicbuildProject } from "./project";
+import { renderTypeScriptBuildConstants } from "./importers/TypeScriptBuildConstants";
 
 describe("TicbuildProject build configuration resolution", () => {
   let tempDir: string;
@@ -137,6 +138,49 @@ local debugDefined = true
 
     expect(() => TicbuildProject.loadFromManifest({ manifestPath: writeManifest(manifest) })).toThrow(
       "Base build configuration 'release' must not also appear in buildConfigurations",
+    );
+  });
+
+  it("keeps project variables separate from the effective process environment", () => {
+    const manifest = makeManifest();
+    manifest.variables = {
+      PROJECT_VALUE: "manifest",
+      ENV_REFERENCE: "$(env:ENV_VALUE)",
+    };
+    const manifestPath = writeManifest(manifest);
+    fs.writeFileSync(path.join(tempDir, ".env"), "ENV_VALUE=env\nLOCAL_VALUE=env\n", "utf-8");
+    fs.writeFileSync(path.join(tempDir, ".env.local"), "LOCAL_VALUE=local\n", "utf-8");
+
+    const project = TicbuildProject.loadFromManifest({
+      manifestPath,
+      ambientEnvironment: {
+        ENV_VALUE: "process",
+        AMBIENT_ONLY: "ambient",
+      },
+      overrideVariables: { PROJECT_VALUE: "cli" },
+    });
+
+    expect(project.resolvedCore.substituteVariables("$(PROJECT_VALUE)")).toBe("cli");
+    expect(project.resolvedCore.substituteVariables("$(env:ENV_VALUE)")).toBe("process");
+    expect(project.resolvedCore.substituteVariables("$(env:LOCAL_VALUE)")).toBe("local");
+    expect(project.resolvedCore.substituteVariables("$(env:AMBIENT_ONLY)")).toBe("ambient");
+    expect(project.resolvedCore.allVariables.get("ENV_REFERENCE")?.resolvedValue).toBe("process");
+    expect(project.resolvedCore.allVariables.has("ENV_VALUE")).toBe(false);
+    expect(project.resolvedCore.allVariables.has("LOCAL_VALUE")).toBe(false);
+    expect(project.resolvedCore.allVariables.has("AMBIENT_ONLY")).toBe(false);
+    expect(project.resolvedCore.processEnvironment.AMBIENT_ONLY).toBe("ambient");
+
+    const declarations = renderTypeScriptBuildConstants(project.resolvedCore);
+    expect(declarations).toContain('readonly "PROJECT_VALUE": "cli";');
+    expect(declarations).not.toContain('readonly "ENV_VALUE"');
+    expect(declarations).not.toContain('readonly "LOCAL_VALUE"');
+    expect(declarations).not.toContain('readonly "AMBIENT_ONLY"');
+
+    expect(() => project.resolvedCore.substituteVariables("$(ENV_VALUE)")).toThrow(
+      "Undefined variable: ENV_VALUE",
+    );
+    expect(() => project.resolvedCore.substituteVariables("$(env:MISSING)")).toThrow(
+      "Undefined environment variable: MISSING",
     );
   });
 });

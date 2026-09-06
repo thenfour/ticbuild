@@ -62,10 +62,15 @@ export function canonicalizeAssetImport(asset: string | AssetReference): AssetRe
   };
 }
 
-// similar to visual studio's $(VariableName) substitution.
+// similar to visual studio's $(VariableName) substitution. Environment values
+// use env: $(env:NAME) namespace.
 // recursive substitution is possible; throws if circular.
 // prioritizes build config overrides if selected.
-export function substituteVariables(manifest: Manifest, s: string): string {
+export function substituteVariables(
+  manifest: Manifest,
+  s: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
   let result = s;
   const varPattern = /\$\(([^)]+)\)/g;
   let match: RegExpExecArray | null;
@@ -77,8 +82,15 @@ export function substituteVariables(manifest: Manifest, s: string): string {
     }
     seenVars.add(varName);
 
-    const varValue = manifest.variables?.[varName];
+    const isEnvironmentVariable = varName.startsWith("env:");
+    const environmentVariableName = varName.slice("env:".length);
+    const varValue = isEnvironmentVariable
+      ? environment[environmentVariableName]
+      : manifest.variables?.[varName];
     if (varValue === undefined) {
+      if (isEnvironmentVariable) {
+        throw new Error(`Undefined environment variable: ${environmentVariableName}`);
+      }
       throw new Error(`Undefined variable: ${varName}`);
     }
     result = result.replace(match[0], varValue);
@@ -88,10 +100,13 @@ export function substituteVariables(manifest: Manifest, s: string): string {
 }
 
 // processes on demand (not cached)
-function calculateAllVariables(manifest: Manifest): Map<string, VariableInfo> {
+function calculateAllVariables(
+  manifest: Manifest,
+  environment: NodeJS.ProcessEnv = process.env,
+): Map<string, VariableInfo> {
   const ret = new Map<string, VariableInfo>();
   for (const [name, rawValue] of Object.entries(manifest.variables || {})) {
-    const resolvedValue = substituteVariables(manifest, rawValue);
+    const resolvedValue = substituteVariables(manifest, rawValue, environment);
     ret.set(name, { name, rawValue, resolvedValue });
   }
   return ret;
@@ -103,6 +118,7 @@ export function calculateVars(
   projectDir: string,
   buildConfigName: string,
   overrideVariables?: Record<string, string>,
+  environment: NodeJS.ProcessEnv = process.env,
 ) {
   // add variables for non-array leafs in the build config.
   // for example { project: { binDir: "..." } } adds a variable "project.binDir"
@@ -131,7 +147,7 @@ export function calculateVars(
   setAutomaticVariable("buildConfiguration", buildConfigName);
 
   // should be the last step so all variables are as ready as possible for substitution
-  const calculatedVars = calculateAllVariables(manifest);
+  const calculatedVars = calculateAllVariables(manifest, environment);
   return calculatedVars;
 }
 
@@ -141,6 +157,7 @@ export type TicbuildProjectCoreOptions = {
   projectDir: string;
   buildConfigName?: string | undefined;
   overrideVariables?: Record<string, string>;
+  processEnvironment?: NodeJS.ProcessEnv;
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -150,6 +167,7 @@ export class TicbuildProjectCore {
   projectDir: string;
   selectedBuildConfig: string;
   overrideVariables: Record<string, string>;
+  processEnvironment: NodeJS.ProcessEnv;
 
   // calculated
   allVariables: Map<string, VariableInfo>;
@@ -160,8 +178,9 @@ export class TicbuildProjectCore {
     this.projectDir = canonicalizePath(options.projectDir);
     this.selectedBuildConfig = options.buildConfigName ?? options.manifest.buildConfiguration;
     this.overrideVariables = options.overrideVariables || {};
+    this.processEnvironment = options.processEnvironment ?? process.env;
 
-    this.allVariables = calculateAllVariables(this.manifest);
+    this.allVariables = calculateAllVariables(this.manifest, this.processEnvironment);
   }
 
   toDataObject(): object {
@@ -174,21 +193,22 @@ export class TicbuildProjectCore {
     };
   }
 
-  static fromDataObject(obj: any): TicbuildProjectCore {
+  static fromDataObject(obj: any, processEnvironment?: NodeJS.ProcessEnv): TicbuildProjectCore {
     const core = new TicbuildProjectCore({
       manifest: obj.manifest,
       manifestPath: obj.manifestPath,
       projectDir: obj.projectDir,
       buildConfigName: obj.selectedBuildConfig,
       overrideVariables: obj.overrideVariables,
+      processEnvironment,
     });
-    core.allVariables = calculateAllVariables(core.manifest);
+    core.allVariables = calculateAllVariables(core.manifest, core.processEnvironment);
     return core;
   }
 
   clone(): TicbuildProjectCore {
     const dataObj = JSON.parse(JSON.stringify(this.toDataObject()));
-    return TicbuildProjectCore.fromDataObject(dataObj);
+    return TicbuildProjectCore.fromDataObject(dataObj, this.processEnvironment);
   }
 
   // path can be absolute; it's returned.
@@ -231,7 +251,7 @@ export class TicbuildProjectCore {
       throw new Error(`Import definition missing path: ${importPath.name}`);
     }
 
-    const resolvedPath = substituteVariables(this.manifest, importPath.path);
+    const resolvedPath = this.substituteVariables(importPath.path);
 
     // If absolute path, use it directly
     if (isAbsolutePath(resolvedPath)) {
@@ -279,7 +299,7 @@ export class TicbuildProjectCore {
 
   // and some helpers.
   substituteVariables(s: string): string {
-    return substituteVariables(this.manifest, s);
+    return substituteVariables(this.manifest, s, this.processEnvironment);
   }
   getOutputFilePath(): string {
     const leaf = this.substituteVariables(this.manifest.project.outputCartName);

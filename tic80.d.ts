@@ -168,16 +168,25 @@ declare namespace ticbuild {
   interface Vars { }
   const Vars: ConstantMap<Vars>;
 
-  // Computes the literal result type of substituting $(variable) references.
-  // Generated Vars values are already fully resolved, so only the input string
-  // needs to be scanned recursively here.
+  // Looks up one project variable; these are already fully-resolved/substituted.
+  type ProjectVariableValue<Name extends string> =
+    Name extends keyof Vars
+    ? Vars[Name] extends string
+    ? Vars[Name]
+    : never
+    : never;
+
+  // Resolves one $(...) reference.
+  // Project variables are replaced with their actual value;
+  // Environment values are excluded from declarations so they just widen to `string`.
+  type ExpandedReferenceValue<Name extends string> =
+    Name extends `env:${string}`
+    ? string
+    : ProjectVariableValue<Name>;
+
   type Expand<Text extends string> =
     Text extends `${infer Before}$(${infer Name})${infer After}`
-    ? Name extends keyof Vars
-    ? Vars[Name] extends string
-    ? `${Before}${Vars[Name]}${Expand<After>}`
-    : never
-    : never
+    ? `${Before}${ExpandedReferenceValue<Name>}${Expand<After>}`
     : Text;
 
   // Returns a compile-time constant indicating whether the literal Name is defined.
@@ -190,7 +199,7 @@ declare namespace ticbuild {
     whenMissing: No,
   ): IfDefined<Name, Yes, No>;
 
-  // Substitutes project variables at compile time.
+  // Substitutes project variables and environment $(env:NAME) at compile time.
   function Expand<Text extends string>(
     value: string extends Text ? never : Expand<Text> extends never ? never : Text,
   ): Constant<Expand<Text>>;

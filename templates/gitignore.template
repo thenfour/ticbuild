@@ -1,6 +1,6 @@
-# local / secret settings
-.env
-.env.*
+# machine-local settings
+.env.local
+.env.*.local
 
 # IDE
 .vscode/

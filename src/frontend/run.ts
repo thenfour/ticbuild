@@ -24,7 +24,9 @@ export async function runCommand(
   );
   const mergedArgs = mergeTic80Args(manifestArgs, tic80Args);
 
-  const tic80Controller = createTic80Controller(project.resolvedCore.projectDir);
+  const tic80Controller = createTic80Controller(project.resolvedCore.projectDir, {
+    environment: project.projectEnvironment.processEnvironment,
+  });
   if (!tic80Controller) {
     cons.error("Failed to resolve TIC-80 controller");
     process.exit(1);

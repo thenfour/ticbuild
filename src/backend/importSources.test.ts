@@ -6,7 +6,11 @@ import { ImportSourceManager } from "./importSources";
 import { Manifest } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 
-function createProject(projectDir: string, imports: Manifest["imports"]): TicbuildProjectCore {
+function createProject(
+  projectDir: string,
+  imports: Manifest["imports"],
+  processEnvironment?: NodeJS.ProcessEnv,
+): TicbuildProjectCore {
   const mainImport = imports.find((importDef) => importDef.name === "main");
   const manifest: Manifest = {
     buildConfiguration: "release",
@@ -24,6 +28,7 @@ function createProject(projectDir: string, imports: Manifest["imports"]): Ticbui
     manifestPath: path.join(projectDir, "project.ticbuild.jsonc"),
     projectDir,
     buildConfigName: "release",
+    processEnvironment,
   });
 }
 
@@ -73,6 +78,34 @@ describe("import source engines", () => {
       },
     ]);
     expect(source?.generatedOutputs).toEqual([path.join(projectDir, "generated", "data.bin")]);
+  });
+
+  it("passes the project environment to command imports", async () => {
+    const project = createProject(
+      projectDir,
+      [
+        {
+          name: "generated",
+          kind: "text",
+          command: {
+            executable: process.execPath,
+            args: [
+              "-e",
+              'require("fs").writeFileSync(process.argv[1], process.env.PROJECT_VALUE)',
+              "generated/value.txt",
+            ],
+            outputFile: "generated/value.txt",
+          },
+        },
+      ],
+      { PROJECT_VALUE: "from-project-environment" },
+    );
+
+    await new ImportSourceManager(project).materialize("generated");
+
+    expect(fs.readFileSync(path.join(projectDir, "generated", "value.txt"), "utf-8")).toBe(
+      "from-project-environment",
+    );
   });
 
   it("does not execute commands while describing watch dependencies", () => {

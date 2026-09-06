@@ -29,7 +29,8 @@ describe("CustomTic80Controller", () => {
             fakeProcess,
         );
 
-        const controller = new CustomTic80Controller("C:\\project");
+        const environment = { PROJECT_VALUE: "configured" };
+        const controller = new CustomTic80Controller("C:\\project", { environment });
         const order: string[] = [];
         const loadCart = jest.fn(async () => {
             order.push("load");
@@ -52,6 +53,7 @@ describe("CustomTic80Controller", () => {
                 "--remote-session-location=C:\\project\\.ticbuild\\remoting\\sessions",
                 "--fs=C:\\tmp",
             ],
+            environment,
         );
         expect(loadCart).toHaveBeenNthCalledWith(1, "C:\\project\\build\\game.tic", true);
         expect(loadCart).toHaveBeenNthCalledWith(2, "C:\\project\\build\\game-2.tic", true);

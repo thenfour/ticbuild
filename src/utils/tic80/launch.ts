@@ -3,13 +3,18 @@ import * as cons from "../console";
 
 // launches it and returns the process id / handle / something that can be used to
 // monitor and kill the running instance. Returns immediately; does not wait for the process to finish.
-export async function launchProcessReturnImmediately(exePath: string, args: string[] = []): Promise<ChildProcess> {
+export async function launchProcessReturnImmediately(
+  exePath: string,
+  args: string[] = [],
+  environment?: NodeJS.ProcessEnv,
+): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     cons.dim(`Launching: ${exePath} ${args.join(" ")}`);
 
     const child = spawn(exePath, args, {
       stdio: "ignore",
       detached: true,
+      env: environment,
     });
     child.on("error", (err) => {
       reject(err);

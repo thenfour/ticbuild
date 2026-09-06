@@ -79,6 +79,15 @@ describe("ticbuild init", () => {
   it("supplies the recommended VS Code workspace setup for a minimal project", async () => {
     await initCommand(tempDir, { name: "minimal-game" });
 
+    const environmentFile = fs.readFileSync(path.join(tempDir, ".env"), "utf-8");
+    expect(environmentFile).toContain("USE_EXTERNAL_TIC80=0");
+    expect(environmentFile).toContain("Put machine-specific"); // # tip: Put machine-specific overrides or secrets in .env.local (which is gitignored)
+
+    const gitignore = fs.readFileSync(path.join(tempDir, ".gitignore"), "utf-8");
+    expect(gitignore).toContain(".env.local");
+    expect(gitignore).toContain(".env.*.local");
+    expect(gitignore.split(/\r?\n/)).not.toContain(".env");
+
     expect(JSON.parse(fs.readFileSync(path.join(tempDir, ".vscode", "extensions.json"), "utf-8"))).toEqual({
       recommendations: ["TridentLoop.ticbuild-vs-code"],
     });
@@ -109,6 +118,14 @@ describe("ticbuild init", () => {
     );
     expect(fs.existsSync(path.join(tempDir, "project.ticbuild.jsonc"))).toBe(true);
     expect(fs.existsSync(path.join(tempDir, "package.json"))).toBe(true);
+  });
+
+  it("preserves existing shared environment configuration during forced initialization", async () => {
+    fs.writeFileSync(path.join(tempDir, ".env"), "PROJECT_VALUE=existing\n", "utf-8");
+
+    await initCommand(tempDir, { name: "minimal-game", force: true });
+
+    expect(fs.readFileSync(path.join(tempDir, ".env"), "utf-8")).toBe("PROJECT_VALUE=existing\n");
   });
 
   it("lints JavaScript-to-Lua semantic hazards without making them build steps", async () => {

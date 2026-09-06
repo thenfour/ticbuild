@@ -22,13 +22,15 @@ export class CustomTic80Controller implements ITic80Controller {
   private readonly host = "127.0.0.1";
   private port: number | undefined;
   private readonly remotingVerbose: boolean;
+  private environment: NodeJS.ProcessEnv;
   private exitHandlers: Set<() => void> = new Set();
   private remotingReadyHandlers: Set<Tic80RemotingReadyHandler> = new Set();
   private suppressExitSignal = false;
 
   private projectDir: string;
 
-  constructor(projectDir: string, options?: { remotingVerbose?: boolean }) {
+  constructor(projectDir: string, options?: { remotingVerbose?: boolean; environment?: NodeJS.ProcessEnv }) {
+    // todo: consider allowing the TIC-80 path to be overridden via env just like the vanilla controller does.
     this.tic80Path = getPathRelativeToTemplates("TIC-80-ticbuild/tic80.exe");
     this.projectDir = projectDir;
     //assert that project dir is absolute & exists
@@ -40,6 +42,11 @@ export class CustomTic80Controller implements ITic80Controller {
       throw new Error(`Custom TIC-80 executable not found: ${this.tic80Path}`);
     }
     this.remotingVerbose = !!options?.remotingVerbose;
+    this.environment = options?.environment ?? process.env;
+  }
+
+  setEnvironment(environment: NodeJS.ProcessEnv): void {
+    this.environment = environment;
   }
 
   private GetArgsForRemotingSession(): string[] {
@@ -52,7 +59,7 @@ export class CustomTic80Controller implements ITic80Controller {
     const port = this.port!;
     const mergedArgs = mergeTic80Args(this.GetArgsForRemotingSession(), userArgs);
     const args = cartPath ? [cartPath, ...mergedArgs] : mergedArgs;
-    await launchProcessReturnImmediately(this.tic80Path, args);
+    await launchProcessReturnImmediately(this.tic80Path, args, this.environment);
   }
 
   async launchAndControlCart(cartPath: string, userArgs: string[] = []): Promise<void> {
@@ -96,7 +103,7 @@ export class CustomTic80Controller implements ITic80Controller {
     await this.ensurePortSelected();
     const port = this.port!;
     const mergedArgs = mergeTic80Args(this.GetArgsForRemotingSession(), userArgs);
-    this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, mergedArgs);
+    this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, mergedArgs, this.environment);
     const processRef = this.tic80Process;
     if (processRef) {
       processRef.once("exit", () => this.handleProcessExit(processRef));

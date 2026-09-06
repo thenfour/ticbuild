@@ -21,6 +21,7 @@ function createProject(
   imports: Manifest["imports"],
   defines?: Record<string, PreprocessorValue>,
   variables: Record<string, string> = { "project.name": "typescript-test" },
+  processEnvironment?: NodeJS.ProcessEnv,
 ) {
   const manifest: Manifest = {
     buildConfiguration: "release",
@@ -39,6 +40,7 @@ function createProject(
     manifest,
     manifestPath: path.join(projectDir, "manifest.ticbuild.jsonc"),
     projectDir,
+    processEnvironment,
   });
 }
 
@@ -139,6 +141,7 @@ describe("TypeScriptCodeResource", () => {
         "type Assert<T extends true> = T;",
         'type ProjectNameIsExact = Assert<Equal<ticbuild.Vars["project.name"], "typescript-test">>;',
         'type ExpandedIsExact = Assert<Equal<ticbuild.Expand<"this project is $(project.description)">, "this project is typescript-test cartridge">>;',
+        'type ExpandedEnvIsPattern = Assert<Equal<ticbuild.Expand<"mode: $(env:BUILD_MODE)">, `mode: ${string}`>>;',
         'const TEMPLATE = "this project is $(project.description)" as const;',
         'const PROJECT_NAME = ticbuild.Vars["project.name"];',
         "const DESCRIPTION = ticbuild.Expand(TEMPLATE);",
@@ -148,6 +151,7 @@ describe("TypeScriptCodeResource", () => {
         "  print(PROJECT_NAME);",
         "  print(DESCRIPTION);",
         '  print(ticbuild.Expand("direct $(project.name)"));',
+        '  print(ticbuild.Expand("mode: $(env:BUILD_MODE)"));',
         '  trace(ticbuild.IsDefined("project.name"));',
         "}",
       ].join("\n"),
@@ -162,6 +166,7 @@ describe("TypeScriptCodeResource", () => {
         "project.name": "typescript-test",
         "project.description": "$(project.name) cartridge",
       },
+      { BUILD_MODE: "local" },
     );
 
     try {
@@ -173,6 +178,7 @@ describe("TypeScriptCodeResource", () => {
       expect(source).toContain('print("typescript-test")');
       expect(source).toContain('print("this project is typescript-test cartridge")');
       expect(source).toContain('print("direct typescript-test")');
+      expect(source).toContain('print("mode: local")');
       expect(source).toContain("trace(true)");
       expect(source).not.toContain("PROJECT_NAME");
       expect(source).not.toContain("DESCRIPTION");
@@ -182,6 +188,7 @@ describe("TypeScriptCodeResource", () => {
       expect(declarations).toContain("interface Vars");
       expect(declarations).toContain('readonly "project.name": "typescript-test";');
       expect(declarations).toContain('readonly "project.description": "typescript-test cartridge";');
+      expect(declarations).not.toContain('readonly "BUILD_MODE"');
       expect(() => parseLua(source)).not.toThrow();
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });

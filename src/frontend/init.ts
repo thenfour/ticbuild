@@ -138,6 +138,13 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
   const gitignoreTargetPath = path.join(resolvedDir, ".gitignore");
   copyFile(gitignoreSourcePath, gitignoreTargetPath, options?.force === true);
 
+  // Shared project environment defaults are checked in; machine-local
+  // overrides belong in the ignored .env.local file.
+  const envTargetPath = path.join(resolvedDir, ".env");
+  if (!fileExists(envTargetPath)) {
+    copyFile(getPathRelativeToTemplates("env.template"), envTargetPath, false);
+  }
+
   // and vs code launch config
   const launchSourcePath = getPathRelativeToTemplates("vscode_launch.template.json");
   const launchTargetDir = path.join(resolvedDir, ".vscode");

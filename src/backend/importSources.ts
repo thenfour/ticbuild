@@ -160,7 +160,7 @@ export class CommandImportSourceEngine implements ImportSourceEngine {
     cons.info(`Running command import ${spec.name}: ${commandText}`);
     const child = spawn(plan.executable, plan.args, {
       cwd: project.projectDir,
-      env: process.env,
+      env: project.processEnvironment,
       shell: false,
       windowsHide: true,
     });

@@ -386,17 +386,39 @@ function unlzrle(src)
 end
 ```
 
+## Project variables (in manifest) vs. environment (`.env`, `.env.local`)
+
+Project variables and environment values are in separate buckets but both available
+in your project:
+
+From Lua:
+
+```lua
+-- Accessing environment variable:
+local x = __EXPAND("$(env:TIC80_LOCATION)")
+-- Accessing a project var:
+local x = __EXPAND("$(project.name)")
+```
+
+From TypeScript:
+
+```typescript
+// environment variable
+const x = ticbuild.Expand("$(env:TIC80_LOCATION)");
+
+// project var:
+const x = ticbuild.Expand("$(project.name)");
+// or,
+const x = ticbuild.Vars["project.name"];
+```
+
 ## TIC-80 binary location
 
 By default, `ticbuild` will use a special build of TIC-80 which allows profiling and
 interop to support remote control.
 
-If you want to use your own or external TIC-80, set an environment variable
-(via `.env` and `.env.local`) `USE_EXTERNAL_TIC80=1`.
-
-The TIC-80 location is searched in the `%PATH%`, but otherwise it can be overridden
-via `.env` / `.env.local` in the project directory, with the key `TIC80_LOCATION`,
-as a full path to `tic80.exe`.
+To specify which TIC-80 executable to launch, set `USE_EXTERNAL_TIC80=1`, and
+set `TIC80_LOCATION`.
 
 ```bash
 USE_EXTERNAL_TIC80=1                    # use own build of tic80.exe. defaults to falsy
@@ -877,12 +899,20 @@ const PROJECT_NAME = ticbuild.Vars["project.name"];
 // PROJECT_NAME: ticbuild.Constant<"MyProject">
 ```
 
-`ticbuild.Expand()` performs the same recursive `$(variable)` substitution as
-Lua's `__EXPAND()`, while preserving the exact result in TypeScript:
+`ticbuild.Expand()` performs the same recursive substitution as Lua's
+`__EXPAND()`, while preserving the exact result for project variables in
+TypeScript:
 
 ```ts
 const DESCRIPTION = ticbuild.Expand("this project is $(project.name)");
+// for project vars, the output type is the fully-resolved string:
 // DESCRIPTION: ticbuild.Constant<"this project is MyProject">
+
+const MODE = ticbuild.Expand("mode: $(env:BUILD_MODE)");
+
+// Unlike project vars, environment is not brought into code declarations en masse;
+// therefore the emitted value type is:
+// ticbuild.Constant<`mode: ${string}`>
 
 // Its argument a single compile-time string literal (string vars are not accepted).
 

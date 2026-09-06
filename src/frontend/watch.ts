@@ -1,7 +1,7 @@
 import chokidar from "chokidar";
 import * as path from "node:path";
 import { TicbuildProject } from "../backend/project";
-import { createTic80Controller } from "../backend/tic80Resolver";
+import { createTic80Controller, useExternalTic80 } from "../backend/tic80Resolver";
 import * as cons from "../utils/console";
 import { buildCore } from "./core";
 import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
@@ -11,6 +11,7 @@ import { RunningTerminalClient, startTerminalClient, validateTraceFilterOptions 
 import { ScriptErrorSourceMapRegistry } from "./scriptErrorSourceMapper";
 import { ImportSourceManager } from "../backend/importSources";
 import { getErrorMessage } from "../utils/errorHandling";
+import { getProjectEnvironmentPaths } from "../backend/projectEnvironment";
 
 class RequiredWatchTerminalStartupError extends Error {
   constructor(message: string) {
@@ -44,7 +45,12 @@ export function buildWatchTargets(
     .map((glob) => resolveAdditionalWatchGlob(projectDir, glob))
     .filter((glob) => glob.length > 0);
 
-  return Array.from(new Set([manifestPath, ...dependencyPaths, ...resolvedAdditionalWatchGlobs])).sort();
+  return Array.from(new Set([
+    manifestPath,
+    ...getProjectEnvironmentPaths(projectDir),
+    ...dependencyPaths,
+    ...resolvedAdditionalWatchGlobs,
+  ])).sort();
 }
 
 export async function watchCommand(
@@ -57,6 +63,7 @@ export async function watchCommand(
 
   // needs to be mutable because it depends on env for tic80 location, which relies on project dir, which can change.
   let tic80Controller: ITic80Controller | undefined = undefined;
+  let tic80ControllerUsesExternal: boolean | undefined;
   let tic80ControllerInitialized = false;
   let isBuilding = false;
   let pendingRebuild = false;
@@ -252,10 +259,18 @@ export async function watchCommand(
       const mergedArgs = mergeTic80Args(manifestArgs, tic80Args);
 
       // Resolve TIC-80 controller
+      const nextUsesExternal = useExternalTic80(project.projectEnvironment.processEnvironment);
+      if (tic80Controller && tic80ControllerUsesExternal !== nextUsesExternal) {
+        await tic80Controller.stop();
+        tic80Controller = undefined;
+        tic80ControllerInitialized = false;
+      }
       if (!tic80Controller) {
         tic80Controller = createTic80Controller(project.resolvedCore.projectDir, {
           remotingVerbose: !!options?.remotingVerbose,
+          environment: project.projectEnvironment.processEnvironment,
         });
+        tic80ControllerUsesExternal = nextUsesExternal;
       }
       if (!tic80Controller) {
         cons.error("Failed to resolve TIC-80 controller");
@@ -268,6 +283,7 @@ export async function watchCommand(
         });
         tic80Controller.onRemotingReady?.(ensureWatchTerminal);
       }
+      tic80Controller.setEnvironment(project.projectEnvironment.processEnvironment);
 
       // Launch/reload TIC-80 with the built cartridge
       cons.h1("Launching TIC-80 with built cartridge...");

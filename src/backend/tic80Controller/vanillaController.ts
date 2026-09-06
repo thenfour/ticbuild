@@ -1,4 +1,4 @@
-import { fileExists, findExecutableInPath } from "../../utils/fileSystem";
+import { fileExists } from "../../utils/fileSystem";
 import { getErrorMessage } from "../../utils/errorHandling";
 import { mergeTic80Args } from "../../utils/tic80/args";
 import { launchProcessReturnImmediately } from "../../utils/tic80/launch";
@@ -6,26 +6,18 @@ import { getWindowPosition, setWindowPosition, waitForWindow, WindowPlacement } 
 import { ITic80Controller } from "./tic80Controller";
 import { ChildProcess } from "node:child_process";
 
-export interface Tic80Location {
-  path: string;
-  source: "env" | "path";
-}
-
-function resolveExternalTic80Location(projectDir: string): Tic80Location | undefined {
-  const envLocation = process.env.TIC80_LOCATION;
+// prio highest to lowest:
+// - Environment variable TIC80_LOCATION
+// - bundled location (not relevant here because this is only for vanilla/stock)
+// - not explicit (uses windows standard lookup CWD/ PATH)
+function resolveVanillaTic80Path(environment: NodeJS.ProcessEnv): string {
+  const envLocation = environment.TIC80_LOCATION;
   if (envLocation) {
     if (fileExists(envLocation)) {
-      return { path: envLocation, source: "env" };
+      return envLocation;
     }
   }
-
-  // Search in PATH
-  const pathLocation = findExecutableInPath("tic80");
-  if (pathLocation) {
-    return { path: pathLocation, source: "path" };
-  }
-
-  return undefined;
+  return "tic80";
 }
 
 export class VanillaTic80Controller implements ITic80Controller {
@@ -34,6 +26,7 @@ export class VanillaTic80Controller implements ITic80Controller {
   private tic80Process: ChildProcess | undefined;
   private exitHandlers: Set<() => void> = new Set();
   private suppressExitSignal = false;
+  private environment: NodeJS.ProcessEnv;
 
   private async waitForExit(process: ChildProcess, timeoutMs: number): Promise<void> {
     // Best-effort: detached/unref'd processes may not always emit in time.
@@ -51,19 +44,21 @@ export class VanillaTic80Controller implements ITic80Controller {
     });
   }
 
-  constructor(projectDir: string) {
-    const location = resolveExternalTic80Location(projectDir);
-    if (!location) {
-      throw new Error("External TIC-80 executable not found");
-    }
-    this.tic80Path = location.path;
+  constructor(_projectDir: string, environment: NodeJS.ProcessEnv = process.env) {
+    this.environment = environment;
+    this.tic80Path = resolveVanillaTic80Path(environment);
+  }
+
+  setEnvironment(environment: NodeJS.ProcessEnv): void {
+    this.environment = environment;
+    this.tic80Path = resolveVanillaTic80Path(environment);
   }
 
   async launchFireAndForget(cartPath?: string | undefined, userArgs: string[] = []): Promise<void> {
     const mergedArgs = mergeTic80Args(["--skip"], userArgs);
     const args = cartPath ? [cartPath, ...mergedArgs] : mergedArgs;
     // Fire-and-forget: do not keep a PID/handle (works even when parent exits).
-    await launchProcessReturnImmediately(this.tic80Path, args);
+    await launchProcessReturnImmediately(this.tic80Path, args, this.environment);
   }
 
   async stop(): Promise<void> {
@@ -113,7 +108,7 @@ export class VanillaTic80Controller implements ITic80Controller {
     const mergedArgs = mergeTic80Args(["--skip"], userArgs);
     const args = cartPath ? [cartPath, ...mergedArgs] : mergedArgs;
 
-    this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, args);
+    this.tic80Process = await launchProcessReturnImmediately(this.tic80Path, args, this.environment);
 
     const processRef = this.tic80Process;
     if (processRef) {

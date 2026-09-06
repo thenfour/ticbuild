@@ -188,6 +188,7 @@ export function createLuaSnippetCore(
     projectDir: baseCore.projectDir,
     buildConfigName: baseCore.selectedBuildConfig,
     overrideVariables: baseCore.overrideVariables,
+    processEnvironment: baseCore.processEnvironment,
   });
 }
 

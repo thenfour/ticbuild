@@ -8,6 +8,9 @@ export interface Tic80RemotingTarget {
 export type Tic80RemotingReadyHandler = (target: Tic80RemotingTarget) => void | Promise<void>;
 
 export interface ITic80Controller {
+  // Update the environment inherited by subsequently launched TIC-80 processes.
+  setEnvironment(environment: NodeJS.ProcessEnv): void;
+
   // launch a TIC-80 instance with optional cart path (process should be totally detached from current
   // and survive after parent exits)
   // used by

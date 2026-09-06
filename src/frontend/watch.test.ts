@@ -23,9 +23,11 @@ describe("watch helpers", () => {
         const manifestPath = path.join(projectDir, "project.ticbuild.jsonc");
         const mainLuaPath = path.join(projectDir, "src", "main.lua");
         const expectedGlob = `${projectDir.replace(/\\/g, "/")}/src/**/*.lua`;
+        const envPath = path.join(projectDir, ".env");
+        const envLocalPath = path.join(projectDir, ".env.local");
 
         expect(buildWatchTargets(manifestPath, [mainLuaPath, mainLuaPath], projectDir, ["./src/**/*.lua", ""])).toEqual(
-            [expectedGlob, mainLuaPath, manifestPath].sort(),
+            [envPath, envLocalPath, expectedGlob, mainLuaPath, manifestPath].sort(),
         );
     });
 });

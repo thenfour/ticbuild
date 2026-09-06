@@ -9,11 +9,12 @@ import { TraceProfiler } from "../utils/traceProfiler";
 
 type Manifest = Omit<TicbuildManifest, "buildConfiguration">;
 
-function makeProject(manifest: Manifest): TicbuildProjectCore {
+function makeProject(manifest: Manifest, processEnvironment?: NodeJS.ProcessEnv): TicbuildProjectCore {
   return new TicbuildProjectCore({
     manifest: { buildConfiguration: "release", ...manifest },
     manifestPath: "C:/test/manifest.ticbuild.jsonc",
     projectDir: "C:/test",
+    processEnvironment,
   });
 }
 
@@ -82,8 +83,8 @@ describe("Lua preprocessor stringification", () => {
       },
     };
 
-    const project = makeProject(manifest);
-    const source = 'local s = __EXPAND("$(greet) there")';
+    const project = makeProject(manifest, { GREETING_TARGET: "there" });
+    const source = 'local s = __EXPAND("$(greet) $(env:GREETING_TARGET)")';
     const result = await preprocessLuaCode(project, source, "C:/test/source.lua");
 
     expect(result.code).toContain('local s = "hi there"');
