@@ -15,6 +15,7 @@ import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
 import { getTypeScriptLuaDeclarationsPath } from "./TypeScriptLuaDeclarations";
 import { getTypeScriptManifestDeclarationsPath } from "./TypeScriptManifestModules";
 import { getTypeScriptBuildConstantsPath } from "./TypeScriptBuildConstants";
+import { getBundledTic80DeclarationsPath, getProjectTic80DeclarationsPath } from "../projectFiles";
 
 function createProject(
   projectDir: string,
@@ -23,6 +24,28 @@ function createProject(
   variables: Record<string, string> = { "project.name": "typescript-test" },
   processEnvironment?: NodeJS.ProcessEnv,
 ) {
+  const declarationsPath = getProjectTic80DeclarationsPath(projectDir);
+  fs.mkdirSync(path.dirname(declarationsPath), { recursive: true });
+  fs.copyFileSync(getBundledTic80DeclarationsPath(), declarationsPath);
+  const languageExtensionsSource = path.resolve(
+    __dirname,
+    "..",
+    "..",
+    "..",
+    "node_modules",
+    "@typescript-to-lua",
+    "language-extensions",
+  );
+  const languageExtensionsTarget = path.join(
+    projectDir,
+    "node_modules",
+    "@typescript-to-lua",
+    "language-extensions",
+  );
+  fs.mkdirSync(path.dirname(languageExtensionsTarget), { recursive: true });
+  if (!fs.existsSync(languageExtensionsTarget)) {
+    fs.symlinkSync(languageExtensionsSource, languageExtensionsTarget, "junction");
+  }
   const manifest: Manifest = {
     buildConfiguration: "release",
     project: {
@@ -1742,6 +1765,7 @@ describe("TypeScriptCodeResource", () => {
           { path: entryPath, reason: "Imported TypeScript code file" },
           { path: helperPath, reason: "TypeScript compiler dependency" },
           { path: declarationsPath, reason: "TypeScript compiler dependency" },
+          { path: getProjectTic80DeclarationsPath(projectDir), reason: "TypeScript compiler dependency" },
           { path: configPath, reason: "TypeScript project configuration" },
           { path: baseConfigPath, reason: "TypeScript project configuration" },
         ]),

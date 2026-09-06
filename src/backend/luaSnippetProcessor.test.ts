@@ -9,6 +9,7 @@ import {
   processLuaSnippet,
 } from "./codeSnippetProcessor";
 import { luaOptimizationRules } from "../utils/lua/lua_optimizer_rules";
+import { getBundledTic80DeclarationsPath } from "./projectFiles";
 
 function makeCore(): TicbuildProjectCore {
   const manifest: Manifest = {
@@ -123,6 +124,7 @@ describe("Code snippet processor", () => {
       { language: "typescript", source, typeScriptProfileId: "defaults" },
       core,
       { minifyEnabled: false, minificationOverrides: {} },
+      { typeScriptBuiltinsPath: getBundledTic80DeclarationsPath() },
     );
 
     expect(result.language).toBe("typescript");
@@ -191,6 +193,7 @@ describe("Code snippet processor", () => {
         },
         core,
         { minifyEnabled: false, minificationOverrides: {} },
+        { typeScriptBuiltinsPath: getBundledTic80DeclarationsPath() },
       );
 
       expect(result.sourcePath).toBe(path.join(sourceDir, "main.ts"));
@@ -212,6 +215,7 @@ describe("Code snippet processor", () => {
       },
       core,
       { minifyEnabled: false, minificationOverrides: {} },
+      { typeScriptBuiltinsPath: getBundledTic80DeclarationsPath() },
     )).rejects.toMatchObject({
       stage: "typescript",
       message: expect.stringContaining("not assignable to type 'number'"),

@@ -2,7 +2,6 @@ import * as path from "node:path";
 import * as ts from "typescript";
 import * as tstl from "typescript-to-lua";
 import { canonicalizePath, fileExists, toAbsoluteCanonicalPath } from "../../utils/fileSystem";
-import { getPathRelativeToPackageRoot } from "../../utils/templates";
 import * as cons from "../../utils/console";
 import { ExternalDependency, GeneratedLuaSource } from "../ImportedResourceTypes";
 import { TypeScriptImportConfig } from "../manifestTypes";
@@ -28,6 +27,7 @@ import {
   renderTypeScriptBuildConstants,
 } from "./TypeScriptBuildConstants";
 import { createTypeScriptConstantPlugin } from "./TypeScriptConstantPlugin";
+import { getProjectTic80DeclarationsPath } from "../projectFiles";
 
 export type TypeScriptTranspileResult = GeneratedLuaSource & {
   luaDefinitionBlocks: readonly LuaDefinitionBlock[];
@@ -38,8 +38,6 @@ const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const tic80CallbackNames = new Set(["TIC", "BOOT", "BDR", "SCN", "OVR", "MENU"]);
 const preprocessorDirectivePattern =
   /^([ \t]*)\/\/--#(pragma|define|undef|include|if|ifdef|ifndef|else|endif|warning|error|macro|endmacro|minify)\b(.*)$/;
-const builtinsName = "tic80.d.ts";
-
 function formatDiagnostic(diagnostic: ts.Diagnostic, projectDir: string): string {
   const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
   if (!diagnostic.file || diagnostic.start === undefined) {
@@ -77,7 +75,9 @@ export function transpileTypeScriptToLua(
     program,
     staticLinker,
   } = profileSync(profileTrack, "Create TypeScript program", { category: "TypeScript" }, () => {
-    const builtinsPath = canonicalizePath(builtinsPathOverride ?? getPathRelativeToPackageRoot(builtinsName));
+    const builtinsPath = canonicalizePath(
+      builtinsPathOverride ?? getProjectTic80DeclarationsPath(project.projectDir),
+    );
     const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
     const options = createTypeScriptTranspilationOptions(configuredProject.options);
     const luaAssetDeclarationsPath = getLuaAssetDeclarationsPath(project.projectDir);
@@ -205,7 +205,6 @@ export function transpileTypeScriptToLua(
       const restored = restoreTicbuildMarkers(linked.source, emittedMap);
       const dependencies = collectDependencies(
         program,
-        builtinsPath,
         emitReadDependencies,
         project.projectDir,
         configuredProject.configDependencies,
@@ -407,21 +406,18 @@ function restoreTicbuildMarkers(
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 function collectDependencies(
   program: ts.Program,
-  builtinsPath: string,
   emitReadDependencies: Set<string>,
   projectDir: string,
   configDependencies: readonly string[],
   generatedDeclarationPaths: readonly string[],
 ): ExternalDependency[] {
   const dependencies = new Map<string, string>();
-  const canonicalBuiltinsPath = getCanonicalTSPathKey(builtinsPath);
   const canonicalGeneratedDeclarationPaths = new Set(generatedDeclarationPaths.map(getCanonicalTSPathKey));
   for (const sourceFile of program.getSourceFiles()) {
     if (!program.isSourceFileDefaultLibrary(sourceFile)) {
       const dependencyPath = toAbsoluteCanonicalPath(sourceFile.fileName, projectDir);
       const dependencyKey = getCanonicalTSPathKey(dependencyPath);
       if (
-        dependencyKey !== canonicalBuiltinsPath &&
         !canonicalGeneratedDeclarationPaths.has(dependencyKey) &&
         !isNodeModulesPath(dependencyPath)
       ) {

@@ -78,10 +78,6 @@
         "outputCartName": {
           "type": "string",
           "description": "Name of the output cartridge file"
-        },
-        "autoUpdateManifestSchema": {
-          "type": "boolean",
-          "description": "Whether ticbuild should keep the project's copied manifest schema in sync during builds"
         }
       }
     },

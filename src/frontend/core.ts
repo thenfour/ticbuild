@@ -7,8 +7,7 @@ import { serializeSourceMapV3 } from "../backend/sourceMapV3";
 import type { LuaPreprocessorSourceMap } from "../backend/sourceMap";
 import * as cons from "../utils/console";
 import { getErrorMessage } from "../utils/errorHandling";
-import { ensureDir, fileExists, readTextFileAsync, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
-import { canonicalizePath } from "../utils/fileSystem";
+import { ensureDir, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
 import { formatBytes } from "../utils/utils";
 import { TraceProfiler, TraceScope } from "../utils/traceProfiler";
 import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
@@ -252,8 +251,6 @@ async function executeBuildCore(
   });
 
   await buildScope.profileAsync("Prepare build workspace", { category: "project" }, async () => {
-    await syncManifestSchema(project, reporter);
-
     // output variables
     const variablesOutputPath = project.resolvedCore.resolveObjPath("variables.json");
     const variablesObj: Record<string, string> = {};
@@ -520,14 +517,6 @@ async function writeLuaSourceMapArtifact(
   );
 }
 
-function getBundledManifestSchemaPath(): string {
-  return path.resolve(__dirname, "..", "..", "ticbuild.schema.json");
-}
-
-function getManagedManifestSchemaPath(project: TicbuildProject): string {
-  return canonicalizePath(path.join(project.resolvedCore.projectDir, ".ticbuild", "ticbuild.schema.json"));
-}
-
 function reportDiagnostic(reporter: BuildReporter, severity: "warning" | "error", message: string): void {
   reporter.message({
     type: "diagnostic",
@@ -594,51 +583,6 @@ function appendLuaMinificationLog(lines: string[], report: AliasPassReport): voi
       `existing ${fn.existingLocalsAtPeak}; generated ${fn.generatedLocalsAtPeak}; ` +
       `omitted ${omittedAliasSummary(fn)}; estimated bytes not saved ${omittedBytes}`,
     );
-  });
-}
-
-async function syncManifestSchema(project: TicbuildProject, reporter: BuildReporter): Promise<void> {
-  if (project.resolvedCore.manifest.project.autoUpdateManifestSchema === false) {
-    return;
-  }
-
-  const bundledSchemaPath = getBundledManifestSchemaPath();
-  const bundledSchema = await readTextFileAsync(bundledSchemaPath, "utf-8");
-  const managedSchemaPath = getManagedManifestSchemaPath(project);
-
-  const schemaRef = project.resolvedCore.manifest.$schema;
-  const resolvedSchemaPath = schemaRef ? canonicalizePath(project.resolvedCore.resolveProjectPath(schemaRef)) : managedSchemaPath;
-  const usesManagedSchemaPath = resolvedSchemaPath === managedSchemaPath;
-
-  if (!usesManagedSchemaPath) {
-    if (!fileExists(resolvedSchemaPath)) {
-      reportDiagnostic(reporter, "warning", `Manifest $schema points elsewhere and is missing: ${schemaRef}`);
-      return;
-    }
-
-    const existingSchema = await readTextFileAsync(resolvedSchemaPath, "utf-8");
-    if (existingSchema !== bundledSchema) {
-      reportDiagnostic(reporter, "warning", `Manifest $schema points elsewhere and differs from bundled schema: ${schemaRef}`);
-    }
-    return;
-  }
-
-  if (fileExists(managedSchemaPath)) {
-    const existingSchema = await readTextFileAsync(managedSchemaPath, "utf-8");
-    if (existingSchema === bundledSchema) {
-      return;
-    }
-  }
-
-  await ensureDir(path.dirname(managedSchemaPath));
-  await writeTextFile(managedSchemaPath, bundledSchema, "utf-8");
-  const message = `Synced manifest schema: ${managedSchemaPath}`;
-  reporter.message({
-    type: "comment",
-    data: {
-      message,
-    },
-    humanReadable: () => cons.info(message),
   });
 }
 

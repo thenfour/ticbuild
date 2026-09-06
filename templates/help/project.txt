@@ -1,0 +1,27 @@
+
+ticbuild project
+
+usage: ticbuild project <check | update> [manifest]
+
+Check or update files supplied by the installed ticbuild version. Does its best,
+but not a 100% guarantee that everything will migrate smoothly depending on how
+you have configured your project.
+
+Commands:
+
+  check [manifest]      Report project assets that should be updated (read-only)
+  update [manifest]     Update/create those assets
+
+Arguments:
+
+  [manifest]            Manifest file or directory (default: current directory)
+
+Options:
+
+  -h, --help            Show this help message
+
+Examples:
+
+  ticbuild project check
+  ticbuild project update
+  ticbuild project update ./cool-demo

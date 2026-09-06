@@ -99,8 +99,8 @@ export type CodeSnippetRequest = {
 };
 
 export type CodeSnippetProcessOptions = LuaProcessOptions & {
-  // Vite's ESM config runner cannot use the CLI's CommonJS __dirname-based
-  // package lookup, so dev-server callers provide the same declaration path.
+  // Non-project callers such as the Vite playground can provide the bundled
+  // declaration asset instead of a synchronized project-local declaration.
   typeScriptBuiltinsPath?: string;
 };
 

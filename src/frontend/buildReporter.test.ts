@@ -37,7 +37,6 @@ function createTempProject(code: string = "print('ok')", minify = false): { dir:
       binDir: "./bin",
       objDir: "./obj",
       outputCartName: "out.tic",
-      autoUpdateManifestSchema: false,
     },
     imports: [
       {

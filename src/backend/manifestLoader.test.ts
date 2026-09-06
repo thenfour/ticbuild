@@ -15,7 +15,6 @@ describe("Manifest Loader", () => {
       binDir: "./bin",
       objDir: "./obj",
       outputCartName: "output.tic",
-      autoUpdateManifestSchema: true,
     },
     preprocessor: {
       defines: {

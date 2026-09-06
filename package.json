@@ -49,7 +49,6 @@
     "dist/",
     "scripts/",
     "templates/",
-    "tic80.d.ts",
     "README.md",
     "LICENSE",
     "ticbuild.schema.json"

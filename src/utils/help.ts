@@ -47,6 +47,11 @@ export function printInitHelp(): void {
   console.log(help);
 }
 
+export function printProjectHelp(): void {
+  const help = renderHelpTemplate("project");
+  console.log(help);
+}
+
 export function printReplHelp(): void {
   const help = renderHelpTemplate("repl");
   console.log(help);

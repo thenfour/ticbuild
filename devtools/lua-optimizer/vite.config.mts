@@ -136,7 +136,7 @@ function codePipelineApiPlugin(): Plugin {
           requestBody.settings,
           {
             parseFailure: "throw",
-            typeScriptBuiltinsPath: path.resolve(playgroundDir, "../../tic80.d.ts"),
+            typeScriptBuiltinsPath: path.resolve(playgroundDir, "../../templates/declarations/tic80.d.ts"),
           },
         );
         writeJson(response, 200, { result, elapsedMs: performance.now() - started });

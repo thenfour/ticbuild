@@ -8,9 +8,10 @@
     "build": "ticbuild build",
     "watch": "ticbuild watch",
     "run": "ticbuild run",
+    "project:update": "ticbuild project update",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "check": "npm run typecheck && npm run lint"
+    "check": "ticbuild project check && npm run typecheck && npm run lint"
   },
   "devDependencies": {
     "eslint": "{{ESLINT_VERSION}}",

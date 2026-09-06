@@ -37,16 +37,17 @@ describe("ticbuild init", () => {
     expect(packageJson.scripts).toMatchObject({
       build: "ticbuild build",
       watch: "ticbuild watch",
+      "project:update": "ticbuild project update",
       typecheck: "tsc --noEmit",
       lint: "eslint src",
-      check: "npm run typecheck && npm run lint",
+      check: "ticbuild project check && npm run typecheck && npm run lint",
     });
     expect(fs.readFileSync(path.join(tempDir, "project.ticbuild.jsonc"), "utf-8")).toContain(
       '"name": "Typed Game"',
     );
-    expect(fs.readFileSync(path.join(tempDir, "src", "ticbuild-env.d.ts"), "utf-8")).toContain(
-      'import "ticbuild/tic80"',
-    );
+    expect(fs.existsSync(path.join(tempDir, "src", "ticbuild-env.d.ts"))).toBe(false);
+    expect(fs.readFileSync(path.join(tempDir, ".ticbuild", "declarations", "tic80.d.ts"), "utf-8"))
+      .toContain("declare function cls");
 
     installDeclarationTestFixture(tempDir);
 
@@ -156,11 +157,6 @@ describe("ticbuild init", () => {
 });
 
 function installDeclarationTestFixture(projectDir: string): void {
-  const packageDir = path.join(projectDir, "node_modules", "ticbuild");
-  fs.mkdirSync(packageDir, { recursive: true });
-  fs.copyFileSync(path.resolve(__dirname, "..", "..", "tic80.d.ts"), path.join(packageDir, "tic80.d.ts"));
-  fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ name: "ticbuild" }), "utf-8");
-
   const languageExtensionsSource = path.resolve(
     __dirname,
     "..",

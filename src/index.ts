@@ -12,12 +12,14 @@ import { runCommand } from "./frontend/run";
 import { attachTerminalToLaunchedTic80, discoCommand, terminalCommand } from "./frontend/terminal";
 import { templateListCommand } from "./frontend/templateList";
 import { watchCommand } from "./frontend/watch";
+import { projectCheckCommand, projectUpdateCommand } from "./frontend/projectFiles";
 import * as console from "./utils/console";
 import {
   printBuildHelp,
   printDiscoHelp,
   printInitHelp,
   printMainHelp,
+  printProjectHelp,
   printReplHelp,
   printRunHelp,
   printTerminalHelp,
@@ -88,6 +90,9 @@ async function main(): Promise<void> {
       case "init":
       case "i":
         printInitHelp();
+        return;
+      case "project":
+        printProjectHelp();
         return;
       case "repl":
         printReplHelp();
@@ -275,6 +280,27 @@ async function main(): Promise<void> {
       });
     });
 
+  const projectCommand = program
+    .command("project")
+    .description("Check or update ticbuild-managed project files")
+    .action(() => {
+      printProjectHelp();
+    });
+
+  projectCommand
+    .command("check [manifest]")
+    .description("Check whether project-managed files are current")
+    .action(async (manifest?: string) => {
+      await projectCheckCommand(manifest);
+    });
+
+  projectCommand
+    .command("update [manifest]")
+    .description("Update managed files and create missing project seed files")
+    .action(async (manifest?: string) => {
+      await projectUpdateCommand(manifest);
+    });
+
   program
     .command("disco")
     .description("List discovered TIC-80 remoting sessions")
@@ -303,6 +329,9 @@ async function main(): Promise<void> {
           case "init":
           case "i":
             printInitHelp();
+            break;
+          case "project":
+            printProjectHelp();
             break;
           case "templatelist":
           case "tl":

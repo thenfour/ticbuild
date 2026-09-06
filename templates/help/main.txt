@@ -14,6 +14,8 @@ Common commands:
   watch, w [manifest]         Build, launch, and watch for changes
   repl [manifest]              Interactive Lua preprocessing/minification REPL
   init, i [dir]               Initialize a new project
+  project check [manifest]    Check project
+  project update [manifest]   Update project, place missing files
   templatelist, tl            List available templates
 
 Other commands:

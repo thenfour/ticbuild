@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildInfo } from "../buildInfo";
+import { updateProjectFiles } from "../backend/projectFiles";
 import * as cons from "../utils/console";
 import { getErrorMessage } from "../utils/errorHandling";
 import { copyFile, ensureDir, fileExists, isDirectory, isDirectoryEmpty } from "../utils/fileSystem";
@@ -129,40 +130,12 @@ export async function initCommand(targetDir?: string, options?: InitOptions): Pr
     options?.force === true,
   );
 
-  const schemaSourcePath = path.resolve(__dirname, "..", "..", "ticbuild.schema.json");
-  const schemaTargetPath = path.join(resolvedDir, ".ticbuild/ticbuild.schema.json");
-  copyFile(schemaSourcePath, schemaTargetPath, options?.force === true);
-
   // and copy the gitignore.
   const gitignoreSourcePath = getPathRelativeToTemplates("gitignore.template");
   const gitignoreTargetPath = path.join(resolvedDir, ".gitignore");
   copyFile(gitignoreSourcePath, gitignoreTargetPath, options?.force === true);
 
-  // Shared project environment defaults are checked in; machine-local
-  // overrides belong in the ignored .env.local file.
-  const envTargetPath = path.join(resolvedDir, ".env");
-  if (!fileExists(envTargetPath)) {
-    copyFile(getPathRelativeToTemplates("env.template"), envTargetPath, false);
-  }
-
-  // and vs code launch config
-  const launchSourcePath = getPathRelativeToTemplates("vscode_launch.template.json");
-  const launchTargetDir = path.join(resolvedDir, ".vscode");
-  const launchTargetPath = path.join(launchTargetDir, "launch.json");
-  ensureDir(launchTargetDir);
-  copyFile(launchSourcePath, launchTargetPath, options?.force === true);
-
-  // Template-specific VS Code configuration takes precedence over these
-  // recommended workspace defaults.
-  const settingsTargetPath = path.join(launchTargetDir, "settings.json");
-  if (!fileExists(settingsTargetPath)) {
-    copyFile(getPathRelativeToTemplates("vscode_settings.template.json"), settingsTargetPath, false);
-  }
-
-  const extensionsTargetPath = path.join(launchTargetDir, "extensions.json");
-  if (!fileExists(extensionsTargetPath)) {
-    copyFile(getPathRelativeToTemplates("vscode_extensions.template.json"), extensionsTargetPath, false);
-  }
+  await updateProjectFiles(resolvedDir);
 
   cons.success(`Initialized ticbuild project in ${resolvedDir}`);
 

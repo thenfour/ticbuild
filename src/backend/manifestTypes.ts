@@ -39,7 +39,6 @@ export interface ProjectConfig {
   binDir: string;
   objDir: string;
   outputCartName: string;
-  autoUpdateManifestSchema?: boolean;
 }
 
 export interface TypeScriptImportConfig {

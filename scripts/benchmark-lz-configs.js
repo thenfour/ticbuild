@@ -54,7 +54,7 @@ function buildCorpus() {
     "benchmarks/lua-minifiers/fixtures/algorithms.lua",
     "benchmarks/lua-minifiers/fixtures/data-model.lua",
     "benchmarks/lua-minifiers/fixtures/tic80-cart.lua",
-    "tic80.d.ts",
+    "templates/declarations/tic80.d.ts",
     "example.ticbuild.jsonc",
     "README.md",
   ]) {

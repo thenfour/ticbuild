@@ -425,6 +425,25 @@ USE_EXTERNAL_TIC80=1                    # use own build of tic80.exe. defaults t
 TIC80_LOCATION=c:\my\custom\tic80.exe # optional. ignored without USE_EXTERNAL_TIC80=1
 ```
 
+# Project files
+
+ticbuild projects contain some files that ticbuild depends on or
+publishes updates to. After updating ticbuild, you can check these assets:
+
+```bash
+ticbuild project check [manifest]
+```
+
+Something need updating? Perform the update automatically:
+
+```bash
+ticbuild project update [manifest]
+```
+
+User-editable config like `.env`, `.vscode/*` are not modified by
+`project update`, ticbuild assumes you own that config. But if missing, they get
+replaced.
+
 # Project manifest
 
 The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the project root.
@@ -433,7 +452,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
 // paths are always relative to the manifest file's dir (which defines the project root dir)
 // fyi, reference: https://github.com/nesbox/TIC-80/wiki/.tic-File-Format
 {
-  "$schema": "./ticbuild.schema.json",
+  "$schema": "./.ticbuild/ticbuild.schema.json",
   "buildConfiguration": "release", // base configuration name (required, gets overridden by other configs)
   "project": {
     "name": "my demo",
@@ -454,30 +473,7 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
     },
     "binDir": "./dist/bin",
     "objDir": "./dist/obj",
-    "outputCartName": "$(project.name).tic", // leaf name only
-
-    // Upon build, ticbuild checks that your manifest schema is in sync with the expected
-    // schema. This schema doesn't affect the build, but it helps editors understand
-    // the manifest structure, provide auto-complete, validation, etc.
-    //
-    // This is true by default. If the project's schema file is different than
-    // what ticbuild is expecting, then ticbuild will update it.
-    // Setting to false will leave your existing schema untouched. Could be useful to 
-    // keep commits cleaner?
-    //
-    // Note that this is only done at build-time. So if you want to manually update the schema,
-    // you need to trigger a build. Even if the build doesn't complete, the sync is performed.
-    //
-    // Q: why check content, not a version?
-    // A: - versions are annoying to track, room for error
-    //    - there is no scenario where the content check would be less accurate
-    // Q: what if the schema doesn't exist in the first place? will it get placed?
-    // A: Yes. Ticbuild will create `.ticbuild/` and place the schema there.
-    //
-    // Q: What if $schema points elsewhere?
-    // A: Ticbuild will assume the user is managing it; do the check, warn if content mismatch.
-    //    Ticbuild in this case will not change the $schema path, and won't touch the schema file.
-    "autoUpdateManifestSchema": true,
+    "outputCartName": "$(project.name).tic" // leaf name only
   },
   "variables": {
     "anything": "here", // variables can be referred to in values via $(variablename)
@@ -866,7 +862,7 @@ The most common cases i try to facilitate:
 
 ticbuild's Typescript processor supports a special type for compile-time constants.
 Preprocessor "defines" are made available using this mechanism. See the `ticbuild`
-namespace (in `tic80.d.ts`) for the various utilities around this.
+namespace (in `.ticbuild/declarations/tic80.d.ts`) for the various utilities around this.
 
 ```ts
 type DebugValue = ticbuild.Defines["DEBUG"];
