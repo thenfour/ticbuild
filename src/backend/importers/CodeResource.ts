@@ -1,6 +1,6 @@
-import { constants as zlibConstants, deflateSync } from "node:zlib";
-import * as path from "node:path";
-import { zlibAsync as zopfliZlibAsync, ZopfliOptions } from "@gfx/zopfli";
+import { ZopfliOptions, zlibAsync as zopfliZlibAsync } from "@gfx/zopfli";
+import { deflateSync, constants as zlibConstants } from "node:zlib";
+import { canonicalizePath } from "../../utils/fileSystem";
 import { AliasPassReport, createEmptyAliasPassReport } from "../../utils/lua/lua_alias_shared";
 import {
   LuaProcessOptions,
@@ -9,6 +9,7 @@ import {
 } from "../../utils/lua/lua_processor";
 import { LuaTransformMap } from "../../utils/lua/lua_transform_map";
 import { Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
+import { profileAsync, profileSync, TraceScope, TraceTrack } from "../../utils/traceProfiler";
 import { CoalesceBool } from "../../utils/utils";
 import {
   ChunkDataResult,
@@ -17,13 +18,13 @@ import {
   ImportedResourceBase,
   ResourceViewBase,
 } from "../ImportedResourceTypes";
+import { MaterializedImportSource } from "../importSources";
 import {
   LuaCodeImportResolver,
   LuaImportSourceResolver,
   LuaPreprocessResult,
   preprocessLuaCode,
 } from "../luaPreprocessor";
-import { MaterializedImportSource } from "../importSources";
 import { CodeAssemblyOptions, LuaCompressionMode, LuaMinificationConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import {
@@ -32,8 +33,6 @@ import {
   mapPreprocessedOffset,
   SourceMapBuilder,
 } from "../sourceMap";
-import { canonicalizePath } from "../../utils/fileSystem";
-import { profileAsync, profileSync, TraceScope, TraceTrack } from "../../utils/traceProfiler";
 
 export const LUA_RELEASE_OPTIMIZATION_OPTIONS: OptimizationRuleOptions = {
   stripComments: true,
@@ -413,6 +412,7 @@ export abstract class CodeResource extends ImportedResourceBase {
   private preprocessResult: LuaPreprocessResult | undefined;
   private generatedLuaPromise: Promise<GeneratedLuaSource> | undefined;
   private importSource: MaterializedImportSource | undefined;
+  private declarationDependencies: readonly ExternalDependency[] = [];
   protected profileTrack: TraceTrack | undefined;
 
   protected constructor(filePath: string, sourceText: string, initialized?: InitializedCodeResource) {
@@ -436,8 +436,20 @@ export abstract class CodeResource extends ImportedResourceBase {
     this.importSource = source;
   }
 
+  getSourceDependencies(): readonly ExternalDependency[] {
+    return this.importSource?.watchDependencies ?? [{ path: this.filePath, reason: this.getInputDependencyReason() }];
+  }
+
   setProfileTrack(track: TraceTrack | undefined): void {
     this.profileTrack = track;
+  }
+
+  setDeclarationDependencies(dependencies: readonly ExternalDependency[]): void {
+    const generated = new Set(this.importSource?.generatedOutputs.map(canonicalizePath) ?? []);
+    this.declarationDependencies = [
+      ...dependencies.filter(dependency => !generated.has(canonicalizePath(dependency.path))),
+      ...(this.importSource?.watchDependencies ?? []),
+    ];
   }
 
   async getGeneratedLuaSource(project: TicbuildProjectCore): Promise<GeneratedLuaSource> {
@@ -557,13 +569,14 @@ export abstract class CodeResource extends ImportedResourceBase {
 
   getDependencyList(): ExternalDependency[] {
     const uniqueDeps = Array.from(new Set(this.dependencies));
-    return uniqueDeps.map((dependencyPath) => ({
+    const dependencies = uniqueDeps.map((dependencyPath) => ({
       path: dependencyPath,
       reason:
         dependencyPath === this.filePath
           ? this.getInputDependencyReason()
           : (this.dependencyReasons.get(dependencyPath) ?? "Lua preprocessor dependency"),
     }));
+    return Array.from(new Map([...this.declarationDependencies, ...dependencies].map(dependency => [canonicalizePath(dependency.path), dependency])).values());
   }
 
   getPreprocessResult(): LuaPreprocessResult {

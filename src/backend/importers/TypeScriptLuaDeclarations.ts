@@ -558,7 +558,7 @@ function jsDocReturnText(declaration: ts.SignatureDeclaration | undefined): stri
   return text || undefined;
 }
 
-function makeLuaCatsTypeName(projectDir: string, sourceFile: ts.SourceFile, symbolName: string): string {
+export function makeLuaCatsTypeName(projectDir: string, sourceFile: ts.SourceFile, symbolName: string): string {
   const relative = path.relative(projectDir, sourceFile.fileName).replace(/\.[^.\\/]+$/, "");
   const pathParts = relative.split(/[\\/]+/).map((part) => sanitizeTypeNamePart(part)).filter(Boolean);
   return ["ticbuild", ...pathParts, sanitizeTypeNamePart(symbolName)].join(".");

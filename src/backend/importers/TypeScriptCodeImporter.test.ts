@@ -8,14 +8,14 @@ import { ResourceManager } from "../ImportedResourceTypes";
 import { loadAllImports } from "../importResources";
 import { Manifest, PreprocessorValue } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
+import { getBundledTic80DeclarationsPath, getProjectTic80DeclarationsPath } from "../projectFiles";
 import { mapPreprocessedOffsetToLineColumn } from "../sourceMap";
-import { LuaCodeResource } from "./LuaCodeImporter";
-import { TypeScriptCodeResource } from "./TypeScriptCodeImporter";
 import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
+import { LuaCodeResource } from "./LuaCodeImporter";
+import { getTypeScriptBuildConstantsPath } from "./TypeScriptBuildConstants";
+import { TypeScriptCodeResource } from "./TypeScriptCodeImporter";
 import { getTypeScriptLuaDeclarationsPath } from "./TypeScriptLuaDeclarations";
 import { getTypeScriptManifestDeclarationsPath } from "./TypeScriptManifestModules";
-import { getTypeScriptBuildConstantsPath } from "./TypeScriptBuildConstants";
-import { getBundledTic80DeclarationsPath, getProjectTic80DeclarationsPath } from "../projectFiles";
 
 function createProject(
   projectDir: string,
@@ -72,6 +72,234 @@ function getTypeScriptResource(resources: ResourceManager, name: string): TypeSc
   expect(resource).toBeInstanceOf(TypeScriptCodeResource);
   return resource as TypeScriptCodeResource;
 }
+
+async function withDeclarationProject(
+  files: Record<string, string>,
+  imports: Manifest["imports"],
+  run: (project: TicbuildProjectCore, projectDir: string) => Promise<void>,
+) {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-declaration-analysis-"));
+  try {
+    for (const [file, content] of Object.entries(files)) {
+      const filePath = path.join(projectDir, file);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, content, "utf-8");
+    }
+    await run(createProject(projectDir, imports), projectDir);
+  } finally {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  }
+}
+
+describe("declaration analysis", () => {
+  const imports: Manifest["imports"] = [
+    { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    { name: "geometry", path: "geometry.lua", kind: "LuaCode" },
+  ];
+
+  it("resolves a Lua signature back to its TypeScript caller on the first build", async () => {
+    await withDeclarationProject({
+      "main.ts": [
+        'import { Move } from "ticbuild-assets/geometry";',
+        "export interface Vec2 { x: number; y: number; }",
+        "export function roundtrip(value: Vec2) { return Move(value); }",
+        "export function TIC() { print(roundtrip({ x: 1, y: 2 }).x); }",
+      ].join("\n"),
+      "geometry.lua": "---@param value ticbuild.main.Vec2\n---@return ticbuild.main.Vec2\nfunction Move(value) return value end",
+    }, imports, async (project, dir) => {
+      const resources = await loadAllImports(project);
+      expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('Move(value: import("ticbuild-assets/main").Vec2): import("ticbuild-assets/main").Vec2');
+      expect(fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8")).toContain("roundtrip(value: Vec2): Vec2");
+      expect(getTypeScriptResource(resources, "main").getCodeArtifacts(project).preprocessedSource).toContain("function Move");
+      fs.writeFileSync(path.join(dir, "main.ts"), 'import { Move } from "ticbuild-assets/geometry"; export interface Vec2 { x: number; y: number; } export function TIC() { Move("wrong"); }');
+      await expect(loadAllImports(project)).rejects.toThrow("Argument of type 'string' is not assignable to parameter of type 'Vec2'");
+    });
+  });
+
+  it("resolves Lua classes, aliases, inheritance and annotated globals through includes", async () => {
+    await withDeclarationProject({
+      "main.ts": [
+        'import { Move, Position } from "ticbuild-assets/geometry";',
+        'import type { Vec2, Mode } from "ticbuild-assets/other";',
+        'const mode: Mode = "fast";',
+        'const value: Vec2 = { x: 1, y: 2, mode };',
+        'export function TIC() { print(Move(value).x + Position.y); }',
+      ].join("\n"),
+      "geometry.lua": '--#include "types.lua"\n---@param value Vec2\n---@return Vec2\nfunction Move(value) return value end\n---@type Vec2\nPosition = {x=0,y=0}',
+      "other.lua": '--#include "types.lua"',
+      "types.lua": [
+        '---@alias Mode "fast" | "safe"',
+        '---@class Point', '---@field x number', 'local Point = {}',
+        '---@class Vec2: Point', '---@field y number', '---@field mode? Mode',
+        '---@field next? Vec2', 'local Vec2 = {}',
+      ].join("\n"),
+    }, [...imports, { name: "other", path: "other.lua", kind: "LuaCode" }], async (project, dir) => {
+      const resources = await loadAllImports(project);
+      expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('Position: import("ticbuild-assets/geometry").Vec2');
+      expect(resources.getDependencyList().map(dependency => dependency.path)).toContain(path.join(dir, "types.lua"));
+      fs.writeFileSync(path.join(dir, "main.ts"), 'import { Move } from "ticbuild-assets/geometry"; export function TIC() { Move({ x: 1, y: "wrong" }); }');
+      await expect(loadAllImports(project)).rejects.toThrow("Type 'string' is not assignable to type 'number'");
+    });
+  });
+
+  it("uses authored ambient types and discards stale generated declarations", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import { Move } from "ticbuild-assets/geometry"; export function TIC() { Move({ x: 1 }); }',
+      "geometry.lua": '---@param value Vec2 | nil\nfunction Move(value) end',
+      "globals.d.ts": 'interface Vec2 { x: number; }',
+      "unused.ts": 'export const UNUSED = 1;',
+      "tsconfig.json": JSON.stringify({ include: ["*.ts", ".ticbuild/declarations/**/*.d.ts"] }),
+      ".ticbuild/declarations/typescript-assets.d.ts": 'import "ticbuild-assets/unused"; interface Vec2 { stale: string; }',
+      ".ticbuild/declarations/lua-assets.d.ts": 'declare module "ticbuild-assets/geometry" { export function Move(value: string): void; }',
+    }, [{ ...imports[0], typescript: { tsconfig: "tsconfig.json" } }, imports[1],
+      { name: "unused", path: "unused.ts", kind: "TypeScriptCode" }], async (project, dir) => {
+      expect((await loadAllImports(project)).items.has("unused")).toBe(false);
+      const first = fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8");
+      expect(first).toContain("(Vec2) | (undefined)");
+      await loadAllImports(project);
+      expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toBe(first);
+      fs.writeFileSync(path.join(dir, "globals.d.ts"), "interface Vec2 { x: string; }");
+      await expect(loadAllImports(project)).rejects.toThrow("Type 'number' is not assignable to type 'string'");
+    });
+  });
+
+  it("allows type-only cycles without generating or including their runtime code", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import type { Config } from "ticbuild-assets/types"; export interface State { config?: Config; } export function TIC() {}',
+      "types.ts": 'import type { State } from "ticbuild-assets/main"; export interface Config { state?: State; } export const TypeRuntimeMarker = "type-runtime-marker";',
+    }, [imports[0], { name: "types", path: "types.ts", kind: "TypeScriptCode" }], async (project, dir) => {
+      const resources = await loadAllImports(project);
+      expect(getTypeScriptResource(resources, "types").hasGeneratedLuaSource()).toBe(false);
+      expect(fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8")).toContain("interface Config");
+      expect(fs.readFileSync(getTypeScriptLuaDeclarationsPath(dir), "utf-8")).not.toContain("TypeRuntimeMarker");
+      expect(resources.getDependencyList().map(dependency => dependency.path)).toContain(path.join(dir, "types.ts"));
+    });
+  });
+
+  it("checks declaration-only TypeScript resources without generating Lua", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import type { Config } from "ticbuild-assets/types"; export function TIC() {}',
+      "types.ts": 'export interface Config { value: MissingType; }',
+    }, [imports[0], { name: "types", path: "types.ts", kind: "TypeScriptCode" }], async project => {
+      await expect(loadAllImports(project)).rejects.toThrow("Cannot find name 'MissingType'");
+    });
+  });
+
+  it("discovers TypeScript includes authored in relative TypeScript modules", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import "./helper"; export function TIC() {}',
+      "helper.ts": '//--#include "import:models"\nexport const HELPER = 1;',
+      "models.ts": 'export const MODEL_VERSION = 1;',
+    }, [imports[0], { name: "models", path: "models.ts", kind: "TypeScriptCode" }], async (project, dir) => {
+      const resources = await loadAllImports(project);
+      expect(fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8")).toContain('declare module "ticbuild-assets/models"');
+      expect(getTypeScriptResource(resources, "main").getCodeArtifacts(project).preprocessedSource).toContain("MODEL_VERSION = 1");
+    });
+  });
+
+  it("discovers TypeScript types through Lua includes before compilation", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import { Move } from "ticbuild-assets/geometry"; export function TIC() { print(Move({ x: 1 }).x); }',
+      "geometry.lua": '--#include "import:models"\n---@param value ticbuild.models.Vec2\n---@return ticbuild.models.Vec2\nfunction Move(value) return value end',
+      "models.ts": 'export interface Vec2 { x: number; } export const MODEL_VERSION = 1;',
+    }, [...imports, { name: "models", path: "models.ts", kind: "TypeScriptCode" }], async (project, dir) => {
+      const resources = await loadAllImports(project);
+      expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('import("ticbuild-assets/models").Vec2');
+      expect(getTypeScriptResource(resources, "main").getCodeArtifacts(project).preprocessedSource).toContain("MODEL_VERSION = 1");
+    });
+  });
+
+  it("reports ambiguous names instead of choosing one TypeScript module", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import type { Vec2 as A } from "ticbuild-assets/left"; import type { Vec2 as B } from "ticbuild-assets/right"; import { Move } from "ticbuild-assets/geometry"; export function TIC() {}',
+      "geometry.lua": '---@param value Vec2\nfunction Move(value) end',
+      "left.ts": 'export interface Vec2 { x: number; }',
+      "right.ts": 'export interface Vec2 { y: number; }',
+    }, [...imports, { name: "left", path: "left.ts", kind: "TypeScriptCode" },
+      { name: "right", path: "right.ts", kind: "TypeScriptCode" }], async project => {
+      await expect(loadAllImports(project)).rejects.toThrow("Ambiguous LuaCATS type 'Vec2'");
+    });
+  });
+
+  it("preserves private TypeScript type identities when Lua refers back to the owner", async () => {
+    await withDeclarationProject({
+      "main.ts": [
+        'import { Move } from "ticbuild-assets/geometry";',
+        'class Vec2 { private marker = 0; x = 1; getMarker() { return this.marker; } }',
+        'export function roundtrip(value: Vec2): Vec2 { return Move(value); }',
+        'export function TIC() { print(roundtrip(new Vec2()).x); }',
+      ].join("\n"),
+      "geometry.lua": '---@param value ticbuild.main.Vec2\n---@return ticbuild.main.Vec2\nfunction Move(value) return value end',
+    }, imports, async (project, dir) => {
+      await loadAllImports(project);
+      expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('import("ticbuild-assets/main").__ticbuild_type_Vec2');
+      expect(fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8")).toContain("export type __ticbuild_type_Vec2 = Vec2");
+    });
+  });
+
+  it("resolves each TypeScript resource using its configured paths", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import type { Value } from "model"; import { Move } from "ticbuild-assets/geometry"; export interface Vec2 { x: Value; } export function TIC() { Move({ x: 1 }); }',
+      "second.ts": 'import type { Value } from "model"; import { Describe } from "ticbuild-assets/labels"; export interface Label { text: Value; } export function describe() { Describe({ text: "one" }); }',
+      "number.ts": 'export type Value = number;',
+      "string.ts": 'export type Value = string;',
+      "geometry.lua": '---@param value ticbuild.main.Vec2\nfunction Move(value) end',
+      "labels.lua": '---@param value ticbuild.second.Label\nfunction Describe(value) end',
+      "first.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { model: ["number.ts"] }, types: [] } }),
+      "second.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { model: ["string.ts"] }, types: [] } }),
+    }, [{ ...imports[0], typescript: { tsconfig: "first.json" } }, imports[1],
+      { name: "second", path: "second.ts", kind: "TypeScriptCode", typescript: { tsconfig: "second.json" } },
+      { name: "labels", path: "labels.lua", kind: "LuaCode" }], async (project, dir) => {
+      project.manifest.assembly.blocks.push({ asset: "second" });
+      await loadAllImports(project);
+      const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8");
+      expect(declarations).toContain('ticbuild-assets/main/__types/number');
+      expect(declarations).toContain('ticbuild-assets/second/__types/string');
+    });
+  });
+
+  it("rejects conflicting Lua type definitions", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import "ticbuild-assets/geometry"; import "ticbuild-assets/other"; export function TIC() {}',
+      "geometry.lua": '---@class Vec2\n---@field x number\nlocal Vec2 = {}',
+      "other.lua": '---@class Vec2\n---@field x string\nlocal Vec2 = {}',
+    }, [...imports, { name: "other", path: "other.lua", kind: "LuaCode" }], async project => {
+      await expect(loadAllImports(project)).rejects.toThrow("Conflicting Lua type 'Vec2'");
+    });
+  });
+
+  it("resolves named types inside generic Lua declarations and callback signatures", async () => {
+    await withDeclarationProject({
+      "main.ts": 'import { Unbox, Visit, MapVector } from "ticbuild-assets/geometry"; export interface Vec2 { x: number; } export function TIC() { const value: number = Unbox({ value: 1 }); Visit({ x: value }, p => MapVector(p)); }',
+      "geometry.lua": [
+        '---@class Box<T>', '---@field value T', 'local Box = {}',
+        '---@generic T', '---@param box Box<T>', '---@return T', 'function Unbox(box) return box.value end',
+        '---@param value ticbuild.main.Vec2', '---@param callback fun(value: ticbuild.main.Vec2): number',
+        'function Visit(value, callback) return callback(value) end',
+        '---@alias Mapper fun(value: ticbuild.main.Vec2): number',
+        '---@type Mapper', 'function MapVector(value) return value.x end',
+      ].join("\n"),
+    }, imports, async (project, dir) => {
+      await loadAllImports(project);
+      expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('Unbox<T>(box: import("ticbuild-assets/geometry").Box<T>): T');
+      expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('export const MapVector: import("ticbuild-assets/geometry").Mapper');
+      fs.writeFileSync(path.join(dir, "main.ts"), 'import { Unbox } from "ticbuild-assets/geometry"; export interface Vec2 { x: number; } export function TIC() { const value: number = Unbox({ value: "wrong" }); }');
+      await expect(loadAllImports(project)).rejects.toThrow("Type 'string' is not assignable to type 'number'");
+    });
+  });
+
+  it("warns on unresolved named types while leaving unannotated values permissive", async () => {
+    const warning = jest.spyOn(cons, "warning").mockImplementation(() => {});
+    try {
+      await withDeclarationProject({
+        "main.ts": 'import { Move, Untyped } from "ticbuild-assets/geometry"; export function TIC() { Move(1); Untyped(2); }',
+        "geometry.lua": '---@param value MissingType\nfunction Move(value) end\nfunction Untyped(value) end',
+      }, imports, async project => { await loadAllImports(project); });
+      expect(warning.mock.calls.filter(([message]) => String(message).includes("Unresolved LuaCATS type"))).toHaveLength(1);
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("MissingType"));
+    } finally { warning.mockRestore(); }
+  });
+});
 
 describe("TypeScriptCodeResource", () => {
   it("inlines typed build constants and writes active define declarations", async () => {
@@ -1549,7 +1777,7 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
-  it("typechecks TypeScript calls against generated LuaDoc signatures on the first build", async () => {
+  it("typechecks TypeScript calls against generated LuaCATS signatures on the first build", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-lua-module-types-"));
     fs.writeFileSync(
       path.join(projectDir, "math.lua"),

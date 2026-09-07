@@ -1,27 +1,29 @@
 import { readTextFileAsync } from "../../utils/fileSystem";
 import { GeneratedLuaSource } from "../ImportedResourceTypes";
+import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
 import { ImportDefinition, TypeScriptImportConfig } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { CodeResource } from "./CodeResource";
-import { transpileTypeScriptToLua } from "./TypeScriptTranspiler";
-import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
 import { LuaDefinitionBlock } from "./TypeScriptLuaDeclarations";
 import {
   collectTypeScriptManifestCodeDependencies,
   collectTypeScriptManifestDependencies,
+  ManifestCodeDependency,
   TypeScriptManifestModuleDeclaration,
 } from "./TypeScriptManifestModules";
-import { ManifestCodeModuleDefinition } from "./ManifestCodeTypeScriptModules";
+import { TypeScriptDeclarationContext } from "./TypeScriptProgram";
+import { transpileTypeScriptToLua } from "./TypeScriptTranspiler";
 
 export class TypeScriptCodeResource extends CodeResource {
   private luaDefinitionBlocks: readonly LuaDefinitionBlock[] = [];
   private typescriptManifestModuleDeclaration: TypeScriptManifestModuleDeclaration | undefined;
+  private declarationContext: TypeScriptDeclarationContext | undefined;
 
   constructor(
     readonly manifestImportName: string,
     filePath: string,
     sourceText: string,
-    private readonly typescriptConfig?: TypeScriptImportConfig,
+    readonly typescriptConfig?: TypeScriptImportConfig,
   ) {
     super(filePath, sourceText);
   }
@@ -33,11 +35,10 @@ export class TypeScriptCodeResource extends CodeResource {
       this.sourceText,
       this.typescriptConfig,
       undefined,
-      this.manifestImportName,
       this.profileTrack,
+      this.declarationContext,
     );
     this.luaDefinitionBlocks = result.luaDefinitionBlocks;
-    this.typescriptManifestModuleDeclaration = result.typescriptManifestModuleDeclaration;
     return result;
   }
 
@@ -45,12 +46,20 @@ export class TypeScriptCodeResource extends CodeResource {
     return this.luaDefinitionBlocks;
   }
 
+  setPreparedDeclarations(declaration: TypeScriptManifestModuleDeclaration, context: TypeScriptDeclarationContext): void {
+    this.typescriptManifestModuleDeclaration = declaration;
+    this.declarationContext = context;
+  }
+
   getTypeScriptManifestDependencies(project: TicbuildProjectCore): readonly string[] {
     return collectTypeScriptManifestDependencies(project, this.filePath, this.sourceText, this.typescriptConfig);
   }
 
-  getManifestCodeDependencies(project: TicbuildProjectCore): readonly ManifestCodeModuleDefinition[] {
-    return collectTypeScriptManifestCodeDependencies(project, this.filePath, this.sourceText, this.typescriptConfig);
+  getManifestCodeDependencies(
+    project: TicbuildProjectCore,
+    onSource?: (fileName: string, sourceText: string, typeOnly: boolean) => void,
+  ): readonly ManifestCodeDependency[] {
+    return collectTypeScriptManifestCodeDependencies(project, this.filePath, this.sourceText, this.typescriptConfig, onSource);
   }
 
   getTypeScriptManifestModuleDeclaration(): TypeScriptManifestModuleDeclaration {

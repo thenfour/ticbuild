@@ -15,6 +15,8 @@ import {
 import { createTypeScriptTranspilationOptions } from "./TypeScriptTranspilationOptions";
 import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
 
+export type ManifestCodeDependency = ManifestCodeModuleDefinition & { typeOnly: boolean };
+
 export const TYPESCRIPT_MANIFEST_DECLARATIONS_FILE = "typescript-assets.d.ts";
 
 export type TypeScriptManifestModuleDeclaration = {
@@ -115,70 +117,44 @@ export function collectTypeScriptManifestCodeDependencies(
   entryFilePath: string,
   entrySource: string,
   typescriptConfig?: TypeScriptImportConfig,
-): ManifestCodeModuleDefinition[] {
+  onSource?: (fileName: string, sourceText: string, typeOnly: boolean) => void,
+): ManifestCodeDependency[] {
   const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
   const options = createTypeScriptTranspilationOptions(configuredProject.options);
   const catalog = createManifestCodeModuleCatalog(project);
-  const dependencies = new Map<string, ManifestCodeModuleDefinition>();
-  const visited = new Set<string>();
+  const dependencies = new Map<string, ManifestCodeDependency>();
+  const visited = new Map<string, boolean>();
   const entryKey = canonicalTypeScriptPath(entryFilePath);
 
-  const visitFile = (fileName: string) => {
+  const visitFile = (fileName: string, typeOnly = false) => {
     const key = canonicalTypeScriptPath(fileName);
-    if (visited.has(key)) {
+    if (visited.has(key) && (visited.get(key) === false || typeOnly)) {
       return;
     }
-    visited.add(key);
+    visited.set(key, typeOnly);
     const sourceText = key === entryKey ? entrySource : ts.sys.readFile(fileName);
     if (sourceText === undefined) {
       return;
     }
+    onSource?.(fileName, sourceText, typeOnly);
     const sourceFile = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true, scriptKind(fileName));
 
-    const inspectModuleSpecifier = (moduleSpecifier: ts.Expression) => {
-      if (!ts.isStringLiteralLike(moduleSpecifier)) {
-        return;
-      }
-      const specifier = moduleSpecifier.text;
-      if (specifier.startsWith(MANIFEST_CODE_MODULE_PREFIX)) {
-        const importName = parseManifestCodeModuleSpecifier(specifier);
-        if (!importName) {
-          // The static linker reports the source-located validation error.
-          return;
+    for (const reference of collectSourceModuleReferences(sourceFile)) {
+      const onlyTypes = typeOnly || reference.typeOnly;
+      if (reference.specifier.startsWith(MANIFEST_CODE_MODULE_PREFIX)) {
+        const importName = parseManifestCodeModuleSpecifier(reference.specifier);
+        const definition = importName ? catalog.get(importName) : undefined;
+        // The static linker reports source-located errors for invalid manifest imports.
+        if (!importName || !definition) continue;
+        const previous = dependencies.get(importName);
+        dependencies.set(importName, { ...definition, typeOnly: onlyTypes && previous?.typeOnly !== false });
+      } else {
+        const resolved = ts.resolveModuleName(reference.specifier, fileName, options, ts.sys).resolvedModule;
+        if (resolved && isTypeScriptSourceFile(resolved.resolvedFileName)) {
+          visitFile(resolved.resolvedFileName, onlyTypes);
         }
-        const definition = catalog.get(importName);
-        if (!definition) {
-          // The static linker reports the source-located validation error.
-          return;
-        }
-        dependencies.set(importName, definition);
-        return;
       }
-
-      const resolved = ts.resolveModuleName(specifier, fileName, options, ts.sys).resolvedModule;
-      if (resolved && isTypeScriptSourceFile(resolved.resolvedFileName)) {
-        visitFile(resolved.resolvedFileName);
-      }
-    };
-
-    const inspect = (node: ts.Node) => {
-      if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-        if (node.moduleSpecifier) {
-          inspectModuleSpecifier(node.moduleSpecifier);
-        }
-        return;
-      }
-      if (
-        ts.isImportTypeNode(node) &&
-        ts.isLiteralTypeNode(node.argument) &&
-        ts.isStringLiteralLike(node.argument.literal)
-      ) {
-        inspectModuleSpecifier(node.argument.literal);
-        return;
-      }
-      ts.forEachChild(node, inspect);
-    };
-    ts.forEachChild(sourceFile, inspect);
+    }
   };
 
   visitFile(entryFilePath);
@@ -193,9 +169,47 @@ export function collectTypeScriptManifestCodeDependencies(
       // partially completed build; they are outputs, not graph-discovery roots.
       continue;
     }
-    visitFile(declarationRootPath);
+    visitFile(declarationRootPath, true);
   }
   return Array.from(dependencies.values()).sort((left, right) => left.importName.localeCompare(right.importName));
+}
+
+type SourceModuleReference = { specifier: string; typeOnly: boolean };
+
+/**
+ * "import type { Vec2 } from './math'" and "import('./math').Vec2" are type edges.
+ * Ordinary imports/exports are runtime edges unless explicitly marked type-only.
+ * Following files and resolving manifest names are the graph collector's job.
+ */
+function collectSourceModuleReferences(source: ts.SourceFile): SourceModuleReference[] {
+  const references: SourceModuleReference[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      if (node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
+        references.push({ specifier: node.moduleSpecifier.text, typeOnly: isTypeOnlyModuleDeclaration(node) });
+      }
+      return;
+    }
+    if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal)) {
+      references.push({ specifier: node.argument.literal.text, typeOnly: true });
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return references;
+}
+
+function isTypeOnlyModuleDeclaration(node: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
+  if (ts.isExportDeclaration(node)) return node.isTypeOnly;
+  const clause = node.importClause;
+  if (!clause) return false; // import "./side-effect"
+  if (clause.isTypeOnly) return true; // import type { Vec2 } from "./math"
+  if (clause.name) return false; // A default import is a runtime binding.
+  const bindings = clause.namedBindings;
+  if (!bindings || !ts.isNamedImports(bindings)) return false;
+  // import { type Vec2, type Point } from "./math"; an empty import stays runtime.
+  return bindings.elements.length > 0 && bindings.elements.every(element => element.isTypeOnly);
 }
 
 export function emitTypeScriptManifestModuleDeclaration(
@@ -204,6 +218,8 @@ export function emitTypeScriptManifestModuleDeclaration(
   entryFilePath: string,
   importName: string,
   projectDir: string,
+  sourceModuleNames?: ReadonlyMap<string, string>,
+  ownedSources?: ReadonlySet<string>,
 ): DeclarationEmitResult {
   const declarationOptions: tstl.CompilerOptions = {
     ...program.getCompilerOptions(),
@@ -244,8 +260,9 @@ export function emitTypeScriptManifestModuleDeclaration(
   }
 
   const moduleSpecifier = `${MANIFEST_CODE_MODULE_PREFIX}${importName}`;
-  const moduleNames = makeVirtualModuleNames(emitted, entryFilePath, moduleSpecifier, projectDir);
+  const moduleNames = sourceModuleNames ?? makeVirtualModuleNames(emitted, entryFilePath, moduleSpecifier, projectDir);
   const blocks = emitted
+    .filter(declaration => !ownedSources || ownedSources.has(canonicalTypeScriptPath(declaration.sourceFile.fileName)))
     .sort((left, right) => {
       const leftName = moduleNames.get(canonicalTypeScriptPath(left.sourceFile.fileName)) ?? "";
       const rightName = moduleNames.get(canonicalTypeScriptPath(right.sourceFile.fileName)) ?? "";
@@ -276,15 +293,7 @@ function makeVirtualModuleNames(
     if (key === entryKey) {
       name = moduleSpecifier;
     } else {
-      const relative = path.relative(projectDir, declaration.sourceFile.fileName).replace(/\\/g, "/");
-      const withoutExtension = relative.replace(/\.(?:d\.)?[cm]?tsx?$/i, "");
-      const encoded = withoutExtension.split("/").map((part) => {
-        if (!part || part === ".") {
-          return "_";
-        }
-        return part === ".." ? "__up" : encodeURIComponent(part);
-      }).join("/");
-      name = `${moduleSpecifier}/__types/${encoded}`;
+      name = getTypeScriptPrivateModuleName(moduleSpecifier, projectDir, declaration.sourceFile.fileName);
     }
     const existingOwner = owners.get(name);
     if (existingOwner && existingOwner !== key) {
@@ -296,6 +305,27 @@ function makeVirtualModuleNames(
     names.set(key, name);
   }
   return names;
+}
+
+// Remove .ts/.tsx, .mts/.cts, and their declaration spellings from module paths.
+const typeScriptSourceExtensionPattern = /\.(?:d\.)?[cm]?tsx?$/i;
+
+/**
+ * ("ticbuild-assets/main", "<project>/src/math.ts") ->
+ * "ticbuild-assets/main/__types/src/math". Files outside the project use "__up"
+ * path segments; spaces and other URL-sensitive characters are percent-encoded.
+ */
+export function getTypeScriptPrivateModuleName(moduleSpecifier: string, projectDir: string, fileName: string): string {
+  const relative = path.relative(projectDir, fileName).replace(/\\/g, "/");
+  const withoutExtension = relative.replace(typeScriptSourceExtensionPattern, "");
+  const encoded = withoutExtension.split("/").map(encodePrivateModulePathSegment).join("/");
+  return `${moduleSpecifier}/__types/${encoded}`;
+}
+
+function encodePrivateModulePathSegment(segment: string): string {
+  if (!segment || segment === ".") return "_";
+  if (segment === "..") return "__up";
+  return encodeURIComponent(segment);
 }
 
 function renderAmbientModule(

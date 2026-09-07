@@ -10,7 +10,7 @@ import { LuaPreprocessorSourceMap, mapPreprocessedOffset, SourceMapBuilder } fro
 import * as luaparse from "luaparse";
 import { hashTextSha1 } from "../utils/utils";
 import { IsImportReference } from "./importUtils";
-import { isLuaDocCommentText, isWhitespaceText, LuaDocInfo, parseLuaDocLines } from "../utils/lua/lua_doc";
+import { isLuaDocCommentText, isWhitespaceText, LuaCATSInfo, parseLuaDocLines } from "../utils/lua/LuaCATS";
 
 type Span = {
     start: number;
@@ -39,7 +39,7 @@ type SymbolInfo = {
     selectionRange: Span;
     scopeId: string;
     visibility: SymbolVisibility;
-    doc?: LuaDocInfo;
+    doc?: LuaCATSInfo;
     callable?: {
         isColonMethod: boolean;
         params: string[];
@@ -838,7 +838,7 @@ function addPreprocessorSymbols(
 type DocBlock = {
     start: number;
     end: number;
-    doc: LuaDocInfo;
+    doc: LuaCATSInfo;
 };
 
 function collectDocBlocks(code: string, comments: luaparse.Comment[]): DocBlock[] {
@@ -893,7 +893,7 @@ function collectDocBlocks(code: string, comments: luaparse.Comment[]): DocBlock[
     return blocks;
 }
 
-function findDocForSymbol(code: string, blocks: DocBlock[], symbolStart: number): LuaDocInfo | undefined {
+function findDocForSymbol(code: string, blocks: DocBlock[], symbolStart: number): LuaCATSInfo | undefined {
     for (let i = blocks.length - 1; i >= 0; i--) {
         const block = blocks[i];
         if (block.end > symbolStart) {
@@ -921,7 +921,7 @@ function isImmediateDocGap(text: string): boolean {
     return true;
 }
 
-function findDocForSymbolFromSource(code: string, symbolStart: number): LuaDocInfo | undefined {
+function findDocForSymbolFromSource(code: string, symbolStart: number): LuaCATSInfo | undefined {
     let lineStart = code.lastIndexOf("\n", Math.max(0, symbolStart - 1));
     if (lineStart < 0) {
         lineStart = 0;

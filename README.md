@@ -923,7 +923,7 @@ as TypeScript modules under `ticbuild-assets/<manifest import name>`.
 }
 ```
 
-and Lua globals with optional LuaDoc annotations:
+and Lua globals with optional LuaCATS annotations:
 
 ```lua
 ---@param value number
@@ -963,11 +963,9 @@ So if you have trouble with your IDE not understanding where a symbol can be imp
 try building once, and trying again. You shouldn't have to manually type the `import`
 statement.
 
-The generated Lua declaration currently includes direct globals (`function Name`,
-`Name = function` / `Name = value`). TypeScript asset declarations preserve
-their exported interfaces, aliases, overloads, generics, and JSDoc.
-Named and side-effect imports are supported; default and namespace imports
-aren't.
+The generated Lua declaration includes direct globals (`function Name`,
+`Name = function` / `Name = value`).
+LuaCATS parameter, return, and `@type` annotations are supported.
 
 Re-exports of manifest code assets are not supported. Since the
 runtime surface is Lua's global namespace, ticbuild rejects colliding globals
@@ -1842,7 +1840,7 @@ correct signatures and doc comments // enough info to produce the correct index.
   "range": { /*...*/ }, // full span of the declaration statement (for function, the whole body of the function)
   "selectionRange": { /*...*/ }, // just name, for definition UX
 
-  // parsed luadoc/emmylua docs
+  // parsed LuaCATS/emmylua docs
   "doc": {
     "name": "...", // probably should never use this; if it differs from the real name then more likely a bad copy/paste.
     "description": "...",
@@ -1856,7 +1854,7 @@ correct signatures and doc comments // enough info to produce the correct index.
   // "global"
   "visibility": "local",
 
-  // for LuaDoc / EmmyLua, this could point to its doc
+  // for LuaCATS/emmylua, this could point to its doc
   // without doc comments, basically everything is guesswork; it's probably
   // worth it in order to for example understand types. Without
   // doc comments we just kinda can't touch types.

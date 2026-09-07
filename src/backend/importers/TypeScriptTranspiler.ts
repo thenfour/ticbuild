@@ -1,43 +1,28 @@
 import * as path from "node:path";
 import * as ts from "typescript";
 import * as tstl from "typescript-to-lua";
-import { canonicalizePath, fileExists, toAbsoluteCanonicalPath } from "../../utils/fileSystem";
 import * as cons from "../../utils/console";
+import { assert } from "../../utils/errorHandling";
+import { canonicalizePath, toAbsoluteCanonicalPath } from "../../utils/fileSystem";
+import { profileSync, type TraceTrack } from "../../utils/traceProfiler";
 import { ExternalDependency, GeneratedLuaSource } from "../ImportedResourceTypes";
 import { TypeScriptImportConfig } from "../manifestTypes";
 import { getResolvedPreprocessorDefines } from "../preprocessorDefines";
+import { hasUnrestoredPreprocessorDirectives, restoreTypeScriptPreprocessorDirective } from "../luaPreprocessorSyntax";
 import { TicbuildProjectCore } from "../projectCore";
-import { createTypeScriptTranspilationOptions } from "./TypeScriptTranspilationOptions";
-import { createTypeScriptStaticLinker, getCanonicalTSPathKey, isTypeScriptImplementationFile } from "./TypeScriptStaticLinker";
-import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
-import { assert } from "../../utils/errorHandling";
 import { LuaPreprocessorSourceMap, SourceMapBuilder } from "../sourceMap";
 import { importSourceMapV3, KnownSourceFile } from "../sourceMapV3";
-import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
 import { createManifestCodeModuleCatalog } from "./ManifestCodeTypeScriptModules";
-import { LuaDefinitionBlock } from "./TypeScriptLuaDeclarations";
-import {
-  emitTypeScriptManifestModuleDeclaration,
-  getTypeScriptManifestDeclarationsPath,
-  TypeScriptManifestModuleDeclaration,
-} from "./TypeScriptManifestModules";
-import { profileSync, type TraceTrack } from "../../utils/traceProfiler";
-import {
-  getTypeScriptBuildConstantsPath,
-  renderTypeScriptBuildConstants,
-} from "./TypeScriptBuildConstants";
 import { createTypeScriptConstantPlugin } from "./TypeScriptConstantPlugin";
-import { getProjectTic80DeclarationsPath } from "../projectFiles";
+import { LuaDefinitionBlock } from "./TypeScriptLuaDeclarations";
+import { createTypeScriptProgram, TypeScriptDeclarationContext } from "./TypeScriptProgram";
+import { createTypeScriptStaticLinker, getCanonicalTSPathKey, isTypeScriptImplementationFile } from "./TypeScriptStaticLinker";
 
 export type TypeScriptTranspileResult = GeneratedLuaSource & {
   luaDefinitionBlocks: readonly LuaDefinitionBlock[];
-  typescriptManifestModuleDeclaration?: TypeScriptManifestModuleDeclaration;
 };
 
-const preprocessorMarker = "__TICBUILD_PREPROCESSOR_DIRECTIVE__";
 const tic80CallbackNames = new Set(["TIC", "BOOT", "BDR", "SCN", "OVR", "MENU"]);
-const preprocessorDirectivePattern =
-  /^([ \t]*)\/\/--#(pragma|define|undef|include|if|ifdef|ifndef|else|endif|warning|error|macro|endmacro|minify)\b(.*)$/;
 function formatDiagnostic(diagnostic: ts.Diagnostic, projectDir: string): string {
   const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
   if (!diagnostic.file || diagnostic.start === undefined) {
@@ -48,7 +33,7 @@ function formatDiagnostic(diagnostic: ts.Diagnostic, projectDir: string): string
   return `${relativePath}:${location.line + 1}:${location.character + 1} - ${message}`;
 }
 
-function formatDiagnostics(diagnostics: readonly ts.Diagnostic[], projectDir: string): string {
+export function formatDiagnostics(diagnostics: readonly ts.Diagnostic[], projectDir: string): string {
   const lines = diagnostics.map((diagnostic) => formatDiagnostic(diagnostic, projectDir));
   return `TypeScript transpilation failed:\n${lines.map((line) => `  ${line}`).join("\n")}`;
 }
@@ -63,51 +48,18 @@ export function transpileTypeScriptToLua(
   entrySource: string,
   typescriptConfig?: TypeScriptImportConfig,
   builtinsPathOverride?: string,
-  manifestImportName?: string,
   profileTrack?: TraceTrack,
+  declarations?: TypeScriptDeclarationContext,
 ): TypeScriptTranspileResult {
   const definedNames = new Set(Object.keys(getResolvedPreprocessorDefines(project)));
   const {
-    builtinsPath,
     configuredProject,
     generatedDeclarationRoots,
-    compilerHost,
     program,
     staticLinker,
   } = profileSync(profileTrack, "Create TypeScript program", { category: "TypeScript" }, () => {
-    const builtinsPath = canonicalizePath(
-      builtinsPathOverride ?? getProjectTic80DeclarationsPath(project.projectDir),
-    );
-    const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
-    const options = createTypeScriptTranspilationOptions(configuredProject.options);
-    const luaAssetDeclarationsPath = getLuaAssetDeclarationsPath(project.projectDir);
-    const typeScriptManifestDeclarationsPath = getTypeScriptManifestDeclarationsPath(project.projectDir);
-    const typeScriptBuildConstantsPath = getTypeScriptBuildConstantsPath(project.projectDir);
-    const generatedDeclarationRoots = [
-      luaAssetDeclarationsPath,
-      typeScriptManifestDeclarationsPath,
-      typeScriptBuildConstantsPath,
-    ].filter((filePath) => filePath === typeScriptBuildConstantsPath || fileExists(filePath));
-
-    // generated declarations are virtual generated sources for input to the transpiler
-    const virtualSources = new Map([[typeScriptBuildConstantsPath, renderTypeScriptBuildConstants(project)]]);
-
-    const compilerHost = createCompilerHost(
-      options,
-      entryFilePath,
-      entrySource,
-      virtualSources,
-    );
-    const program = ts.createProgram(
-      distinctTSPaths([
-        entryFilePath,
-        builtinsPath,
-        ...configuredProject.declarationRootPaths,
-        ...generatedDeclarationRoots,
-      ]),
-      options,
-      compilerHost,
-    );
+    const context = createTypeScriptProgram(project, entryFilePath, entrySource, typescriptConfig, builtinsPathOverride, declarations);
+    const { configuredProject, generatedDeclarationRoots, compilerHost, program } = context;
     const staticLinker = createTypeScriptStaticLinker(
       program,
       compilerHost,
@@ -117,8 +69,7 @@ export function transpileTypeScriptToLua(
       createManifestCodeModuleCatalog(project),
     );
     return {
-      builtinsPath,
-      configuredProject,
+        configuredProject,
       generatedDeclarationRoots,
       compilerHost,
       program,
@@ -162,34 +113,6 @@ export function transpileTypeScriptToLua(
     }
   });
 
-  const manifestDeclaration = profileSync(
-    profileTrack,
-    "Emit TypeScript declarations",
-    { category: "TypeScript" },
-    () => {
-      const manifestDeclaration = manifestImportName
-        ? emitTypeScriptManifestModuleDeclaration(
-          program,
-          compilerHost,
-          entryFilePath,
-          manifestImportName,
-          project.projectDir,
-        )
-        : undefined;
-      const declarationErrors = manifestDeclaration?.diagnostics.filter(
-        (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
-      ) ?? [];
-      if (declarationErrors.length > 0 || (manifestImportName && !manifestDeclaration?.declaration)) {
-        throw new Error(
-          declarationErrors.length > 0
-            ? formatDiagnostics(declarationErrors, project.projectDir)
-            : `TypeScript declaration emit failed for manifest import '${manifestImportName}'`,
-        );
-      }
-      return manifestDeclaration;
-    },
-  );
-
   const { restored, dependencies } = profileSync(
     profileTrack,
     "Link generated Lua",
@@ -220,7 +143,6 @@ export function transpileTypeScriptToLua(
     sourceMap: restored.sourceMap,
     dependencies,
     luaDefinitionBlocks: staticLinker.getLuaDefinitionBlocks(),
-    typescriptManifestModuleDeclaration: manifestDeclaration?.declaration,
   };
 }
 
@@ -246,79 +168,6 @@ function collectKnownSourceFiles(
 }
 
 // uses typescript path options
-function distinctTSPaths(paths: readonly string[]): string[] {
-  const seen = new Set<string>();
-  return paths.filter((filePath) => {
-    const key = getCanonicalTSPathKey(filePath);
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-function createCompilerHost(
-  options: tstl.CompilerOptions,
-  entryFilePath: string,
-  entrySource: string,
-  virtualSources: ReadonlyMap<string, string>,
-): ts.CompilerHost {
-  const host = ts.createCompilerHost(options);
-  const originalGetSourceFile = host.getSourceFile.bind(host);
-  const canonicalEntryPath = getCanonicalTSPathKey(entryFilePath);
-  const canonicalVirtualSources = new Map(
-    Array.from(virtualSources, ([fileName, source]) => [getCanonicalTSPathKey(fileName), { fileName, source }]),
-  );
-
-  host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
-    const isEntry = getCanonicalTSPathKey(fileName) === canonicalEntryPath;
-    if (isEntry) {
-      const transformed = preserveTicbuildDirectives(entrySource);
-      return ts.createSourceFile(fileName, transformed, languageVersion, true, ts.ScriptKind.TS);
-    }
-
-    const virtualSource = canonicalVirtualSources.get(getCanonicalTSPathKey(fileName));
-    if (virtualSource) {
-      return ts.createSourceFile(virtualSource.fileName, virtualSource.source, languageVersion, true, ts.ScriptKind.TS);
-    }
-
-    const original = originalGetSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);
-    if (!original || original.isDeclarationFile || !isTypeScriptImplementationFile(fileName)) {
-      return original;
-    }
-
-    const transformed = preserveTicbuildDirectives(original.text);
-    // todo: unify all these kinds of checks. search for ".tsx" to see what i mean.
-    const scriptKind = fileName.toLowerCase().endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-    return ts.createSourceFile(fileName, transformed, languageVersion, true, scriptKind);
-  };
-  return host;
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-function preserveTicbuildDirectives(source: string): string {
-  // convert preprocessor directive lines to a marker with the directive payload base64-encoded.
-  // e.g.,
-  // //--#include "foo.lua"
-  // becomes
-  // __TICBUILD_PREPROCESSOR_DIRECTIVE__("IyNpbmNsdWRlICJmb28ubHVhIg==");
-  return source
-    .split(/\r?\n/)
-    .map((line) => {
-      const match = line.match(preprocessorDirectivePattern);
-      if (!match) {
-        return line;
-      }
-      const [, indent, directive, remainder] = match;
-      const payload = Buffer.from(`#${directive}${remainder}`, "utf8").toString("base64");
-      return `${indent}${preprocessorMarker}("${payload}");`;
-    })
-    .join("\n");
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 function findDeclaredCallbacks(source: string, fileName: string): string[] {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const callbacks = new Set<string>();
@@ -378,26 +227,22 @@ function restoreTicbuildMarkers(
   luaSource: string,
   sourceMap: LuaPreprocessorSourceMap,
 ): { source: string; sourceMap: LuaPreprocessorSourceMap } {
-  const directiveCall = new RegExp(
-    `^([ \\t]*)${preprocessorMarker}\\("([A-Za-z0-9+/=]+)"\\)[ \\t]*$`,
-  );
   const lines = splitLinesWithOffsets(luaSource);
   const replacements: TextReplacement[] = [];
   for (const line of lines) {
-    const directiveMatch = line.text.match(directiveCall);
-    if (directiveMatch) {
-      const [, indent, payload] = directiveMatch;
+    const directive = restoreTypeScriptPreprocessorDirective(line.text);
+    if (directive !== undefined) {
       replacements.push({
         start: line.start,
         end: line.end,
-        text: `${indent}--${Buffer.from(payload, "base64").toString("utf8")}`,
+        text: directive,
       });
       continue;
     }
   }
   const restored = applyMappedReplacements(luaSource, sourceMap, replacements);
   assert(
-    !restored.source.includes(`${preprocessorMarker}(`),
+    !hasUnrestoredPreprocessorDirectives(restored.source),
     "TypeScript transpilation left an internal ticbuild marker in emitted Lua",
   );
   return restored;

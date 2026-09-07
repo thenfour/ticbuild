@@ -9,7 +9,7 @@ import { parseImportReference } from "./importUtils";
 import { kImportKind, PreprocessorValue } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { parseLua, parseLuaQuiet } from "../utils/lua/lua_processor";
-import { collectDocCommentAbove } from "../utils/lua/lua_doc";
+import { collectDocCommentAbove } from "../utils/lua/LuaCATS";
 import * as cons from "../utils/console";
 import { getErrorMessage } from "../utils/errorHandling";
 import {
@@ -31,6 +31,7 @@ import { GeneratedLuaSource } from "./ImportedResourceTypes";
 import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "./importSources";
 import { profileAsync, profileSync, TraceScope } from "../utils/traceProfiler";
 import { getResolvedPreprocessorDefines } from "./preprocessorDefines";
+import { extractTypeScriptDeclarationDirectives, parseLuaPreprocessorDirective } from "./luaPreprocessorSyntax";
 
 
 export type LuaPreprocessorValue = PreprocessorValue;
@@ -125,6 +126,17 @@ type ConditionFrame = {
   active: boolean;
   hasElse: boolean;
 };
+
+/** Resolve active includes from TypeScript directive comments before Lua exists. */
+export async function preprocessTypeScriptDeclarationDirectives(
+  project: TicbuildProjectCore,
+  source: string,
+  filePath: string,
+  options: LuaPreprocessorOptions,
+): Promise<void> {
+  const directives = extractTypeScriptDeclarationDirectives(source);
+  if (directives.trim()) await preprocessLuaCode(project, directives, filePath, options);
+}
 
 export async function preprocessLuaCode(
   project: TicbuildProjectCore,
@@ -285,7 +297,7 @@ async function processSource(
     const authoredFilePath = authoredLineLocation?.file ?? filePath;
     const authoredLineNumber = authoredLineLocation?.line ?? lineNumber;
 
-    const directiveMatch = line.match(/^\s*--#\s*(\w+)\s*(.*)$/);
+    const directiveMatch = parseLuaPreprocessorDirective(line);
     if (!directiveMatch) {
       if (isActive()) {
         if (pendingMinifyRename && !isIgnorableMinifyTargetLine(line)) {
@@ -316,8 +328,7 @@ async function processSource(
       continue;
     }
 
-    const directive = directiveMatch[1];
-    const rest = directiveMatch[2] || "";
+    const { name: directive, arguments: rest } = directiveMatch;
 
     switch (directive) {
       case "macro": {
@@ -1290,12 +1301,12 @@ function readMacroBody(
   for (let i = startIndex; i < lines.length; i++) {
     const line = lines[i];
     // check for --#endmacro
-    const match = line.match(/^\s*--#\s*(\w+)\s*(.*)$/);
+    const match = parseLuaPreprocessorDirective(line);
     if (match) {
-      if (match[1] === "endmacro") {
+      if (match.name === "endmacro") {
         return { body: bodyLines.join("\n"), endIndex: i };
       }
-      if (match[1] === "macro") {
+      if (match.name === "macro") {
         throw new Error(formatError(filePath, lineNumber, `Nested --#macro is not supported`));
       }
     }
