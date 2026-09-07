@@ -152,9 +152,46 @@ function disambiguateNumericConcat(code: string, transformMap: LuaTransformMapBu
   // Insert a space before concatenation when a numeric literal is immediately followed by `..`.
   // Examples: `15.."x"` -> `15 .."x"`, `.15.."x"` -> `.15 .."x"`
   const insertions: number[] = [];
-  const pattern = /(\d(?:\.\d+)?|\.\d+)\.\./g;
-  for (const match of code.matchAll(pattern)) {
-    insertions.push((match.index ?? 0) + match[1].length);
+  const pattern = /(\d(?:\.\d+)?|\.\d+)\.\./y;
+  const longBracket = /\[(=*)\[/y;
+  // This runs before parsing, since an adjacent numeric literal and concat
+  // operator can be invalid Lua. Skip strings and comments without changing
+  // their contents, including long brackets with arbitrary delimiter depth.
+  for (let index = 0; index < code.length;) {
+    const character = code[index];
+    if (character === '"' || character === "'") {
+      index++;
+      while (index < code.length && code[index] !== character) {
+        index += code[index] === "\\" ? 2 : 1;
+      }
+      index++;
+      continue;
+    }
+
+    const isComment = code.startsWith("--", index);
+    longBracket.lastIndex = isComment ? index + 2 : index;
+    const opening = longBracket.exec(code);
+    if (opening) {
+      const closing = `]${opening[1]}]`;
+      const end = code.indexOf(closing, longBracket.lastIndex);
+      index = end < 0 ? code.length : end + closing.length;
+      continue;
+    }
+    if (isComment) {
+      while (index < code.length && code[index] !== "\n" && code[index] !== "\r") {
+        index++;
+      }
+      continue;
+    }
+
+    pattern.lastIndex = index;
+    const match = pattern.exec(code);
+    if (match) {
+      insertions.push(index + match[1].length);
+      index = pattern.lastIndex;
+    } else {
+      index++;
+    }
   }
   let output = code;
   for (const offset of insertions.sort((a, b) => b - a)) {

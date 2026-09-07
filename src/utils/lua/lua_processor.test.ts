@@ -1,5 +1,5 @@
 import * as luaparse from "luaparse";
-import { processLua, OptimizationRuleOptions } from "./lua_processor";
+import { processLua, processLuaWithReport, OptimizationRuleOptions } from "./lua_processor";
 
 describe("Lua base language support", () => {
   it("should parse integer division operator without errors", () => {
@@ -24,6 +24,55 @@ describe("Lua base language support", () => {
     const output = processLua(input, options);
 
     expect(output).toContain("5//2");
+  });
+});
+
+describe("Lua numeric concatenation preparation", () => {
+  const options: OptimizationRuleOptions = {
+    stripComments: false,
+    maxIndentLevel: 1,
+    lineBehavior: "tight",
+    maxLineLength: 180,
+    renameLocalVariables: false,
+    aliasRepeatedExpressions: false,
+    aliasLiterals: false,
+    packLocalDeclarations: false,
+    simplifyExpressions: false,
+    removeUnusedLocals: false,
+    removeUnusedFunctions: false,
+    functionNamesToKeep: [],
+    renameTableFields: false,
+    tableEntryKeysToRename: [],
+    canonicalizeSyntax: false,
+    simplifyControlFlow: false,
+  };
+
+  function semanticAst(source: string): unknown {
+    const ast = luaparse.parse(source, { luaVersion: "5.3", comments: true, encodingMode: "x-user-defined" });
+    return JSON.parse(JSON.stringify(ast, (key, value) => key === "raw" ? undefined : value));
+  }
+
+  it.each([
+    String.raw`"0..1 and .15..1"`,
+    String.raw`'it\'s 0..1 and 2..3'`,
+    String.raw`"a \"quote\" 0..1 and \\ 2..3"`,
+    String.raw`[[0..1 "quotes" -- text 2..3]]`,
+    String.raw`[==[0..1 ]] ]=] 2..3]==]`,
+  ])("preserves string values while repairing adjacent code: %s", (literal) => {
+    const prefix = `local text=${literal}\n`;
+    const result = processLuaWithReport(
+      prefix + 'print(15..text,.15..text,1e3..text)', options, { parseFailure: "throw" },
+    );
+    expect(semanticAst(result.code)).toEqual(semanticAst(prefix + 'print(15 ..text,.15 ..text,1e3 ..text)'));
+  });
+
+  it.each([
+    '-- 0..1 "quotes" and [[ delimiters\r\n',
+    '--[[0..1\n"quotes" and 2..3]]\n',
+    '--[==[0..1 ]] ]=]\n2..3]==]\n',
+  ])("preserves comment text while repairing adjacent code: %s", (comment) => {
+    const result = processLuaWithReport(comment + 'print(15.."x")', options, { parseFailure: "throw" });
+    expect(semanticAst(result.code)).toEqual(semanticAst(comment + 'print(15 .."x")'));
   });
 });
 

@@ -25,6 +25,19 @@ function options(overrides: Partial<OptimizationRuleOptions> = {}): Optimization
 }
 
 describe("Lua optimizer source mapping", () => {
+  it("maps code after numeric concat repair without changing string contents", () => {
+    const input = 'local label="0..1"\nlocal rendered=15..label\nprint(rendered)';
+    const result = processLuaWithReport(input, options(), { parseFailure: "throw" });
+
+    expect(result.code).toContain('"0..1"');
+    expect(mapLuaTransformOffset(result.transformMap, result.code.indexOf("15"), "right")?.offset).toBe(
+      input.indexOf("15"),
+    );
+    expect(mapLuaTransformOffset(result.transformMap, result.code.indexOf("print"), "right")?.offset).toBe(
+      input.indexOf("print"),
+    );
+  });
+
   it.each(["pretty", "tight", "tight2", "single-line-blocks", "traceable"] as const)(
     "retains the authored name and position for a renamed local in %s mode",
     (lineBehavior) => {
