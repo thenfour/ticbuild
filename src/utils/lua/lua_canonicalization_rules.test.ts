@@ -68,6 +68,29 @@ describe("Lua redundant do scope removal", () => {
     )).toBe("before() work() after()");
   });
 
+  it.each([
+    "do return nil end return nil",
+    "do return end after()",
+    "function f() do return first(),second() end return fallback() end",
+    "function f() do do return 1 end end return 2 end",
+    "while ready do do return 1 end after() end",
+    "repeat do return 1 end after() until ready",
+  ])("retains a non-tail return block: %s", (source) => {
+    const output = minify(source, { canonicalizeSyntax: true, maxLineLength: 10_000 });
+    expect(output).toBe(source.replace("do do return 1 end end", "do return 1 end"));
+  });
+
+  it("still flattens a tail return and a block with only conditional returns", () => {
+    expect(minify(
+      "function f() do return 1 end end",
+      { canonicalizeSyntax: true },
+    )).toBe("function f() return 1 end");
+    expect(minify(
+      "do if ready then return 1 end end return 2",
+      { canonicalizeSyntax: true },
+    )).toBe("if ready then return 1 end return 2");
+  });
+
   it("retains a non-tail block whose locals would escape their scope", () => {
     expect(minify(
       "local x=1 do local x=2 print(x) end print(x)",
@@ -204,6 +227,34 @@ describe("Lua declaration packing with implicit nils", () => {
 });
 
 describe("Lua control-flow simplification rules", () => {
+  describe.each([false, true])("return blocks with canonicalizeSyntax=%s", (canonicalizeSyntax) => {
+    it.each([
+      "if true then return first(),second() end",
+      "if false then skipped() else return first(),second() end",
+      "if false then skipped() elseif true then return first(),second() end",
+      "if not (false) then return first(),second() end",
+    ])("keeps the selected return inside a block before a later return: %s", (branch) => {
+      expect(minify(
+        `function f() ${branch} return fallback() end`,
+        { simplifyExpressions: true, simplifyControlFlow: true, canonicalizeSyntax, maxLineLength: 10_000 },
+      )).toBe("function f() do return first(),second() end return fallback() end");
+    });
+
+    it("keeps a bare return inside a block before a later call", () => {
+      expect(minify(
+        "if true then return end after()",
+        { simplifyControlFlow: true, canonicalizeSyntax },
+      )).toBe("do return end after()");
+    });
+
+    it("can expose a return when the selected branch ends its parent block", () => {
+      expect(minify(
+        "function f() if true then return value() end end",
+        { simplifyControlFlow: true, canonicalizeSyntax },
+      )).toBe("function f() return value() end");
+    });
+  });
+
   it("inverts an exact negated if/else and swaps its branches", () => {
     expect(minify(
       "if not ready then a() else b() end",

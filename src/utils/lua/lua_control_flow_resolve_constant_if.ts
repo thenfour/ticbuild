@@ -4,10 +4,13 @@ import { rewriteLuaAst } from "./lua_ast_rewrite";
 import { isLuaScalarLiteral, isLuaTruthyLiteral } from "./lua_constant_literals";
 import type { LuaOptimizationRule } from "./lua_optimizer_types";
 
-function branchNeedsScope(body: readonly luaparse.Statement[]): boolean {
+function branchNeedsScope(body: readonly luaparse.Statement[], isLastStatement: boolean): boolean {
   return body.some((statement) =>
     statement.type === "LocalStatement" ||
     statement.type === "LabelStatement" ||
+    // Lua requires return to be the final statement in its block, even when
+    // subsequent statements would be unreachable.
+    (statement.type === "ReturnStatement" && !isLastStatement) ||
     (statement.type === "FunctionDeclaration" && statement.isLocal)
   );
 }
@@ -15,9 +18,10 @@ function branchNeedsScope(body: readonly luaparse.Statement[]): boolean {
 function selectedBranch(
   body: luaparse.Statement[],
   source: luaparse.IfStatement,
+  isLastStatement: boolean,
 ): luaparse.Statement[] {
   if (body.length === 0) return [];
-  if (!branchNeedsScope(body)) return body;
+  if (!branchNeedsScope(body, isLastStatement)) return body;
   const scoped = inheritLuaNodeOrigin<luaparse.DoStatement>(
     { type: "DoStatement", body },
     source,
@@ -25,7 +29,7 @@ function selectedBranch(
   return [scoped];
 }
 
-function resolveConstantIf(statement: luaparse.IfStatement): {
+function resolveConstantIf(statement: luaparse.IfStatement, isLastStatement: boolean): {
   statements: luaparse.Statement[];
   changed: boolean;
 } {
@@ -34,7 +38,7 @@ function resolveConstantIf(statement: luaparse.IfStatement): {
 
   for (const clause of statement.clauses) {
     if (clause.type === "ElseClause") {
-      if (clauses.length === 0) return { statements: selectedBranch(clause.body, statement), changed: true };
+      if (clauses.length === 0) return { statements: selectedBranch(clause.body, statement, isLastStatement), changed: true };
       clauses.push(clause);
       break;
     }
@@ -48,7 +52,7 @@ function resolveConstantIf(statement: luaparse.IfStatement): {
     if (!isLuaTruthyLiteral(clause.condition)) continue;
 
     if (clauses.length === 0) {
-      return { statements: selectedBranch(clause.body, statement), changed: true };
+      return { statements: selectedBranch(clause.body, statement, isLastStatement), changed: true };
     }
     clauses.push(inheritLuaNodeOrigin<luaparse.ElseClause>(
       { type: "ElseClause", body: clause.body },
@@ -59,7 +63,7 @@ function resolveConstantIf(statement: luaparse.IfStatement): {
 
   if (clauses.length === 0) return { statements: [], changed: true };
   if (clauses[0].type === "ElseClause") {
-    return { statements: selectedBranch(clauses[0].body, statement), changed: true };
+    return { statements: selectedBranch(clauses[0].body, statement, isLastStatement), changed: true };
   }
 
   if (clauses[0].type === "ElseifClause") {
@@ -85,9 +89,9 @@ export const resolveConstantIfRule: LuaOptimizationRule = {
   hooks: {
     reduce(context) {
       const changed = rewriteLuaAst(context.ast, {
-        statement(statement) {
+        statement(statement, rewriteContext) {
           return statement.type === "IfStatement"
-            ? resolveConstantIf(statement)
+            ? resolveConstantIf(statement, rewriteContext.index === rewriteContext.body.length - 1)
             : { statements: [statement], changed: false };
         },
       });

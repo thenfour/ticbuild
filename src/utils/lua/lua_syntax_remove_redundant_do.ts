@@ -24,6 +24,9 @@ function canRemoveDo(
   isLastStatement: boolean,
 ): boolean {
   if (containsJumpSyntax(statement)) return false;
+  // A direct return must remain last in its block. Nested returns keep their
+  // own enclosing blocks when this do is flattened.
+  if (!isLastStatement && statement.body.some((child) => child.type === "ReturnStatement")) return false;
   if (!hasDirectLocalDeclarations(statement.body)) return true;
 
   // A tail block cannot extend a local across any later statement. Repeat bodies

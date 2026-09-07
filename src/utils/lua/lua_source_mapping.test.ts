@@ -25,6 +25,25 @@ function options(overrides: Partial<OptimizationRuleOptions> = {}): Optimization
 }
 
 describe("Lua optimizer source mapping", () => {
+  it.each(["pretty", "tight", "tight2", "single-line-blocks", "traceable"] as const)(
+    "prints and maps Ribbon's folded return branch in %s mode",
+    (lineBehavior) => {
+      const input = "function f()\nif not (false) then\nreturn selected()\nend\nreturn fallback()\nend";
+      const result = processLuaWithReport(input, options({
+        simplifyExpressions: true,
+        simplifyControlFlow: true,
+        canonicalizeSyntax: true,
+        lineBehavior,
+      }), { parseFailure: "throw" });
+
+      for (const name of ["selected", "fallback"]) {
+        const offset = result.code.indexOf(name);
+        expect(offset).toBeGreaterThanOrEqual(0);
+        expect(mapLuaTransformOffset(result.transformMap, offset, "right")?.offset).toBe(input.indexOf(name));
+      }
+    },
+  );
+
   it("maps code after numeric concat repair without changing string contents", () => {
     const input = 'local label="0..1"\nlocal rendered=15..label\nprint(rendered)';
     const result = processLuaWithReport(input, options(), { parseFailure: "throw" });
