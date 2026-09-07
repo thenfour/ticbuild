@@ -185,9 +185,38 @@ describe("Lua tight2 printer", () => {
   it("removes optional whitespace between statements without changing tight", () => {
     const input = "f()\nlocal a=1\ng()";
 
-    expect(processLua(input, tight2Options)).toBe("f()local a=1g()\n");
+    expect(processLua(input, tight2Options)).toBe("f()local a=1 g()\n");
     expect(processLua(input, { ...tight2Options, lineBehavior: "tight" })).toBe(
       "f() local a=1 g()\n",
+    );
+  });
+
+  it.each([
+    ["return x == 7 and ready", "return x==7 and ready"],
+    ["return x == 1.5 and ready", "return x==1.5 and ready"],
+    ["return x == .5 and ready", "return x==.5 and ready"],
+    ["return x == 1e3 and ready", "return x==1e3 and ready"],
+    ["return x == 0x10 and ready", "return x==16 and ready"],
+    ["return x == 7 or ready", "return x==7 or ready"],
+    ["if x == 7 then f() end", "if x==7 then f()end"],
+    ["function f() return 7 end", "function f()return 7 end"],
+    ["for i=1,7 do f(i) end", "for i=1,7 do f(i)end"],
+    ["local x=7 apple()", "local x=7 apple()"],
+    ["local x=7 G()", "local x=7 G()"],
+    ["local x=7 _g()", "local x=7 _g()"],
+  ])("preserves numeric-to-name separators: %s", (input, expected) => {
+    // Check the text explicitly: luaparse also accepts the invalid Lua 5.3
+    // spelling "7and", so reparsing or comparing its tokens cannot catch this.
+    expect(processLua(input, tight2Options)).toBe(expected + "\n");
+  });
+
+  it("still removes spaces between numbers and punctuation", () => {
+    expect(processLua("return 7 + 2, f(3), {4}", tight2Options)).toBe("return 7+2,f(3),{4}\n");
+  });
+
+  it("allows a line break to separate a number from a keyword", () => {
+    expect(processLua("return 7 and ready", { ...tight2Options, maxLineLength: 8 })).toBe(
+      "return 7\nand\nready\n",
     );
   });
 
@@ -212,16 +241,16 @@ describe("Lua tight2 printer", () => {
       "local value=12345",
       "g(value)",
     ].join("\n");
-    const packed = processLua(input, { ...tight2Options, maxLineLength: 13 });
+    const packed = processLua(input, { ...tight2Options, maxLineLength: 14 });
 
     expect(packed).toBe([
       "f()",
       "-- keep this",
       "local value=",
-      "12345g(value)",
+      "12345 g(value)",
       "",
     ].join("\n"));
-    expect(packed.trimEnd().split("\n").every((line) => line.length <= 13)).toBe(true);
+    expect(packed.trimEnd().split("\n").every((line) => line.length <= 14)).toBe(true);
   });
 });
 

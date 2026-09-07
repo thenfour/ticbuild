@@ -223,7 +223,7 @@ describe("Lua constant expression folding", () => {
   it("does not drop evaluated operands from absorbing boolean operations", () => {
     const source = "return (probe()==1) and false,(probe()==1) or true";
     expect(minify(source, { simplifyExpressions: true })).toBe(
-      "return probe()==1and false,probe()==1or true",
+      "return probe()==1 and false,probe()==1 or true",
     );
   });
 });

@@ -17,7 +17,12 @@ export type PrintedLuaLexeme = PrintedLuaTokenLexeme | PrintedLuaCommentLexeme;
 
 // @types/luaparse omits this runtime export.
 export const LUA_TOKEN_TYPES = (luaparse as typeof luaparse & {
-  tokenTypes: { Identifier: number; StringLiteral: number };
+  tokenTypes: {
+    Identifier: number;
+    Keyword: number;
+    NumericLiteral: number;
+    StringLiteral: number;
+  };
 }).tokenTypes;
 
 function lexPrintedLua(
@@ -74,6 +79,18 @@ export function canJoinWithoutChangingLuaTokens(
   left: PrintedLuaTokenLexeme,
   right: PrintedLuaTokenLexeme,
 ): boolean {
+  // luaparse accepts "7and" as two tokens, but Lua 5.3's read_numeral
+  // consumes subsequent hex letters, even in decimal candidates -
+  // and rejects the resulting "7a".
+  // Conservatively separate every number from a following identifier/keyword,
+  // even for spellings Lua accepts: re-lexing with luaparse alone is not proof
+  // that the native Lua lexer preserves this boundary.
+  if (left.token.type === LUA_TOKEN_TYPES.NumericLiteral && (
+    right.token.type === LUA_TOKEN_TYPES.Identifier || right.token.type === LUA_TOKEN_TYPES.Keyword
+  )) {
+    return false;
+  }
+
   const joined = left.text + right.text;
   try {
     let createsComment = false;

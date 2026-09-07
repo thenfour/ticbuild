@@ -35,7 +35,7 @@ describe("binding-aware unused local removal", () => {
   it("distinguishes shadowed locals", () => {
     expect(minify("local x=1 do local x=2 print(x) end", {
       removeUnusedLocals: true,
-    })).toBe("do local x=2print(x)end");
+    })).toBe("do local x=2 print(x)end");
   });
 
   it("removes unused aligned slots with pure initializers", () => {
@@ -59,7 +59,7 @@ describe("binding-aware unused local removal", () => {
   it("keeps declarations targeted by later assignments", () => {
     expect(minify("local x=1 x=2", {
       removeUnusedLocals: true,
-    })).toBe("local x=1x=2");
+    })).toBe("local x=1 x=2");
   });
 });
 
@@ -91,7 +91,7 @@ describe("unused parameter removal", () => {
   it("keeps a parameter that is assigned even if it is never read", () => {
     expect(minify("local function f(a,b)b=1 return a end", {
       ruleOverrides: { "reduce.remove-unused-parameters": true },
-    })).toBe("local function f(a,b)b=1return a end");
+    })).toBe("local function f(a,b)b=1 return a end");
   });
 });
 
@@ -168,7 +168,7 @@ describe("exact local self-assignment removal", () => {
   it("removes a local assignment whose values are unchanged", () => {
     expect(minify("local a,b=1,2 a,b=a,b return a,b", {
       ruleOverrides: { "reduce.remove-self-assignments": true },
-    })).toBe("local a,b=1,2return a,b");
+    })).toBe("local a,b=1,2 return a,b");
   });
 
   it("does not remove a global self-assignment", () => {
@@ -180,7 +180,7 @@ describe("exact local self-assignment removal", () => {
   it("uses binding identity rather than identifier spelling", () => {
     expect(minify("local x=1 do local x=x x=x print(x)end", {
       ruleOverrides: { "reduce.remove-self-assignments": true },
-    })).toBe("local x=1do local x=x print(x)end");
+    })).toBe("local x=1 do local x=x print(x)end");
   });
 });
 
@@ -220,43 +220,43 @@ describe("straight-line dead store removal", () => {
   it("moves an adjacent overwrite into the retained declaration", () => {
     expect(minify("local x=1 x=2 return x", {
       ruleOverrides: { "reduce.remove-straight-line-dead-stores": true },
-    })).toBe("local x=2return x");
+    })).toBe("local x=2 return x");
   });
 
   it("removes an overwritten single-local assignment", () => {
     expect(minify("local x x=1 x=2 return x", {
       ruleOverrides: { "reduce.remove-straight-line-dead-stores": true },
-    })).toBe("local x x=2return x");
+    })).toBe("local x x=2 return x");
   });
 
   it("does not discard an effectful stored expression", () => {
     expect(minify("local x=make() x=2 return x", {
       ruleOverrides: { "reduce.remove-straight-line-dead-stores": true },
-    })).toBe("local x=make()x=2return x");
+    })).toBe("local x=make()x=2 return x");
   });
 
   it("does not move an overwrite past an intervening statement", () => {
     expect(minify("local x=1 observe() x=2 return x", {
       ruleOverrides: { "reduce.remove-straight-line-dead-stores": true },
-    })).toBe("local x=1observe()x=2return x");
+    })).toBe("local x=1 observe()x=2 return x");
   });
 
   it("keeps a value read by the overwriting expression", () => {
     expect(minify("local x=1 x=x+1 return x", {
       ruleOverrides: { "reduce.remove-straight-line-dead-stores": true },
-    })).toBe("local x=1x=x+1return x");
+    })).toBe("local x=1 x=x+1 return x");
   });
 
   it("keeps the old value before a potentially effectful overwrite", () => {
     expect(minify("local x=1 x=next_value() return x", {
       ruleOverrides: { "reduce.remove-straight-line-dead-stores": true },
-    })).toBe("local x=1x=next_value()return x");
+    })).toBe("local x=1 x=next_value()return x");
   });
 
   it("does not move a capturing closure into its binding's initializer", () => {
     expect(minify("local x=1 x=function()return x end return x", {
       ruleOverrides: { "reduce.remove-straight-line-dead-stores": true },
-    })).toBe("local x=1x=function()return x end return x");
+    })).toBe("local x=1 x=function()return x end return x");
   });
 });
 
