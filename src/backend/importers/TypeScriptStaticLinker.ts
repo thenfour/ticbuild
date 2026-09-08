@@ -593,8 +593,9 @@ function lowerStaticModule(
         continue;
       }
       moduleTableNames.add(requiredModule.identifier.text);
-      if (requiredModule.identifier.symbolId !== undefined) {
-        moduleTableSymbols.add(requiredModule.identifier.symbolId);
+      const symbolId = getUniqueSymbolId(requiredModule.identifier);
+      if (symbolId !== undefined) {
+        moduleTableSymbols.add(symbolId);
       }
     }
   });
@@ -634,8 +635,9 @@ function lowerStaticModule(
         callbackNames.has(statement.left[0].text)
       ) {
         const local = statement.left[0];
-        if (local.symbolId !== undefined) {
-          globalAliases.set(local.symbolId, local.text);
+        const symbolId = getUniqueSymbolId(local);
+        if (symbolId !== undefined) {
+          globalAliases.set(symbolId, local.text);
         }
         const promoted = tstl.createAssignmentStatement(local, statement.right[0]);
         copyStatementMetadata(statement, promoted);
@@ -651,6 +653,13 @@ function lowerStaticModule(
     rewriteLuaNode(statement, moduleTableNames, moduleTableSymbols, globalAliases),
   );
   return file;
+}
+
+// TSTL uses a shared negative symbol marker for generated temporaries. Their
+// individual names carry identity; treating the marker as an alias renames every
+// temporary in the module. Keep those declarations and rewrite only their values.
+function getUniqueSymbolId(identifier: tstl.Identifier): tstl.SymbolId | undefined {
+  return identifier.symbolId !== undefined && identifier.symbolId >= 0 ? identifier.symbolId : undefined;
 }
 
 // Visits every statement array in a Lua file, including blocks and function
@@ -755,7 +764,8 @@ function getStaticAliasDeclaration(
   if (
     !tstl.isVariableDeclarationStatement(statement) ||
     statement.left.length !== 1 ||
-    statement.right?.length !== 1
+    statement.right?.length !== 1 ||
+    getUniqueSymbolId(statement.left[0]) === undefined
   ) {
     return undefined;
   }
@@ -771,7 +781,8 @@ function getExportAliasDeclaration(
   if (
     !tstl.isVariableDeclarationStatement(statement) ||
     statement.left.length !== 1 ||
-    statement.right?.length !== 1
+    statement.right?.length !== 1 ||
+    getUniqueSymbolId(statement.left[0]) === undefined
   ) {
     return undefined;
   }
@@ -814,9 +825,10 @@ function isModuleTableIdentifier(
   moduleTableNames: ReadonlySet<string>,
   moduleTableSymbols: ReadonlySet<tstl.SymbolId>,
 ): boolean {
+  const symbolId = getUniqueSymbolId(identifier);
   return (
     moduleTableNames.has(identifier.text) ||
-    (identifier.symbolId !== undefined && moduleTableSymbols.has(identifier.symbolId))
+    (symbolId !== undefined && moduleTableSymbols.has(symbolId))
   );
 }
 
@@ -836,8 +848,9 @@ function rewriteLuaNode<T extends tstl.Node>(
       return createMappedGlobalIdentifier(globalName, node) as unknown as T;
     }
   }
-  if (tstl.isIdentifier(node) && node.symbolId !== undefined) {
-    const globalName = globalAliases.get(node.symbolId);
+  if (tstl.isIdentifier(node)) {
+    const symbolId = getUniqueSymbolId(node);
+    const globalName = symbolId === undefined ? undefined : globalAliases.get(symbolId);
     if (globalName !== undefined) {
       return createMappedGlobalIdentifier(globalName, node, node.originalName ?? node.text) as unknown as T;
     }

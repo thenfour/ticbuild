@@ -1363,6 +1363,42 @@ describe("TypeScriptCodeResource", () => {
     }
   });
 
+  it("preserves temporary captures when calling an exported factory with optional arguments", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-export-temporaries-"));
+    fs.writeFileSync(
+      path.join(projectDir, "main.ts"),
+      [
+        "export function createObject(options: { position: { x: number }; visible: boolean }) { return options; }",
+        "export function evaluate(node: { position: { x: number }; params?: { visible: boolean } }) {",
+        "  node.position.x += 1;",
+        "  return createObject({ position: node.position, visible: node.params?.visible !== false });",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const project = createProject(projectDir, [
+      { name: "main", path: "main.ts", kind: "TypeScriptCode" },
+    ]);
+
+    try {
+      const resources = await loadAllImports(project);
+      const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
+      // Capturing the exported callee preserves evaluation order. Generated
+      // temporaries share a TSTL symbol marker, but are distinct local bindings.
+      const calleeCapture = source.match(/local (\w+) = createObject\r?\n/);
+      expect(calleeCapture).not.toBeNull();
+      expect(source).toContain(`return ${calleeCapture![1]}({`);
+      expect(source).not.toMatch(/local createObject\b/);
+      const propertyCapture = source.match(/local (\w+), (\w+) = node\.position, "x"/);
+      expect(propertyCapture).not.toBeNull();
+      expect(propertyCapture![1]).not.toBe(propertyCapture![2]);
+      expect(source).not.toMatch(/\b____exports\b/);
+      expect(() => parseLua(source)).not.toThrow();
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps TypeScriptToLua helpers self-contained without runtime module loading", async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "ticbuild-typescript-class-link-"));
     fs.writeFileSync(
