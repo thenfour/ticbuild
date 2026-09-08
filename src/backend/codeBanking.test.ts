@@ -6,6 +6,7 @@ import { TicbuildProject } from "./project";
 import { parseTic80Cart, getCombinedCodeBytes } from "../utils/tic80/cartLoader";
 import { AssembleTic80Cart } from "../utils/tic80/cartWriter";
 import { kTic80CartChunkTypes } from "../utils/tic80/tic80";
+import { createBuildReporter } from "../frontend/buildReporter";
 
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -83,7 +84,7 @@ describe("Code chunk banking", () => {
 
     try {
       const project = TicbuildProject.loadFromManifest({ manifestPath });
-      await project.loadImports();
+      await project.loadImports(createBuildReporter("human"));
       const output = await project.assembleOutput();
 
       const codeChunks = output.chunks.filter((chunk) => chunk.chunkType === "CODE");
@@ -120,7 +121,7 @@ describe("Code chunk banking", () => {
 
     try {
       const project = TicbuildProject.loadFromManifest({ manifestPath });
-      await project.loadImports();
+      await project.loadImports(createBuildReporter("human"));
       const output = await project.assembleOutput();
 
       const codeChunks = output.chunks.filter((chunk) => chunk.chunkType === "CODE");
@@ -149,7 +150,7 @@ describe("Code chunk banking", () => {
 
     try {
       const project = TicbuildProject.loadFromManifest({ manifestPath });
-      await project.loadImports();
+      await project.loadImports(createBuildReporter("human"));
 
       await expect(project.assembleOutput()).rejects.toThrow(
         "Enable assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build",
@@ -172,7 +173,7 @@ describe("Code chunk banking", () => {
 
     try {
       const project = TicbuildProject.loadFromManifest({ manifestPath });
-      await project.loadImports();
+      await project.loadImports(createBuildReporter("human"));
       const output = await project.assembleOutput();
 
       const compressedChunks = output.chunks.filter((chunk) => chunk.chunkType === "CODE_COMPRESSED");
@@ -203,7 +204,7 @@ describe("Code chunk banking", () => {
 
     try {
       const project = TicbuildProject.loadFromManifest({ manifestPath });
-      await project.loadImports();
+      await project.loadImports(createBuildReporter("human"));
 
       await expect(project.assembleOutput()).rejects.toThrow(
         "Enable assembly.blocks[].code.multiBankCompressedCode for the private TIC-80 build",

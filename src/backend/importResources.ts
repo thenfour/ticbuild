@@ -1,5 +1,6 @@
 // importing -> ImportedResource -> assembly
 
+import { BuildReporter } from "../frontend/buildReporter";
 import { assert } from "../utils/errorHandling";
 import { profileAsync, TraceProfiler, TraceScope, TraceTrack } from "../utils/traceProfiler";
 import { ImportedResourceBase, ResourceManager } from "./ImportedResourceTypes";
@@ -17,6 +18,7 @@ import { canonicalizeAssetImport, TicbuildProjectCore } from "./projectCore";
 
 export async function loadAllImports(
   project: TicbuildProjectCore,
+  reporter: BuildReporter,
   profiler?: TraceProfiler,
   parentScope?: TraceScope,
 ): Promise<ResourceManager> {
@@ -138,7 +140,7 @@ export async function loadAllImports(
   const hasTypeScriptDefinitions = project.manifest.imports.some(importDef => importDef.kind === kImportKind.key.TypeScriptCode);
   if (hasTypeScriptDefinitions) {
     await profileAsync(parentScope, "Analyze code declarations", { category: "TypeScript declarations" },
-      scope => declarationAnalysis.prepare(assemblyRootNames, scope));
+      scope => declarationAnalysis.prepare(assemblyRootNames, reporter, scope));
   }
 
   const initializeCodeRoot = async (resource: CodeResource) => {

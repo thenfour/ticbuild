@@ -16,6 +16,7 @@ import { getTypeScriptBuildConstantsPath } from "./TypeScriptBuildConstants";
 import { TypeScriptCodeResource } from "./TypeScriptCodeImporter";
 import { getTypeScriptLuaDeclarationsPath } from "./TypeScriptLuaDeclarations";
 import { getTypeScriptManifestDeclarationsPath } from "./TypeScriptManifestModules";
+import { createBuildReporter } from "../../frontend/buildReporter";
 
 function createProject(
   projectDir: string,
@@ -107,12 +108,13 @@ describe("declaration analysis", () => {
       ].join("\n"),
       "geometry.lua": "---@param value ticbuild.main.Vec2\n---@return ticbuild.main.Vec2\nfunction Move(value) return value end",
     }, imports, async (project, dir) => {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('Move(value: import("ticbuild-assets/main").Vec2): import("ticbuild-assets/main").Vec2');
       expect(fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8")).toContain("roundtrip(value: Vec2): Vec2");
       expect(getTypeScriptResource(resources, "main").getCodeArtifacts(project).preprocessedSource).toContain("function Move");
       fs.writeFileSync(path.join(dir, "main.ts"), 'import { Move } from "ticbuild-assets/geometry"; export interface Vec2 { x: number; y: number; } export function TIC() { Move("wrong"); }');
-      await expect(loadAllImports(project)).rejects.toThrow("Argument of type 'string' is not assignable to parameter of type 'Vec2'");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Argument of type 'string' is not assignable to parameter of type 'Vec2'");
     });
   });
 
@@ -134,11 +136,12 @@ describe("declaration analysis", () => {
         '---@field next? Vec2', 'local Vec2 = {}',
       ].join("\n"),
     }, [...imports, { name: "other", path: "other.lua", kind: "LuaCode" }], async (project, dir) => {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('Position: import("ticbuild-assets/geometry").Vec2');
       expect(resources.getDependencyList().map(dependency => dependency.path)).toContain(path.join(dir, "types.lua"));
       fs.writeFileSync(path.join(dir, "main.ts"), 'import { Move } from "ticbuild-assets/geometry"; export function TIC() { Move({ x: 1, y: "wrong" }); }');
-      await expect(loadAllImports(project)).rejects.toThrow("Type 'string' is not assignable to type 'number'");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Type 'string' is not assignable to type 'number'");
     });
   });
 
@@ -152,14 +155,15 @@ describe("declaration analysis", () => {
       ".ticbuild/declarations/typescript-assets.d.ts": 'import "ticbuild-assets/unused"; interface Vec2 { stale: string; }',
       ".ticbuild/declarations/lua-assets.d.ts": 'declare module "ticbuild-assets/geometry" { export function Move(value: string): void; }',
     }, [{ ...imports[0], typescript: { tsconfig: "tsconfig.json" } }, imports[1],
-      { name: "unused", path: "unused.ts", kind: "TypeScriptCode" }], async (project, dir) => {
-      expect((await loadAllImports(project)).items.has("unused")).toBe(false);
+    { name: "unused", path: "unused.ts", kind: "TypeScriptCode" }], async (project, dir) => {
+      const reporter = createBuildReporter("human");
+      expect((await loadAllImports(project, reporter)).items.has("unused")).toBe(false);
       const first = fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8");
       expect(first).toContain("(Vec2) | (undefined)");
-      await loadAllImports(project);
+      await loadAllImports(project, reporter);
       expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toBe(first);
       fs.writeFileSync(path.join(dir, "globals.d.ts"), "interface Vec2 { x: string; }");
-      await expect(loadAllImports(project)).rejects.toThrow("Type 'number' is not assignable to type 'string'");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Type 'number' is not assignable to type 'string'");
     });
   });
 
@@ -168,7 +172,8 @@ describe("declaration analysis", () => {
       "main.ts": 'import type { Config } from "ticbuild-assets/types"; export interface State { config?: Config; } export function TIC() {}',
       "types.ts": 'import type { State } from "ticbuild-assets/main"; export interface Config { state?: State; } export const TypeRuntimeMarker = "type-runtime-marker";',
     }, [imports[0], { name: "types", path: "types.ts", kind: "TypeScriptCode" }], async (project, dir) => {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       expect(getTypeScriptResource(resources, "types").hasGeneratedLuaSource()).toBe(false);
       expect(fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8")).toContain("interface Config");
       expect(fs.readFileSync(getTypeScriptLuaDeclarationsPath(dir), "utf-8")).not.toContain("TypeRuntimeMarker");
@@ -181,7 +186,8 @@ describe("declaration analysis", () => {
       "main.ts": 'import type { Config } from "ticbuild-assets/types"; export function TIC() {}',
       "types.ts": 'export interface Config { value: MissingType; }',
     }, [imports[0], { name: "types", path: "types.ts", kind: "TypeScriptCode" }], async project => {
-      await expect(loadAllImports(project)).rejects.toThrow("Cannot find name 'MissingType'");
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Cannot find name 'MissingType'");
     });
   });
 
@@ -191,7 +197,8 @@ describe("declaration analysis", () => {
       "helper.ts": '//--#include "import:models"\nexport const HELPER = 1;',
       "models.ts": 'export const MODEL_VERSION = 1;',
     }, [imports[0], { name: "models", path: "models.ts", kind: "TypeScriptCode" }], async (project, dir) => {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       expect(fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8")).toContain('declare module "ticbuild-assets/models"');
       expect(getTypeScriptResource(resources, "main").getCodeArtifacts(project).preprocessedSource).toContain("MODEL_VERSION = 1");
     });
@@ -203,7 +210,8 @@ describe("declaration analysis", () => {
       "geometry.lua": '--#include "import:models"\n---@param value ticbuild.models.Vec2\n---@return ticbuild.models.Vec2\nfunction Move(value) return value end',
       "models.ts": 'export interface Vec2 { x: number; } export const MODEL_VERSION = 1;',
     }, [...imports, { name: "models", path: "models.ts", kind: "TypeScriptCode" }], async (project, dir) => {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('import("ticbuild-assets/models").Vec2');
       expect(getTypeScriptResource(resources, "main").getCodeArtifacts(project).preprocessedSource).toContain("MODEL_VERSION = 1");
     });
@@ -216,8 +224,9 @@ describe("declaration analysis", () => {
       "left.ts": 'export interface Vec2 { x: number; }',
       "right.ts": 'export interface Vec2 { y: number; }',
     }, [...imports, { name: "left", path: "left.ts", kind: "TypeScriptCode" },
-      { name: "right", path: "right.ts", kind: "TypeScriptCode" }], async project => {
-      await expect(loadAllImports(project)).rejects.toThrow("Ambiguous LuaCATS type 'Vec2'");
+    { name: "right", path: "right.ts", kind: "TypeScriptCode" }], async project => {
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Ambiguous LuaCATS type 'Vec2'");
     });
   });
 
@@ -231,7 +240,8 @@ describe("declaration analysis", () => {
       ].join("\n"),
       "geometry.lua": '---@param value ticbuild.main.Vec2\n---@return ticbuild.main.Vec2\nfunction Move(value) return value end',
     }, imports, async (project, dir) => {
-      await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      await loadAllImports(project, reporter);
       expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('import("ticbuild-assets/main").__ticbuild_type_Vec2');
       expect(fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8")).toContain("export type __ticbuild_type_Vec2 = Vec2");
     });
@@ -248,10 +258,11 @@ describe("declaration analysis", () => {
       "first.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { model: ["number.ts"] }, types: [] } }),
       "second.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { model: ["string.ts"] }, types: [] } }),
     }, [{ ...imports[0], typescript: { tsconfig: "first.json" } }, imports[1],
-      { name: "second", path: "second.ts", kind: "TypeScriptCode", typescript: { tsconfig: "second.json" } },
-      { name: "labels", path: "labels.lua", kind: "LuaCode" }], async (project, dir) => {
+    { name: "second", path: "second.ts", kind: "TypeScriptCode", typescript: { tsconfig: "second.json" } },
+    { name: "labels", path: "labels.lua", kind: "LuaCode" }], async (project, dir) => {
       project.manifest.assembly.blocks.push({ asset: "second" });
-      await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      await loadAllImports(project, reporter);
       const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(dir), "utf-8");
       expect(declarations).toContain('ticbuild-assets/main/__types/number');
       expect(declarations).toContain('ticbuild-assets/second/__types/string');
@@ -264,7 +275,8 @@ describe("declaration analysis", () => {
       "geometry.lua": '---@class Vec2\n---@field x number\nlocal Vec2 = {}',
       "other.lua": '---@class Vec2\n---@field x string\nlocal Vec2 = {}',
     }, [...imports, { name: "other", path: "other.lua", kind: "LuaCode" }], async project => {
-      await expect(loadAllImports(project)).rejects.toThrow("Conflicting Lua type 'Vec2'");
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Conflicting Lua type 'Vec2'");
     });
   });
 
@@ -280,21 +292,28 @@ describe("declaration analysis", () => {
         '---@type Mapper', 'function MapVector(value) return value.x end',
       ].join("\n"),
     }, imports, async (project, dir) => {
-      await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      await loadAllImports(project, reporter);
       expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('Unbox<T>(box: import("ticbuild-assets/geometry").Box<T>): T');
       expect(fs.readFileSync(getLuaAssetDeclarationsPath(dir), "utf-8")).toContain('export const MapVector: import("ticbuild-assets/geometry").Mapper');
       fs.writeFileSync(path.join(dir, "main.ts"), 'import { Unbox } from "ticbuild-assets/geometry"; export interface Vec2 { x: number; } export function TIC() { const value: number = Unbox({ value: "wrong" }); }');
-      await expect(loadAllImports(project)).rejects.toThrow("Type 'string' is not assignable to type 'number'");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Type 'string' is not assignable to type 'number'");
     });
   });
 
   it("warns on unresolved named types while leaving unannotated values permissive", async () => {
-    const warning = jest.spyOn(cons, "warning").mockImplementation(() => {});
+    const warning = jest.spyOn(cons, "warning").mockImplementation(() => { });
     try {
-      await withDeclarationProject({
-        "main.ts": 'import { Move, Untyped } from "ticbuild-assets/geometry"; export function TIC() { Move(1); Untyped(2); }',
-        "geometry.lua": '---@param value MissingType\nfunction Move(value) end\nfunction Untyped(value) end',
-      }, imports, async project => { await loadAllImports(project); });
+      const reporter = createBuildReporter("human");
+
+      await withDeclarationProject(
+        {
+          "main.ts": 'import { Move, Untyped } from "ticbuild-assets/geometry"; export function TIC() { Move(1); Untyped(2); }',
+          "geometry.lua": '---@param value MissingType\nfunction Move(value) end\nfunction Untyped(value) end',
+        },
+        imports,
+        async project => { await loadAllImports(project, reporter); }
+      );
       expect(warning.mock.calls.filter(([message]) => String(message).includes("Unresolved LuaCATS type"))).toHaveLength(1);
       expect(warning).toHaveBeenCalledWith(expect.stringContaining("MissingType"));
     } finally { warning.mockRestore(); }
@@ -348,7 +367,8 @@ describe("TypeScriptCodeResource", () => {
     );
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const source = resource.getCodeArtifacts(project).inputSource;
       const declarations = fs.readFileSync(getTypeScriptBuildConstantsPath(projectDir), "utf-8");
@@ -421,7 +441,8 @@ describe("TypeScriptCodeResource", () => {
     );
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const source = resource.getCodeArtifacts(project).inputSource;
       const declarations = fs.readFileSync(getTypeScriptBuildConstantsPath(projectDir), "utf-8");
@@ -464,7 +485,8 @@ describe("TypeScriptCodeResource", () => {
     try {
       let thrown: unknown;
       try {
-        await loadAllImports(project);
+        const reporter = createBuildReporter("human");
+        await loadAllImports(project, reporter);
       } catch (error) {
         thrown = error;
       }
@@ -506,7 +528,8 @@ describe("TypeScriptCodeResource", () => {
     );
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
 
       expect(source).toContain("trace(true)");
@@ -543,7 +566,8 @@ describe("TypeScriptCodeResource", () => {
     );
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
 
       expect(source).toContain("print(debugString())");
@@ -580,7 +604,8 @@ describe("TypeScriptCodeResource", () => {
     const project = createProject(projectDir, [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
 
       expect(source).toContain("function runtimeValue()");
@@ -620,7 +645,8 @@ describe("TypeScriptCodeResource", () => {
     );
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
       const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(projectDir), "utf-8");
 
@@ -656,7 +682,8 @@ describe("TypeScriptCodeResource", () => {
     try {
       let thrown: unknown;
       try {
-        await loadAllImports(project);
+        const reporter = createBuildReporter("human");
+        await loadAllImports(project, reporter);
       } catch (error) {
         thrown = error;
       }
@@ -686,7 +713,8 @@ describe("TypeScriptCodeResource", () => {
     const project = createProject(projectDir, [{ name: "main", path: "main.ts", kind: "TypeScriptCode" }]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(/Argument of type 'number' is not assignable/);
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow(/Argument of type 'number' is not assignable/);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -746,7 +774,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const declarationPath = getTypeScriptLuaDeclarationsPath(projectDir);
       const declarations = fs.readFileSync(declarationPath, "utf-8");
@@ -791,7 +820,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const declarations = fs.readFileSync(getTypeScriptLuaDeclarationsPath(projectDir), "utf-8");
       expect(declarations).toContain("function fromLeft(value) end");
       expect(resources.items.has("right")).toBe(false);
@@ -831,7 +861,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const main = getTypeScriptResource(resources, "main");
       const artifacts = main.getCodeArtifacts(project);
       const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(projectDir), "utf-8");
@@ -871,7 +902,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow(
         /main\.ts:2:\d+ - Argument of type 'string' is not assignable to parameter of type 'number'/,
       );
     } finally {
@@ -914,7 +946,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
       const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(projectDir), "utf-8");
 
@@ -966,7 +999,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      await loadAllImports(project, reporter);
       const declarations = fs.readFileSync(getTypeScriptManifestDeclarationsPath(projectDir), "utf-8");
 
       expect(declarations).toContain('declare module "ticbuild-assets/helpers"');
@@ -1002,7 +1036,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
 
       expect(artifacts.inputSource).not.toContain("import:types");
@@ -1043,7 +1078,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const main = getTypeScriptResource(resources, "main");
       const artifacts = main.getCodeArtifacts(project);
 
@@ -1073,7 +1109,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow(
         "TypeScript manifest module cycles are not supported: left -> right -> left",
       );
     } finally {
@@ -1095,7 +1132,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow(
         "manifest code asset 'right' and left.ts both declare Lua global 'SharedGlobal'",
       );
     } finally {
@@ -1138,7 +1176,8 @@ describe("TypeScriptCodeResource", () => {
     );
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const artifacts = resource.getCodeArtifacts(project);
 
@@ -1205,7 +1244,8 @@ describe("TypeScriptCodeResource", () => {
     };
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
       const operatorOffset = artifacts.minifiedSource.indexOf("\n+\n") + 1;
       const mapped = mapPreprocessedOffsetToLineColumn(
@@ -1245,7 +1285,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
       expect(artifacts.inputSource).toContain("local privateScale = 2");
       expect(artifacts.inputSource).toContain("function scale(value)");
@@ -1285,7 +1326,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
       expect(source.match(/sharedMarker = "shared once"/g)).toHaveLength(1);
       expect(source.indexOf('sharedMarker = "shared once"')).toBeLessThan(source.indexOf("left ="));
@@ -1317,7 +1359,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
       expect(artifacts.inputSource).toContain("return LuaFract(value)");
       expect(artifacts.inputSource).not.toContain("require(");
@@ -1352,7 +1395,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
       expect(source).toContain("function utility()");
       expect(source).toContain("renamedUtility = utility");
@@ -1381,7 +1425,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
       // Capturing the exported callee preserves evaluation order. Generated
       // temporaries share a TSTL symbol marker, but are distinct local bindings.
@@ -1425,7 +1470,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
       expect(source).toContain("Counter = __TS__Class()");
       expect(source).toContain("__TS__New(Counter)");
@@ -1451,7 +1497,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow(
         /exported Lua global 'collide'.*left\.ts.*right\.ts/,
       );
     } finally {
@@ -1481,7 +1528,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(/module cycles.*a\.ts -> b\.ts -> a\.ts/);
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow(/module cycles.*a\.ts -> b\.ts -> a\.ts/);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -1501,7 +1549,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(expectedMessage);
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow(expectedMessage);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -1523,7 +1572,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const artifacts = resource.getCodeArtifacts(project);
       expect(resource.getPreprocessResult().minifyAllowedGlobalNames).toContain("VeryLongTypeScriptFunction");
@@ -1558,7 +1608,8 @@ describe("TypeScriptCodeResource", () => {
     };
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const artifacts = resource.getCodeArtifacts(project);
       expect(resource.getPreprocessResult().minifyGlobalNamesToKeep).toContain("PublicTypeScriptApi");
@@ -1593,7 +1644,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
       const includedOffset = artifacts.preprocessedSource.indexOf('trace("nested Lua include")');
       expect(includedOffset).toBeGreaterThanOrEqual(0);
@@ -1633,7 +1685,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
       const leftLocation = mapPreprocessedOffsetToLineColumn(
         artifacts.preprocessedSourceMap,
@@ -1664,7 +1717,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const artifacts = resource.getCodeArtifacts(project);
 
@@ -1697,7 +1751,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       expect(resource.getPreprocessResult().code).toContain('local fromLua = "included"');
       expect(resource.getDependencyList().map((dependency) => dependency.path)).toContain(
@@ -1745,7 +1800,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const artifacts = resource.getCodeArtifacts(project);
       const declarationsPath = getLuaAssetDeclarationsPath(projectDir);
@@ -1804,7 +1860,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const artifacts = getTypeScriptResource(resources, "main").getCodeArtifacts(project);
       expect(artifacts.inputSource.match(/--#include "import:Hooks"/g)).toHaveLength(1);
       expect(artifacts.preprocessedSource.match(/function InstallHooks/g)).toHaveLength(1);
@@ -1834,9 +1891,12 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
-        /main\.ts:2:\d+ - Argument of type 'string' is not assignable to parameter of type 'number'/,
-      );
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter))
+        .rejects
+        .toThrow(
+          /main\.ts:2:\d+ - Argument of type 'string' is not assignable to parameter of type 'number'/,
+        );
       expect(fs.existsSync(getLuaAssetDeclarationsPath(projectDir))).toBe(true);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
@@ -1855,9 +1915,12 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
-        /ticbuild-assets\/Missing.*does not name a manifest LuaCode or TypeScriptCode asset/,
-      );
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter))
+        .rejects
+        .toThrow(
+          /ticbuild-assets\/Missing.*does not name a manifest LuaCode or TypeScriptCode asset/,
+        );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -1883,9 +1946,12 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
-        /manifest code assets 'Left' and 'Right' both declare Lua global 'SharedLuaGlobal'/,
-      );
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter))
+        .rejects
+        .toThrow(
+          /manifest code assets 'Left' and 'Right' both declare Lua global 'SharedLuaGlobal'/,
+        );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -1909,7 +1975,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       expect(resource.getPreprocessResult().code).not.toContain('local fromLua = "included"');
       expect(resource.getDependencyList().map((dependency) => dependency.path)).not.toContain(
@@ -1938,7 +2005,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = resources.items.get("main");
       expect(resource).toBeInstanceOf(LuaCodeResource);
       const artifacts = (resource as LuaCodeResource).getCodeArtifacts(project);
@@ -1964,9 +2032,12 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
-        /TypeScript transpilation failed:[\s\S]*main\.ts:1:7[\s\S]*not assignable to type 'number'/,
-      );
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter))
+        .rejects
+        .toThrow(
+          /TypeScript transpilation failed:[\s\S]*main\.ts:1:7[\s\S]*not assignable to type 'number'/,
+        );
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -2019,7 +2090,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const resource = getTypeScriptResource(resources, "main");
       const preprocessedSource = resource.getCodeArtifacts(project).preprocessedSource;
       expect(preprocessedSource).toContain("function configuredTick()");
@@ -2037,6 +2109,44 @@ describe("TypeScriptCodeResource", () => {
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    { include: ["src/**/*.ts", "src/**/*.d.ts"] },
+    { include: ["src/**/*.ts", "src/**/*.d.ts", ".ticbuild/declarations/**/*.d.ts"] },
+    { files: [] },
+  ])("builds a Lua entrypoint with external TypeScript and an empty config file list: %j", async (fileSelection) => {
+    await withDeclarationProject({
+      "project/src/main.lua": '--#include "import:engine"\nfunction TIC() print(engineTick()) end',
+      "engine/index.ts": 'import { value } from "./value"; export function engineTick() { print(value); return value; }',
+      "engine/value.ts": 'export const value: number = 42;',
+      "project/tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [] }, ...fileSelection }),
+    }, [{ name: "main", path: "project/src/main.lua", kind: "LuaCode" }], async (_, dir) => //
+    {
+      const projectDir = path.join(dir, "project");
+      const project = createProject(projectDir, [
+        { name: "main", path: "src/main.lua", kind: "LuaCode" },
+        { name: "engine", path: "../engine/index.ts", kind: "TypeScriptCode", typescript: { tsconfig: "tsconfig.json" } },
+      ]);
+      fs.unlinkSync(getProjectTic80DeclarationsPath(projectDir));
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
+      const source = (resources.items.get("main") as LuaCodeResource).getCodeArtifacts(project).preprocessedSource;
+      expect(source).toContain("function engineTick()");
+      expect(source).toContain("function TIC()");
+      expect(fs.existsSync(getProjectTic80DeclarationsPath(projectDir))).toBe(false);
+      expect(resources.getDependencyList().map(dependency => dependency.path)).toEqual(expect.arrayContaining([
+        path.join(dir, "engine", "value.ts"), path.join(projectDir, "tsconfig.json"),
+      ]));
+
+      fs.writeFileSync(path.join(dir, "engine", "value.ts"), 'export const value: number = "wrong";');
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Type 'string' is not assignable to type 'number'");
+
+      fs.writeFileSync(path.join(projectDir, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { strict: "wrong", types: [] }, ...fileSelection,
+      }));
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("Compiler option 'strict' requires a value of type boolean");
+    });
   });
 
   it("ignores tsconfig emission settings owned by ticbuild", async () => {
@@ -2070,7 +2180,8 @@ describe("TypeScriptCodeResource", () => {
     const warningSpy = jest.spyOn(cons, "warning").mockImplementation(() => undefined);
 
     try {
-      const resources = await loadAllImports(project);
+      const reporter = createBuildReporter("human");
+      const resources = await loadAllImports(project, reporter);
       const source = getTypeScriptResource(resources, "main").getCodeArtifacts(project).inputSource;
       expect(source).toContain("function tick()");
       expect(source).not.toContain("TypeScriptToLua");
@@ -2096,7 +2207,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow(
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow(
         /TypeScript configuration failed:[\s\S]*tsconfig\.json:1:/,
       );
     } finally {
@@ -2122,7 +2234,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow("TypeScript project references are not supported yet");
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("TypeScript project references are not supported yet");
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
@@ -2146,7 +2259,8 @@ describe("TypeScriptCodeResource", () => {
     ]);
 
     try {
-      await expect(loadAllImports(project)).rejects.toThrow("TypeScriptToLua plugins are not supported yet");
+      const reporter = createBuildReporter("human");
+      await expect(loadAllImports(project, reporter)).rejects.toThrow("TypeScriptToLua plugins are not supported yet");
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }

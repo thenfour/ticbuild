@@ -260,6 +260,18 @@ async function executeBuildCore(
     await writeTextFile(variablesOutputPath, JSON.stringify(variablesObj, null, 2), "utf-8");
 
     const outputPath = project.resolvedCore.resolveObjPath("resolvedManifest.ticbuild.jsonc");
+
+    reporter.message({
+      type: "project.buildMode",
+      data: {
+        mode: project.resolvedCore.selectedBuildConfig,
+      },
+      humanReadable: () => {
+        cons.h1("Using build mode:");
+        cons.info(`  ${project.resolvedCore.selectedBuildConfig}`);
+      },
+    });
+
     reporter.message({
       type: "manifest.resolved",
       data: {
@@ -287,7 +299,7 @@ async function executeBuildCore(
   });
 
   await buildScope.profileAsync("Process imports", { category: "imports" }, async (scope) => {
-    await project.loadImports(profiler, scope);
+    await project.loadImports(reporter, profiler, scope);
   });
 
   warnExplicitCodeBanks(project, reporter);

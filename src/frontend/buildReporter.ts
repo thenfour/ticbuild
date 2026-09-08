@@ -5,7 +5,8 @@ export const buildReportVersion = 1;
 export const buildReportFileName = "build.jsonl";
 export const buildTraceFileName = "build.trace.json";
 
-export type BuildReporterName = "human" | "jsonl";
+const kSupportedBuildReporters = ["human", "jsonl"] as const;
+export type BuildReporterName = (typeof kSupportedBuildReporters)[number];
 
 export type BuildDiagnosticSeverity = "warning" | "error";
 
@@ -28,6 +29,9 @@ export type CartChunkUsageEntry = {
 export type BuildMessageDataByType = {
   "project.loadedFrom": {
     manifestPath: string;
+  };
+  "project.buildMode": {
+    mode: string;
   };
   "manifest.resolved": {
     resolvedManifestPath: string;
@@ -97,7 +101,7 @@ export type JsonlWriter = (line: string) => void;
 export class JsonlBuildReporter implements BuildReporter {
   readonly name = "jsonl" as const;
 
-  constructor(private readonly writeLine: JsonlWriter = (line) => process.stdout.write(`${line}\n`)) {}
+  constructor(private readonly writeLine: JsonlWriter = (line) => process.stdout.write(`${line}\n`)) { }
 
   message(message: BuildMessage): void {
     if (message.type === null) {
@@ -114,7 +118,9 @@ export class JsonlBuildReporter implements BuildReporter {
   }
 }
 
-export function createBuildReporter(name: string | undefined, writeJsonlLine?: JsonlWriter): BuildReporter {
+// permissive name because command line supports arbitrary string
+export function createBuildReporter(name: BuildReporterName | string | undefined, writeJsonlLine?: JsonlWriter): BuildReporter //
+{
   switch (name ?? "human") {
     case "human":
       return new HumanBuildReporter();

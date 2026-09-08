@@ -46,8 +46,13 @@ export function loadTypeScriptProjectConfig(
     },
   };
   const parsed = tstl.parseConfigFileWithSystem(configPath, undefined, trackedSystem);
-  if (parsed.errors.length > 0) {
-    throw new Error(formatConfigDiagnostics(parsed.errors, project.projectDir));
+
+  // TS18002: empty files list: does not prevent compiling explicit roots
+  // TS18003: Unmatched `include` patterns do not prevent compiling explicit roots
+  const ignoredCodes = new Set([18002, 18003]);
+  const realConfigErrors = parsed.errors.filter(diagnostic => !ignoredCodes.has(diagnostic.code));
+  if (realConfigErrors.length > 0) {
+    throw new Error(formatConfigDiagnostics(realConfigErrors, project.projectDir));
   }
   if (parsed.projectReferences && parsed.projectReferences.length > 0) {
     throw new Error(`TypeScript project references are not supported yet: ${configPath}`);

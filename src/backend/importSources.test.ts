@@ -5,6 +5,7 @@ import { loadAllImports } from "./importResources";
 import { ImportSourceManager } from "./importSources";
 import { Manifest } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
+import { createBuildReporter } from "../frontend/buildReporter";
 
 function createProject(
   projectDir: string,
@@ -145,7 +146,7 @@ describe("import source engines", () => {
       },
     ]);
 
-    const resources = await loadAllImports(project);
+    const resources = await loadAllImports(project, createBuildReporter("human"));
 
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(resources.items.has("unused")).toBe(false);
@@ -181,7 +182,7 @@ describe("import source engines", () => {
       },
     ]);
 
-    const resources = await loadAllImports(project);
+    const resources = await loadAllImports(project, createBuildReporter("human"));
 
     expect(fs.readFileSync(path.join(projectDir, "command-count.txt"), "utf-8")).toBe("1");
     const dependencyPaths = resources.getDependencyList().map((dependency) => dependency.path);
@@ -211,7 +212,7 @@ describe("import source engines", () => {
       },
     ]);
 
-    const resources = await loadAllImports(project);
+    const resources = await loadAllImports(project, createBuildReporter("human"));
 
     const dependencyPaths = resources.getDependencyList().map((dependency) => dependency.path);
     expect(dependencyPaths).toContain(path.join(projectDir, "generator-input.txt"));

@@ -5,7 +5,7 @@ import { canonicalizePath, fileExists } from "../../utils/fileSystem";
 import { TypeScriptImportConfig } from "../manifestTypes";
 import { preserveTypeScriptPreprocessorDirectives } from "../luaPreprocessorSyntax";
 import { TicbuildProjectCore } from "../projectCore";
-import { getProjectTic80DeclarationsPath } from "../projectFiles";
+import { getBundledTic80DeclarationsPath, getProjectTic80DeclarationsPath } from "../projectFiles";
 import { getLuaAssetDeclarationsPath } from "./LuaAssetTypeScriptModules";
 import { loadTypeScriptProjectConfig } from "./tsconfigUtils";
 import { getTypeScriptBuildConstantsPath, renderTypeScriptBuildConstants } from "./TypeScriptBuildConstants";
@@ -34,7 +34,11 @@ export function createTypeScriptProgram(
   builtinsPathOverride?: string,
   declarations?: TypeScriptDeclarationContext,
 ) {
-  const builtinsPath = canonicalizePath(builtinsPathOverride ?? getProjectTic80DeclarationsPath(project.projectDir));
+  // Fresh projects can compile before `project update` installs editor declarations.
+  const projectBuiltinsPath = getProjectTic80DeclarationsPath(project.projectDir);
+  const builtinsPath = canonicalizePath(builtinsPathOverride ?? (
+    fileExists(projectBuiltinsPath) ? projectBuiltinsPath : getBundledTic80DeclarationsPath()
+  ));
   const configuredProject = loadTypeScriptProjectConfig(project, typescriptConfig);
   const options = createTypeScriptTranspilationOptions(configuredProject.options);
   const luaPath = getLuaAssetDeclarationsPath(project.projectDir);

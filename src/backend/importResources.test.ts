@@ -5,6 +5,7 @@ import { loadAllImports } from "./importResources";
 import { CodeResource } from "./importers/CodeResource";
 import { Manifest } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
+import { createBuildReporter } from "../frontend/buildReporter";
 
 describe("reachable import processing", () => {
   it("preprocesses assembly roots while only generating included code resources", async () => {
@@ -34,7 +35,7 @@ describe("reachable import processing", () => {
     });
 
     try {
-      const resources = await loadAllImports(project);
+      const resources = await loadAllImports(project, createBuildReporter("human"));
       const main = resources.items.get("main");
       const helper = resources.items.get("helper");
 

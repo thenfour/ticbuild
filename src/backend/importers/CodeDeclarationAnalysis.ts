@@ -20,6 +20,8 @@ import {
 import { createTypeScriptProgram, isGeneratedDeclarationFile, TypeScriptDeclarationContext } from "./TypeScriptProgram";
 import { getCanonicalTSPathKey, isTypeScriptImplementationFile } from "./TypeScriptStaticLinker";
 import { formatDiagnostics } from "./TypeScriptTranspiler";
+import { BuildReporter } from "../../frontend/buildReporter";
+import * as cons from "../../utils/console";
 
 type CodeEdge = { importName: string; typeOnly: boolean };
 type TypeScriptSource = { fileName: string; sourceText: string; typeOnly: boolean };
@@ -41,8 +43,8 @@ export class CodeDeclarationAnalysis {
     this.manifestModules = createManifestCodeModuleCatalog(project);
   }
 
-  async prepare(roots: readonly string[], scope?: TraceScope): Promise<void> {
-    await this.discoverResources(roots, scope);
+  async prepare(roots: readonly string[], reporter: BuildReporter, scope?: TraceScope): Promise<void> {
+    await this.discoverResources(roots, reporter, scope);
     // Runtime cycles are checked separately; recursive type references are legal.
     const runtimeResources = new Set(roots.flatMap(root => this.runtimeOrder(root)));
     const entries = this.orderedTypeScriptResources();
@@ -63,14 +65,27 @@ export class CodeDeclarationAnalysis {
     this.throwOnErrors(ts.sortAndDeduplicateDiagnostics(typeOnlyDiagnostics));
   }
 
-  private async discoverResources(roots: readonly string[], scope?: TraceScope): Promise<void> {
-    for (const root of roots) await this.discoverResource(root, scope);
+  private async discoverResources(roots: readonly string[], reporter: BuildReporter, scope?: TraceScope): Promise<void> {
+    for (const root of roots) await this.discoverResource(root, reporter, scope);
   }
 
-  private async discoverResource(name: string, scope?: TraceScope): Promise<void> {
-    if (this.edges.has(name)) return;
+  private async discoverResource(name: string, reporter: BuildReporter, scope?: TraceScope): Promise<void> {
+    if (this.edges.has(name)) {
+      return;
+    }
     const definition = this.manifestModules.get(name);
-    if (!definition) return;
+    if (!definition) {
+      return;
+    }
+
+    reporter.message({
+      type: "comment",
+      data: {
+        message: `Discovering code resource: ${name}`,
+      },
+      humanReadable: () => cons.h1(`Discovering code resource: ${name}`),
+    });
+
     // Register the node before descending so type-only cycles terminate discovery.
     const edges: CodeEdge[] = [];
     this.edges.set(name, edges);
@@ -80,13 +95,28 @@ export class CodeDeclarationAnalysis {
       edges.push(...await this.discoverTypeScriptDependencies(resource));
     } else if (resource instanceof LuaCodeResource && definition.kind === "LuaCode") {
       const module = await collectLuaAssetDeclarations(
-        this.project, this.resources, { ...definition, kind: "LuaCode" }, scope, this.resolveImportSource,
+        this.project,
+        this.resources,
+        { ...definition, kind: "LuaCode" },
+        scope,
+        this.resolveImportSource,
       );
       this.lua.set(name, module);
       edges.push(...Array.from(module.codeImports, importName => ({ importName, typeOnly: false })));
       resource.setDeclarationDependencies(module.dependencies.map(file => ({ path: file, reason: "Lua preprocessor dependency" })));
     }
-    for (const edge of edges) await this.discoverResource(edge.importName, scope);
+    for (const edge of edges) {
+
+      reporter.message({
+        type: "comment",
+        data: {
+          message: `  with dependency: ${edge.importName}`,
+        },
+        humanReadable: () => cons.h1(`  with dependency: ${edge.importName}`),
+      });
+
+      await this.discoverResource(edge.importName, reporter, scope);
+    }
   }
 
   private async discoverTypeScriptDependencies(resource: TypeScriptCodeResource): Promise<CodeEdge[]> {
@@ -94,7 +124,9 @@ export class CodeDeclarationAnalysis {
     const edges: CodeEdge[] = [...resource.getManifestCodeDependencies(this.project, (fileName, sourceText, typeOnly) => {
       if (isTypeScriptImplementationFile(fileName)) sources.push({ fileName, sourceText, typeOnly });
     })];
-    for (const source of sources) edges.push(...await this.discoverPreprocessorIncludes(source));
+    for (const source of sources) {
+      edges.push(...await this.discoverPreprocessorIncludes(source));
+    }
     return edges;
   }
 

@@ -9,6 +9,7 @@ import { AssemblyBlock, AssetReference, kImportKind, Manifest, ResolvedManifest 
 import { calculateVars, canonicalizeAssetImport, deduceImportKindFromPath, TicbuildProjectCore } from "./projectCore";
 import { profileAsync, TraceProfiler, TraceScope, TraceTrack } from "../utils/traceProfiler";
 import { loadProjectEnvironment, ProjectEnvironment } from "./projectEnvironment";
+import { BuildReporter } from "../frontend/buildReporter";
 
 export type TicbuildProjectLoadOptions = {
   manifestPath?: string | undefined;
@@ -177,8 +178,8 @@ export class TicbuildProject {
     };
   }
 
-  async loadImports(profiler?: TraceProfiler, parentScope?: TraceScope): Promise<void> {
-    this.resourceMgr = await loadAllImports(this.resolvedCore, profiler, parentScope);
+  async loadImports(reporter: BuildReporter, profiler?: TraceProfiler, parentScope?: TraceScope): Promise<void> {
+    this.resourceMgr = await loadAllImports(this.resolvedCore, reporter, profiler, parentScope);
   }
 
   // takse a block def and returns the multiple chunks it may produce.
