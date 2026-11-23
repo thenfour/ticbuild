@@ -27,6 +27,7 @@
 - #66 TIC-80 script errors are now exposed, with source mapping and local variable dumps
 - #65 Fixed: source mappings survive minification
 - #77 Added `traceable` Lua output format, making symbol lookup more accurate
+- #60 `inspect` command support
 
 **Other**
 
