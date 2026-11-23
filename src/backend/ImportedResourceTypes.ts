@@ -1,7 +1,5 @@
 // importing -> ImportedResource -> assembly
 
-import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
-import { AssetReference, CodeAssemblyOptions } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { LuaPreprocessorSourceMap } from "./sourceMap";
 
@@ -23,22 +21,8 @@ export type GeneratedLuaSource = {
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-export abstract class ResourceViewBase {
-  abstract getDataForChunk(
-    project: TicbuildProjectCore,
-    chunkType: Tic80CartChunkTypeKey,
-    options?: CodeAssemblyOptions,
-  ): ChunkDataResult;
-  abstract getSupportedChunkTypes(): Tic80CartChunkTypeKey[];
-  abstract getParallelChunkTypes(): Tic80CartChunkTypeKey[];
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 export abstract class ImportedResourceBase {
   abstract dump(): void;
-
-  // if chunks is omitted, returns view for entire resource.
-  abstract getView(project: TicbuildProjectCore, chunks?: Tic80CartChunkTypeKey[]): ResourceViewBase;
 
   abstract getDependencyList(): ExternalDependency[];
 
@@ -98,14 +82,6 @@ export class ResourceManager {
 
   getDeclaredImportNames(): readonly string[] {
     return this.declaredImportNames;
-  }
-
-  getResourceView(project: TicbuildProjectCore, spec: AssetReference): ResourceViewBase {
-    const resource = this.items.get(spec.import);
-    if (!resource) {
-      throw new Error(`Resource not found: ${spec.import}`);
-    }
-    return resource.getView(project, spec.chunks);
   }
 
   async getGeneratedLuaSource(

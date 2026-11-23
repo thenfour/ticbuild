@@ -1,55 +1,19 @@
-import { kTic80CartChunkTypes, Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
-import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
+import { ExternalDependency, ImportedResourceBase } from "../ImportedResourceTypes";
 import { ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { loadTextImportData } from "../importUtils";
 import { MaterializedImportSource } from "../importSources";
 
-export class TextResourceView extends ResourceViewBase {
-  private text: string;
-  private bytes: Uint8Array;
-
-  constructor(text: string) {
-    super();
-    this.text = text;
-    const encoder = new TextEncoder();
-    this.bytes = encoder.encode(text);
-  }
-
-  getDataForChunk(project: TicbuildProjectCore, chunkType: Tic80CartChunkTypeKey): Uint8Array {
-    return this.bytes;
-  }
-
-  getSupportedChunkTypes(): Tic80CartChunkTypeKey[] {
-    return kTic80CartChunkTypes.keys as Tic80CartChunkTypeKey[];
-  }
-
-  getParallelChunkTypes(): Tic80CartChunkTypeKey[] {
-    throw new Error(`Text resources require explicit chunks in assembly blocks`);
-  }
-}
-
 export class TextResource extends ImportedResourceBase {
-  view: TextResourceView;
-  dependencies: ExternalDependency[];
-  sizeBytes: number;
+  readonly data: Uint8Array;
 
-  constructor(text: string, dependencies: ExternalDependency[]) {
+  constructor(text: string, private readonly dependencies: ExternalDependency[]) {
     super();
-    this.view = new TextResourceView(text);
-    this.dependencies = dependencies;
-    this.sizeBytes = new TextEncoder().encode(text).length;
+    this.data = new TextEncoder().encode(text);
   }
 
   dump(): void {
-    console.log(`TextResource dump, size: ${this.sizeBytes}`);
-  }
-
-  getView(project: TicbuildProjectCore, chunks?: Tic80CartChunkTypeKey[]) {
-    if (!chunks || chunks.length === 0) {
-      return this.view;
-    }
-    return this.view;
+    console.log(`TextResource dump, size: ${this.data.length}`);
   }
 
   getDependencyList(): ExternalDependency[] {

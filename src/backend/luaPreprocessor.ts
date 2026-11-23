@@ -1,11 +1,11 @@
 import * as luaparse from "luaparse";
 import * as path from "node:path";
-import { isSameFileLocation, readBinaryFileAsync, readTextFileAsync, resolveFileWithSearchPaths } from "../utils/fileSystem";
+import { isSameFileLocation, readTextFileAsync, resolveFileWithSearchPaths } from "../utils/fileSystem";
 import { toLuaStringLiteral } from "../utils/lua/lua_fundamentals";
 import { stringValue } from "../utils/lua/lua_utils";
-import { decompressCodeBytes, getCombinedCodeBytes, parseTic80Cart } from "../utils/tic80/cartLoader";
-import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
-import { parseImportReference } from "./importUtils";
+import { decompressCodeBytes } from "../utils/tic80/cartLoader";
+import { parseImportReference } from "./importReference";
+import { importTic80Cart } from "./importers/tic80CartImporter";
 import { kImportKind, PreprocessorValue } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { parseLua, parseLuaQuiet } from "../utils/lua/lua_processor";
@@ -28,7 +28,7 @@ import {
   resolveImportBytes,
 } from "./luaEncode";
 import { GeneratedLuaSource } from "./ImportedResourceTypes";
-import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "./importSources";
+import { MaterializedImportSource, materializeImportSource } from "./importSources";
 import { profileAsync, profileSync, TraceScope } from "../utils/traceProfiler";
 import { getResolvedPreprocessorDefines } from "./preprocessorDefines";
 import { extractTypeScriptDeclarationDirectives, parseLuaPreprocessorDirective } from "./luaPreprocessorSyntax";
@@ -708,8 +708,7 @@ async function resolveImportInclude(
   lineNumber: number,
 ): Promise<ProcessResult> {
   const ref = parseImportReference(includeTarget);
-  const importName = ref.importName;
-  const chunkSpec = ref.chunkSpec;
+  const importName = ref.import;
 
   const importDef = project.manifest.imports.find((imp) => imp.name === importName);
   if (!importDef) {
@@ -719,9 +718,9 @@ async function resolveImportInclude(
   const generatedLua = await state.resolveCodeImport?.(importName);
   if (generatedLua) {
     state.diagnostics.codeImportIncludes++;
-    if (chunkSpec) {
+    if (ref.chunks !== undefined || ref.bank !== undefined) {
       throw new Error(
-        formatError(generatedLua.sourcePath, lineNumber, `Code imports do not support a chunk selector`),
+        formatError(generatedLua.sourcePath, lineNumber, "generated code imports do not support chunk or bank selectors"),
       );
     }
     for (const dependency of generatedLua.dependencies ?? []) {
@@ -751,70 +750,36 @@ async function resolveImportInclude(
     if (!importSource) {
       throw new Error(formatError("<include>", lineNumber, `Import source not found: ${importName}`));
     }
-    const resolvedPath = requireFileImportSource(importDef, importSource);
-    const data = await readBinaryFileAsync(resolvedPath);
-    const cart = parseTic80Cart(data);
-    for (const dependency of importSource.watchDependencies) {
+    const resource = await importTic80Cart(project, importDef, importSource);
+    for (const dependency of resource.getDependencyList()) {
       state.dependencies.add(dependency.path);
     }
 
-    const availableChunks =
-      importDef.chunks && importDef.chunks.length > 0
-        ? importDef.chunks
-        : Array.from(new Set(cart.chunks.map((chunk) => chunk.chunkType)));
-
-    const hasCode = availableChunks.includes("CODE") || availableChunks.includes("CODE_COMPRESSED");
-    if (!hasCode) {
-      throw new Error(formatError(resolvedPath, lineNumber, `No CODE or CODE_COMPRESSED chunk found in cart: ${importName}`));
-    }
-
-    let selectedChunk: Tic80CartChunkTypeKey = availableChunks.includes("CODE") ? "CODE" : "CODE_COMPRESSED";
-    if (chunkSpec) {
-      if (chunkSpec !== "CODE" && chunkSpec !== "CODE_COMPRESSED") {
-        throw new Error(formatError(resolvedPath, lineNumber, `Only CODE or CODE_COMPRESSED chunk is supported for include`));
+    let source: string;
+    let sourceName: string;
+    try {
+      const { chunkType, bank, data } = resource.selectSingleChunk(ref);
+      // if you really want to #include a non-CODE chunk, you need to explicitly specify the chunk
+      if (ref.chunks === undefined && chunkType !== "CODE" && chunkType !== "CODE_COMPRESSED") {
+        throw new Error("Specify a chunk type to include a data chunk as Lua source");
       }
-      selectedChunk = chunkSpec as Tic80CartChunkTypeKey;
-      if (!availableChunks.includes(selectedChunk)) {
-        throw new Error(
-          formatError(resolvedPath, lineNumber, `Requested chunk ${selectedChunk} not available in import`),
-        );
-      }
-    } else if (availableChunks.length > 1) {
-      throw new Error(
-        formatError(
-          resolvedPath,
-          lineNumber,
-          `Import ${importName} contains multiple chunks. Specify :CODE explicitly in include.`,
-        ),
-      );
+      source = new TextDecoder("utf-8").decode(chunkType === "CODE_COMPRESSED" ? decompressCodeBytes(data) : data);
+      sourceName = `import:${importName}:${chunkType}:${bank}`;
+    } catch (error) {
+      throw new Error(formatError(resource.cartPath, lineNumber, getErrorMessage(error)));
     }
 
-    const decoder = new TextDecoder("utf-8");
-    let sourceBytes: Uint8Array | null = null;
-    if (selectedChunk === "CODE") {
-      sourceBytes = getCombinedCodeBytes(cart);
-    } else {
-      const compressedChunk = cart.chunks.find((chunk) => chunk.chunkType === "CODE_COMPRESSED");
-      sourceBytes = compressedChunk ? decompressCodeBytes(compressedChunk.data) : null;
-    }
-
-    if (!sourceBytes) {
-      throw new Error(formatError(resolvedPath, lineNumber, `Requested chunk ${selectedChunk} not found in cart`));
-    }
-
-    const source = decoder.decode(sourceBytes);
-    const includeKey = makeIncludeKey(`${includeTarget}:${selectedChunk}`, overrides);
     const included = await processSource(
       project,
       source,
-      createIdentitySourceMap(source, `${includeTarget}:${selectedChunk}`),
-      `${includeTarget}:${selectedChunk}`,
-      includeKey,
+      createIdentitySourceMap(source, sourceName),
+      sourceName,
+      makeIncludeKey(sourceName, overrides),
       state,
       overrides,
       false,
     );
-    return ensureTrailingNewline(included, `${includeTarget}:${selectedChunk}`);
+    return ensureTrailingNewline(included, sourceName);
   }
 
   throw new Error(formatError("<include>", lineNumber, `Unsupported import kind: ${importDef.kind}`));
@@ -1756,13 +1721,13 @@ async function expandPreprocessorCallsCore(
           }
           const ref = parseImportReference(importSpec);
 
-          const importDef = resolveImportDefinition(ref.importName, lineNumber);
+          const importDef = resolveImportDefinition(ref.import, lineNumber);
           const pipelineSpec = project.substituteVariables(pipelineArg.value);
           const split = splitPipelineSpec(pipelineSpec, true, filePath, lineNumber, formatError);
           const resolvedSourceSpec = normalizeEmptySpec(project.substituteVariables(split.sourceSpecRaw || ""));
-          const importSource = await state.resolveImportSource(ref.importName);
+          const importSource = await state.resolveImportSource(ref.import);
           if (!importSource) {
-            throw new Error(formatError(filePath, lineNumber, `Import source not found: ${ref.importName}`));
+            throw new Error(formatError(filePath, lineNumber, `Import source not found: ${ref.import}`));
           }
 
           const bytes = await resolveImportBytes(
@@ -1770,7 +1735,7 @@ async function expandPreprocessorCallsCore(
             importDef,
             importSource,
             resolvedSourceSpec,
-            ref.chunkSpec,
+            ref,
             (dep) => state.dependencies.add(dep),
             filePath,
             lineNumber,

@@ -1,11 +1,12 @@
-import { assert } from "../utils/errorHandling";
+import * as cons from "../utils/console";
 import { AssembleTic80Cart } from "../utils/tic80/cartWriter";
-import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunk } from "../utils/tic80/tic80";
+import { kTic80CartChunkTypes, Tic80CartChunk } from "../utils/tic80/tic80";
 import { deepMergeObjects } from "../utils/utils";
+import { assembleAsset } from "./assembly";
 import { ResourceManager } from "./ImportedResourceTypes";
 import { loadAllImports } from "./importResources";
 import { resolveAndLoadManifest } from "./manifestLoader";
-import { AssemblyBlock, AssetReference, kImportKind, Manifest, ResolvedManifest } from "./manifestTypes";
+import { AssemblyBlock, kImportKind, Manifest, ResolvedManifest } from "./manifestTypes";
 import { calculateVars, canonicalizeAssetImport, deduceImportKindFromPath, TicbuildProjectCore } from "./projectCore";
 import { profileAsync, TraceProfiler, TraceScope, TraceTrack } from "../utils/traceProfiler";
 import { loadProjectEnvironment, ProjectEnvironment } from "./projectEnvironment";
@@ -135,9 +136,9 @@ export class TicbuildProject {
     // there's a special case to handle:
     // assembly.blocks[].asset supports a shorthand form.
     // canonical form:
-    //   "asset": { "import": "music-imported-cart", "chunks": ["MUSIC_WAVEFORMS"] },
+    //   "asset": { "import": "music-imported-cart", "chunks": ["WAVEFORMS"], "bank": 2 },
     // shorthand:
-    //   "asset": "import:music-imported-cart:MUSIC_WAVEFORMS",
+    //   "asset": "import:music-imported-cart:WAVEFORMS:2",
     for (const block of resolved.assembly.blocks) {
       block.asset = canonicalizeAssetImport(block.asset);
     }
@@ -182,126 +183,28 @@ export class TicbuildProject {
     this.resourceMgr = await loadAllImports(this.resolvedCore, reporter, profiler, parentScope);
   }
 
-  // takse a block def and returns the multiple chunks it may produce.
+  // assemble one block def, return multiple produced output payloads.
+  // note: A CODE payload can emit several physical chunks.
   private async assembleBlock(
     block: AssemblyBlock,
     profileTrack?: TraceTrack,
     parentScope?: TraceScope,
   ): Promise<Tic80CartChunk[]> {
+    const asset = canonicalizeAssetImport(block.asset);
     using _profileScope = profileTrack?.enter("Assemble block", {
       category: "assembly",
       parent: parentScope,
       args: {
-        importName: (block.asset as AssetReference).import,
+        importName: asset.import,
         chunkTypes: block.chunks?.join(",") ?? "default",
         bank: block.bank ?? "automatic",
       },
     });
-    assert(!!this.resourceMgr);
-
-    // for binary copy, just retrieve the asset data from the resource manager.
-    const assetRef = block.asset as AssetReference;
-    const resource = this.resourceMgr.items.get(assetRef.import);
+    const resource = this.resourceMgr?.items.get(asset.import);
     if (!resource) {
-      throw new Error(`Imported resource not found: ${assetRef.import}`);
+      throw new Error(`Imported resource not found: ${asset.import}`);
     }
-    const view = resource.getView(this.resolvedCore, block.chunks);
-    // extract the bins from the resource view and output as chunks.
-    const outputChunks: Tic80CartChunk[] = [];
-    const requestedChunks = block.chunks || view.getParallelChunkTypes();
-    const bank = block.bank ?? 0;
-    for (const chunkType of requestedChunks) {
-      const data = await view.getDataForChunk(this.resolvedCore, chunkType, block.code);
-      if (chunkType === "CODE") {
-        const codeInfo = kTic80CartChunkTypes.byKey.CODE;
-        const maxChunkSize = codeInfo.sizePerBank;
-        const nativeBankCount = codeInfo.bankCount;
-        const extendedCodeBanks = block.code?.extendedCodeBanks === true;
-        const supportedBankCount = extendedCodeBanks ? kTic80ExtendedCodeBankCount : nativeBankCount;
-        if (block.bank !== undefined) {
-          if (bank >= nativeBankCount && !extendedCodeBanks) {
-            throw new Error(
-              `CODE bank ${bank} requires assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build (stock TIC-80 supports banks 0..${nativeBankCount - 1
-              })`,
-            );
-          }
-          if (bank >= supportedBankCount) {
-            throw new Error(`CODE bank ${bank} out of range (0..${supportedBankCount - 1})`);
-          }
-        }
-        if (data.length > maxChunkSize) {
-          if (block.bank !== undefined) {
-            // it's confusing what you mean if you specify a bank here.
-            // exceeding 1 bank = auto-split code into auto banks.
-            throw new Error(`CODE chunk exceeds ${maxChunkSize} bytes but bank was specified`);
-          }
-          const bankCount = Math.ceil(data.length / maxChunkSize);
-          if (bankCount > supportedBankCount) {
-            throw new Error(
-              extendedCodeBanks
-                ? `CODE chunk requires ${bankCount} banks but extended CODE bank support allows only ${supportedBankCount}`
-                : `CODE chunk requires ${bankCount} banks but TIC-80 supports only ${nativeBankCount}. Enable assembly.blocks[].code.extendedCodeBanks for the private TIC-80 build (up to ${kTic80ExtendedCodeBankCount} banks)`,
-            );
-          }
-          for (let i = 0; i < bankCount; i++) {
-            const start = i * maxChunkSize;
-            const end = Math.min(start + maxChunkSize, data.length);
-            outputChunks.push({
-              chunkType,
-              bank: bankCount - 1 - i,
-              data: data.subarray(start, end),
-            });
-          }
-          continue;
-        }
-      }
-      if (chunkType === "CODE_COMPRESSED") {
-        const compressedInfo = kTic80CartChunkTypes.byKey.CODE_COMPRESSED;
-        const maxChunkSize = compressedInfo.sizePerBank;
-        const nativeBankCount = compressedInfo.bankCount;
-        const multiBankCompressedCode = block.code?.multiBankCompressedCode === true;
-        const supportedBankCount = multiBankCompressedCode ? kTic80ExtendedCodeBankCount : nativeBankCount;
-        if (block.bank !== undefined) {
-          if (bank >= nativeBankCount && !multiBankCompressedCode) {
-            throw new Error(
-              `CODE_COMPRESSED bank ${bank} requires assembly.blocks[].code.multiBankCompressedCode for the private TIC-80 build (stock TIC-80 supports bank 0)`,
-            );
-          }
-          if (bank >= supportedBankCount) {
-            throw new Error(`CODE_COMPRESSED bank ${bank} out of range (0..${supportedBankCount - 1})`);
-          }
-        }
-        if (data.length > maxChunkSize) {
-          if (block.bank !== undefined) {
-            throw new Error(`CODE_COMPRESSED chunk exceeds ${maxChunkSize} bytes but bank was specified`);
-          }
-          const bankCount = Math.ceil(data.length / maxChunkSize);
-          if (bankCount > supportedBankCount) {
-            throw new Error(
-              multiBankCompressedCode
-                ? `CODE_COMPRESSED chunk requires ${bankCount} banks but multi-bank compressed CODE support allows only ${supportedBankCount}`
-                : `CODE_COMPRESSED chunk requires ${bankCount} banks but TIC-80 supports only ${nativeBankCount}. Enable assembly.blocks[].code.multiBankCompressedCode for the private TIC-80 build (up to ${kTic80ExtendedCodeBankCount} banks)`,
-            );
-          }
-          for (let i = 0; i < bankCount; i++) {
-            const start = i * maxChunkSize;
-            const end = Math.min(start + maxChunkSize, data.length);
-            outputChunks.push({
-              chunkType,
-              bank: bankCount - 1 - i,
-              data: data.subarray(start, end),
-            });
-          }
-          continue;
-        }
-      }
-      outputChunks.push({
-        chunkType,
-        bank,
-        data,
-      });
-    }
-    return outputChunks;
+    return await assembleAsset(this.resolvedCore, resource, asset, block);
   }
 
   async assembleOutput(profiler?: TraceProfiler, parentScope?: TraceScope): Promise<AssembleOutputResult> {
@@ -312,6 +215,10 @@ export class TicbuildProject {
     const tasks: Promise<Tic80CartChunk[]>[] = [];
     for (let blockIndex = 0; blockIndex < assembly.blocks.length; blockIndex++) {
       const block = assembly.blocks[blockIndex];
+      if (block.chunks?.length === 0) { // note: unspecified chunks is still valid, but chunks:[] is not.
+        cons.warning(`Assembly block ${blockIndex + 1} has an empty chunks list and produces no output`);
+        continue;
+      }
       // generate the binary output for each requested block.
       const profileTrack = profiler?.createTrack(`Assembly block ${blockIndex + 1}`);
       tasks.push(this.assembleBlock(block, profileTrack, parentScope));

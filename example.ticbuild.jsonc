@@ -28,7 +28,7 @@
       "kind": "Tic80Cartridge",
       "chunks": [
         "TILES",
-        "SFX"
+        "SPRITES"
       ],
     },
     {

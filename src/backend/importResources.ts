@@ -27,6 +27,9 @@ export async function loadAllImports(
     if (!importDef.kind) {
       throw new Error(`Import ${importDef.name} is missing kind`);
     }
+    if (importDef.bank !== undefined && importDef.kind !== kImportKind.key.Tic80Cartridge) {
+      throw new Error(`Import ${importDef.name}: a source bank requires a cartridge`);
+    }
     assert(importDef.kind in kImportKind.key);
     if (importDefinitions.has(importDef.name)) {
       throw new Error(`Duplicate import name: ${importDef.name}`);
@@ -127,7 +130,9 @@ export async function loadAllImports(
   };
 
   const assemblyRootNames = Array.from(new Set(
-    project.manifest.assembly.blocks.map((block) => canonicalizeAssetImport(block.asset).import),
+    project.manifest.assembly.blocks
+      .filter((block) => block.chunks?.length !== 0)
+      .map((block) => canonicalizeAssetImport(block.asset).import),
   ));
   const assemblyRoots = await Promise.all(assemblyRootNames.map(async (importName) => {
     const resource = await resourceManager.loadResource(importName);

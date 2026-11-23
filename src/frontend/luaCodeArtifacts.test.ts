@@ -250,7 +250,7 @@ describe("Lua code build artifacts", () => {
 
       expect(h1Spy).toHaveBeenCalledWith("Lua code size: maincode");
       const infoLines = infoSpy.mock.calls.map(([line]) => line);
-      expect(infoLines.some((line) => line.includes("CODE") && line.includes("/ 1024.0 KB"))).toBe(true);
+      expect(infoLines.some((line) => line.includes("CODE") && line.includes("/ 1.00 MB"))).toBe(true);
       expect(infoLines.some((line) => line.includes("uses 9 banks / 16"))).toBe(true);
       expect(infoLines.some((line) => line.includes("non-standard, stock TIC-80 max 8"))).toBe(true);
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Non-standard TIC-80 extension used"));

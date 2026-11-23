@@ -16,7 +16,6 @@ import {
   ExternalDependency,
   GeneratedLuaSource,
   ImportedResourceBase,
-  ResourceViewBase,
 } from "../ImportedResourceTypes";
 import { MaterializedImportSource } from "../importSources";
 import {
@@ -105,7 +104,7 @@ export type CodeSizeStats = {
   minifiedBytes: number;
 };
 
-export class CodeResourceView extends ResourceViewBase {
+export class CodeResourceView {
   inputSource: string;
   inputSourceMap: LuaPreprocessorSourceMap;
   preprocessedSource: string;
@@ -130,7 +129,6 @@ export class CodeResourceView extends ResourceViewBase {
     minifyGlobalNamesToKeep: string[] = [],
     private readonly profileTrack?: TraceTrack,
   ) {
-    super();
     this.inputSource = inputSource;
     this.inputSourceMap = inputSourceMap;
     this.preprocessedSource = preprocessedSource;
@@ -161,14 +159,6 @@ export class CodeResourceView extends ResourceViewBase {
     }
 
     return new TextEncoder().encode(minifiedSource);
-  }
-
-  getSupportedChunkTypes(): Tic80CartChunkTypeKey[] {
-    return ["CODE", "CODE_COMPRESSED"];
-  }
-
-  getParallelChunkTypes(): Tic80CartChunkTypeKey[] {
-    return ["CODE"];
   }
 
   getArtifacts(project: TicbuildProjectCore, processOptions: LuaProcessOptions = {}): CodeArtifacts {
@@ -558,13 +548,6 @@ export abstract class CodeResource extends ImportedResourceBase {
 
   getCodeSizeStats(project: TicbuildProjectCore): CodeSizeStats {
     return this.view.getSizeStats(project);
-  }
-
-  getView(project: TicbuildProjectCore, chunks?: Tic80CartChunkTypeKey[]): ResourceViewBase {
-    if (chunks && (chunks.length !== 1 || (chunks[0] !== "CODE" && chunks[0] !== "CODE_COMPRESSED"))) {
-      throw new Error(`${this.constructor.name} only supports CODE or CODE_COMPRESSED chunk view.`);
-    }
-    return this.view;
   }
 
   getDependencyList(): ExternalDependency[] {

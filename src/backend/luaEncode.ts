@@ -14,7 +14,7 @@ import {
     isStringBinaryOutputEncoding,
     normalizeBinaryOutputEncoding,
 } from "./luaBinaryEncoding";
-import { ImportDefinition, kImportKind } from "./manifestTypes";
+import { CartChunkFilter, ImportDefinition, kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
 import { lzCompressBest, lzDecompress, lzRleCompressBest, lzRleDecompress } from "../utils/encoding/lz";
 import { rleCompress } from "../utils/encoding/rle";
@@ -22,7 +22,7 @@ import { rleDecompress } from "../utils/encoding/rle";
 import { toLuaStringLiteral } from "../utils/lua/lua_fundamentals";
 import { loadBinaryImportData, loadTextImportData } from "./importUtils";
 import { trimTrailingZeros } from "../utils/utils";
-import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
+import { getErrorMessage } from "../utils/errorHandling";
 import { importTic80Cart } from "./importers/tic80CartImporter";
 import { MaterializedImportSource, requireFileImportSource } from "./importSources";
 import { EncodeErrorFormatter } from "./luaEncodeBase";
@@ -116,7 +116,7 @@ export async function resolveImportBytes(
     importDef: ImportDefinition, // the import from the manifest
     importSource: MaterializedImportSource,
     sourceSpecRaw: string | null, // source encoding spec (e.g., "utf8,lz") or null for default
-    chunkSpec: Tic80CartChunkTypeKey | undefined,
+    filter: CartChunkFilter,
     onDependency: (path: string) => void,
     filePath: string,
     lineNumber: number,
@@ -130,8 +130,8 @@ export async function resolveImportBytes(
         throw new Error(formatError(filePath, lineNumber, `__IMPORT only supports binary, text, or cart imports`));
     }
 
-    if (chunkSpec && importDef.kind !== kImportKind.key.Tic80Cartridge) {
-        throw new Error(formatError(filePath, lineNumber, `Chunk specifiers are only supported for cart imports`));
+    if ((filter.chunks !== undefined || filter.bank !== undefined) && importDef.kind !== kImportKind.key.Tic80Cartridge) {
+        throw new Error(formatError(filePath, lineNumber, "Chunk and bank selectors require a cartridge import"));
     }
 
     if (importDef.kind === kImportKind.key.Tic80Cartridge) {
@@ -140,26 +140,11 @@ export async function resolveImportBytes(
             onDependency(dep.path);
         }
 
-        const requestedChunks = chunkSpec ? [chunkSpec] : undefined;
-        const view = resource.getView(project, requestedChunks);
-        const supported = view.getSupportedChunkTypes();
-
-        let selectedChunk: Tic80CartChunkTypeKey;
-        if (chunkSpec) {
-            selectedChunk = chunkSpec;
-        } else if (supported.length === 1) {
-            selectedChunk = supported[0];
-        } else {
-            throw new Error(
-                formatError(
-                    filePath,
-                    lineNumber,
-                    `Cart import ${importDef.name} contains multiple chunks. Specify one via import:NAME:CHUNK`,
-                ),
-            );
+        try {
+            return resource.selectSingleChunk(filter).data;
+        } catch (error) {
+            throw new Error(formatError(filePath, lineNumber, getErrorMessage(error)));
         }
-
-        return await view.getDataForChunk(project, selectedChunk);
     }
 
     if (importDef.kind === kImportKind.key.binary) {

@@ -1,102 +1,81 @@
-// extracts chunks from tic80 cart into ImportedResource
-
 import { readBinaryFileAsync } from "../../utils/fileSystem";
 import { getCombinedCodeBytes, parseTic80Cart } from "../../utils/tic80/cartLoader";
-import { Tic80Cart, Tic80CartChunkTypeKey } from "../../utils/tic80/tic80";
-import { ExternalDependency, ImportedResourceBase, ResourceViewBase } from "../ImportedResourceTypes";
-import { ImportDefinition } from "../manifestTypes";
+import { Tic80Cart, Tic80CartChunk } from "../../utils/tic80/tic80";
+import { ExternalDependency, ImportedResourceBase } from "../ImportedResourceTypes";
+import { CartChunkFilter, ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
 import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "../importSources";
 
-export class Tic80CartResourceView extends ResourceViewBase {
-  subAssets: Map<Tic80CartChunkTypeKey, Uint8Array> = new Map<Tic80CartChunkTypeKey, Uint8Array>();
-
-  constructor() {
-    super();
+function filterChunks(
+  chunks: readonly Tic80CartChunk[],
+  filter: CartChunkFilter,
+  importName: string,
+): Tic80CartChunk[] {
+  if (filter.bank !== undefined && filter.bank !== 0 && filter.chunks?.includes("CODE")) {
+    throw new Error(`Import ${importName}: CODE can only be selected at source bank 0`);
   }
-  getSupportedChunkTypes(): Tic80CartChunkTypeKey[] {
-    return Array.from(this.subAssets.keys());
+  const selected = chunks.filter(
+    (chunk) => (filter.chunks === undefined || filter.chunks.includes(chunk.chunkType)) &&
+      (filter.bank === undefined || filter.bank === chunk.bank),
+  );
+  if (selected.length === 0) {
+    const types = filter.chunks === undefined ? "any chunk type" : JSON.stringify(filter.chunks);
+    const bank = filter.bank === undefined ? "any bank" : `bank ${filter.bank}`;
+    throw new Error(`Import ${importName} has no payloads matching ${types} at ${bank}`);
   }
-  getParallelChunkTypes(): Tic80CartChunkTypeKey[] {
-    return Array.from(this.subAssets.keys());
-  }
-  getDataForChunk(project: TicbuildProjectCore, chunkType: Tic80CartChunkTypeKey): Uint8Array {
-    const data = this.subAssets.get(chunkType);
-    if (!data) {
-      throw new Error(`Chunk type not found in Tic80CartResourceView: ${chunkType}`);
-    }
-    return data;
-  }
+  return selected;
 }
 
-// represents an imported tic80 cart, exposes as ImportedResourceBase which contains
-// a sub-asset for each imported chunk.
+// represents an imported tic80 cart
 export class Tic80Resource extends ImportedResourceBase {
-  // map of chunk type key -> chunk data
-  rootView: Tic80CartResourceView = new Tic80CartResourceView();
-  cartPath: string;
-  dependencies: ExternalDependency[];
+  readonly chunks: readonly Tic80CartChunk[];
+  private readonly importName: string;
+  private readonly dependencies: ExternalDependency[];
 
-  constructor(cartPath: string, spec: ImportDefinition, parsedCart: Tic80Cart, dependencies?: ExternalDependency[]) {
+  constructor(readonly cartPath: string, spec: ImportDefinition, parsedCart: Tic80Cart, dependencies?: ExternalDependency[]) {
     super();
-    this.cartPath = cartPath;
+    this.importName = spec.name;
     this.dependencies = dependencies ?? [{ path: cartPath, reason: "Imported TIC-80 cartridge" }];
 
-    const combinedCode = getCombinedCodeBytes(parsedCart);
-
-    if (!spec.chunks || spec.chunks.length === 0) {
-      // import all chunks
-      if (combinedCode) {
-        this.rootView.subAssets.set("CODE", combinedCode);
+    const addresses = new Set<string>();
+    for (const { chunkType, bank } of parsedCart.chunks) {
+      const address = `${chunkType}:${bank}`;
+      if (addresses.has(address)) {
+        throw new Error(`Duplicate source chunk ${address} in import ${this.importName}`);
       }
-      for (const chunk of parsedCart.chunks) {
-        if (chunk.chunkType === "CODE") {
-          continue;
-        }
-        if (this.rootView.subAssets.has(chunk.chunkType)) {
-          throw new Error(`Duplicate chunk type in TIC-80 cart: ${chunk.chunkType}`);
-        }
-        this.rootView.subAssets.set(chunk.chunkType, chunk.data);
-      }
-    } else {
-      // import only specified chunks
-      for (const chunkType of spec.chunks) {
-        if (chunkType === "CODE") {
-          if (!combinedCode) {
-            throw new Error(`Requested chunk type not found in TIC-80 cart: ${chunkType}`);
-          }
-          this.rootView.subAssets.set("CODE", combinedCode);
-          continue;
-        }
-        const chunk = parsedCart.chunks.find((c) => c.chunkType === chunkType);
-        if (!chunk) {
-          throw new Error(`Requested chunk type not found in TIC-80 cart: ${chunkType}`);
-        }
-        this.rootView.subAssets.set(chunk.chunkType, chunk.data);
-      }
+      addresses.add(address);
     }
+
+    // A source filter sees the logical CODE payload, even if the cart has no physical CODE in bank 0.
+    const chunks = parsedCart.chunks.filter((chunk) => chunk.chunkType !== "CODE");
+    const code = getCombinedCodeBytes(parsedCart);
+    if (code) {
+      chunks.unshift({ chunkType: "CODE", bank: 0, data: code });
+    }
+    this.chunks = filterChunks(chunks, spec, this.importName);
+  }
+
+  selectChunks(filter: CartChunkFilter): readonly Tic80CartChunk[] {
+    return filterChunks(this.chunks, filter, this.importName);
+  }
+
+  selectSingleChunk(filter: CartChunkFilter): Tic80CartChunk {
+    const selected = this.selectChunks(filter);
+    if (selected.length !== 1) {
+      const addresses = selected.map(({ chunkType, bank }) => `${chunkType}:${bank}`);
+      throw new Error(
+        `Import ${this.importName} matches multiple payloads (${addresses.join(", ")}). ` +
+        "Select one via import:NAME:CHUNK:BANK",
+      );
+    }
+    return selected[0];
   }
 
   dump(): void {
     console.log(`Tic80Resource dump for cart: ${this.cartPath}`);
-    for (const [chunkType, data] of this.rootView.subAssets.entries()) {
-      console.log(`  Chunk: ${chunkType}, size: ${data.length}`);
+    for (const { chunkType, bank, data } of this.chunks) {
+      console.log(`  Chunk: ${chunkType}:${bank}, size: ${data.length}`);
     }
-  }
-
-  getView(project: TicbuildProjectCore, chunks?: Tic80CartChunkTypeKey[]) {
-    if (!chunks || chunks.length === 0) {
-      return this.rootView;
-    }
-    const view = new Tic80CartResourceView();
-    for (const chunkType of chunks) {
-      const data = this.rootView.subAssets.get(chunkType);
-      if (!data) {
-        throw new Error(`Requested chunk type not found in Tic80Resource: ${chunkType}`);
-      }
-      view.subAssets.set(chunkType, data);
-    }
-    return view;
   }
 
   getDependencyList(): ExternalDependency[] {
@@ -104,7 +83,6 @@ export class Tic80Resource extends ImportedResourceBase {
   }
 }
 
-// spec is assumed to be in the project.
 export async function importTic80Cart(
   project: TicbuildProjectCore,
   spec: ImportDefinition,
@@ -113,7 +91,5 @@ export async function importTic80Cart(
   const sourceInfo = materializedSource ?? await materializeImportSource(project, spec);
   const sourcePath = requireFileImportSource(spec, sourceInfo);
   const data = await readBinaryFileAsync(sourcePath);
-  const cart = parseTic80Cart(data);
-  const resource = new Tic80Resource(sourcePath, spec, cart, sourceInfo.watchDependencies);
-  return resource;
+  return new Tic80Resource(sourcePath, spec, parseTic80Cart(data), sourceInfo.watchDependencies);
 }

@@ -52,21 +52,24 @@ export interface CommandImportSource {
   fileDependencies?: string[];
 }
 
-export interface ImportDefinition {
+export interface CartChunkFilter {
+  chunks?: readonly Tic80CartChunkTypeKey[];
+  bank?: number;
+}
+
+export interface ImportDefinition extends CartChunkFilter {
   name: string;
   path?: string;
   command?: CommandImportSource;
   kind?: ImportKindKey;
-  chunks?: Tic80CartChunkTypeKey[];
   sourceEncoding?: SourceEncodingKey;
   value?: string;
   typescript?: TypeScriptImportConfig;
 }
 
-// specifies a view of an imported resource; containing possibly a subset of its supported chunks.
-export interface AssetReference {
-  import: string;
-  chunks?: Tic80CartChunkTypeKey[]; // if omitted, "all" chunks are assumed
+// Selects payloads from a named import.
+export interface AssetReference extends CartChunkFilter {
+  import: string; // the import string like import:assetname:CHUNKTYPE:bank
 }
 
 export interface AssemblyBlock {

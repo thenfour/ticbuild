@@ -10,6 +10,7 @@ import { kTic80CartChunkTypes, Tic80Cart, Tic80CartChunk } from "./tic80";
 // 3        Ux1       U = unused / reserved padding. Private extended code chunks use this as bank bit 3.
 // 4..      ...       chunk data
 
+
 function parseThisChunk(data: Uint8Array, offset: number): { chunk: Tic80CartChunk; nextOffset: number } {
   if (offset + 4 > data.length) {
     throw new Error("Unexpected end of data while reading chunk header");
@@ -17,17 +18,18 @@ function parseThisChunk(data: Uint8Array, offset: number): { chunk: Tic80CartChu
   const headerByte = data[offset];
   const chunkTypeValue = headerByte & 0x1f;
   const lowBankBits = headerByte >> 5;
-  const size = readUint16LE(data, offset + 1);
+  const chunkTypeKey = kTic80CartChunkTypes.coerceByValue(chunkTypeValue)?.key;
+  if (!chunkTypeKey) {
+    throw new Error(`Unknown chunk type: ${chunkTypeValue}`);
+  }
+  const headerSize = readUint16LE(data, offset + 1);
+  const size = headerSize === 0 && chunkTypeKey === "CODE" ? kTic80CartChunkTypes.byKey.CODE.sizePerBank : headerSize;
   const temp = data[offset + 3];
   const nextOffset = offset + 4 + size;
   if (nextOffset > data.length) {
     throw new Error("Unexpected end of data while reading chunk data");
   }
   const chunkData = data.subarray(offset + 4, nextOffset);
-  const chunkTypeKey = kTic80CartChunkTypes.coerceByValue(chunkTypeValue)?.key;
-  if (!chunkTypeKey) {
-    throw new Error(`Unknown chunk type: ${chunkTypeValue}`);
-  }
   const bank =
     chunkTypeKey === "CODE" || chunkTypeKey === "CODE_COMPRESSED" ? lowBankBits | (temp << 3) : lowBankBits;
   return {

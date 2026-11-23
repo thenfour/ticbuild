@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { buildCore } from "./core";
-import * as cons from "../utils/console";
 
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -42,22 +41,17 @@ function createTempProject(code: string, assemblyBlock: object): { dir: string; 
   return { dir, manifestPath };
 }
 
-describe("Code chunk bank warnings", () => {
-  it("should warn when CODE block specifies explicit bank", async () => {
+describe("Code chunk placement", () => {
+  it("rejects explicit nonzero CODE bank placement", async () => {
     const { dir, manifestPath } = createTempProject("print('ok')", {
       chunks: ["CODE"],
       bank: 1,
       asset: "maincode",
     });
 
-    // so we can test warnings emitted.
-    const warnSpy = jest.spyOn(cons, "warning").mockImplementation(() => undefined);
-
     try {
-      await buildCore(manifestPath);
-      expect(warnSpy).toHaveBeenCalledWith("Explicit bank specified for CODE chunk: CODE#1");
+      await expect(buildCore(manifestPath)).rejects.toThrow("CODE can only be assigned to output bank 0");
     } finally {
-      warnSpy.mockRestore();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

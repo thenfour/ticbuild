@@ -152,6 +152,7 @@ describe("Build reporters", () => {
 
       expect(messages.map((message) => message.type)).toEqual([
         "project.loadedFrom",
+        "project.buildMode",
         "manifest.resolved",
         "comment",
         "lua.codeSize",
@@ -159,6 +160,7 @@ describe("Build reporters", () => {
         "build.completed",
       ]);
       expect(messages.every((message) => message.version === buildReportVersion)).toBe(true);
+      expect(messages.find((message) => message.type === "project.buildMode")?.data).toEqual({ mode: "release" });
       const codeInfo = kTic80CartChunkTypes.byKey.CODE;
       expect(messages.find((message) => message.type === "lua.codeSize")?.data).toMatchObject({
         importName: "maincode",
@@ -219,6 +221,7 @@ describe("Build reporters", () => {
 
       expect(readBuildReport(dir).map((message) => message.type)).toEqual([
         "project.loadedFrom",
+        "project.buildMode",
         "manifest.resolved",
         "comment",
         "lua.codeSize",
@@ -273,6 +276,7 @@ describe("Build reporters", () => {
       const messages = readBuildReport(dir);
       expect(messages.map((message) => message.type)).toEqual([
         "project.loadedFrom",
+        "project.buildMode",
         "manifest.resolved",
         "comment",
         "diagnostic",

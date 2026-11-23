@@ -64,10 +64,10 @@
         "asset": {
           "import": "music",
           "chunks": [
-            "MUSIC_WAVEFORMS",
+            "WAVEFORMS",
             "MUSIC_PATTERNS",
-            "MUSIC_SFX",
-            "MUSIC_SONG"
+            "SFX",
+            "MUSIC_TRACKS"
           ]
         }
       }

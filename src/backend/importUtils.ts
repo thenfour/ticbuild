@@ -9,48 +9,13 @@ import {
 } from "../utils/encoding/codecRegistry";
 import { ImportDefinition, kImportKind } from "./manifestTypes";
 import { TicbuildProjectCore } from "./projectCore";
-import { kTic80CartChunkTypes, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { ExternalDependency } from "./ImportedResourceTypes";
 import { MaterializedImportSource, materializeImportSource, requireFileImportSource } from "./importSources";
-
-export function IsImportReference(value: string): boolean {
-  return value.startsWith("import:");
-}
-
-export type ImportReference = {
-  importName: string;
-  chunkSpec?: Tic80CartChunkTypeKey;
-};
 
 export type ImportDataResult<T> = {
   data: T;
   dependencies: ExternalDependency[];
 };
-
-export function parseImportReference(reference: string): ImportReference {
-  if (!reference.startsWith("import:")) {
-    throw new Error(`Import reference must start with "import:": ${reference}`);
-  }
-  const spec = reference.substring("import:".length);
-  const parts = spec.split(":");
-  const importName = parts[0]?.trim();
-  if (!importName) {
-    throw new Error(`Import reference is missing import name: ${reference}`);
-  }
-  if (parts.length > 2) {
-    throw new Error(`Import reference has too many ':' segments: ${reference}`);
-  }
-  const chunkSpec = parts.length > 1 ? parts[1].trim() : undefined;
-
-  const coercedChunkSpec = (() => {
-    if (!chunkSpec) {
-      return undefined;
-    }
-    return kTic80CartChunkTypes.coerceByKey(chunkSpec)?.key;
-  })();
-
-  return { importName, chunkSpec: coercedChunkSpec };
-}
 
 function resolveSourceEncodingKey(importDef: ImportDefinition): SourceEncodingKey {
   if (!importDef.sourceEncoding) {

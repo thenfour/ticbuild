@@ -9,7 +9,7 @@ import { LuaPreprocessResult, PreprocessorSymbol } from "./luaPreprocessor";
 import { LuaPreprocessorSourceMap, mapPreprocessedOffset, SourceMapBuilder } from "./sourceMap";
 import * as luaparse from "luaparse";
 import { hashTextSha1 } from "../utils/utils";
-import { IsImportReference } from "./importUtils";
+import { isImportReference } from "./importReference";
 import { isLuaDocCommentText, isWhitespaceText, LuaCATSInfo, parseLuaDocLines } from "../utils/lua/LuaCATS";
 
 type Span = {
@@ -690,7 +690,7 @@ function normalizePath(projectRoot: string, filePath: string): string {
     if (!filePath) {
         return "";
     }
-    if (IsImportReference(filePath)) {
+    if (isImportReference(filePath)) {
         return canonicalizePath(filePath);// filePath.replace(/\\/g, "/");
     }
     const rel = path.isAbsolute(filePath) ? path.relative(projectRoot, filePath) : filePath;
@@ -964,7 +964,7 @@ function findDocForSymbolFromSource(code: string, symbolStart: number): LuaCATSI
 async function computeFileHashes(filePaths: string[], projectRoot: string): Promise<Map<string, string>> {
     const result = new Map<string, string>();
     for (const filePath of filePaths) {
-        const absolute = IsImportReference(filePath) ? null : path.resolve(projectRoot, filePath);
+        const absolute = isImportReference(filePath) ? null : path.resolve(projectRoot, filePath);
         if (!absolute || !fileExists(absolute)) {
             result.set(filePath, "");
             continue;

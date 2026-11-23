@@ -2,8 +2,8 @@
 // provides the basic utils required to execute builds.
 
 import { canonicalizePath, isAbsolutePath, joinPathParts, resolveFileWithSearchPaths } from "../utils/fileSystem";
-import { Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { extractVariablesFromObject } from "../utils/utils";
+import { isImportReference, parseImportReference } from "./importReference";
 import { AssetReference, ImportDefinition, kImportKind, Manifest, VariableInfo } from "./manifestTypes";
 
 export function deduceImportKindFromPath(path: string | undefined): string | undefined {
@@ -25,41 +25,11 @@ export function deduceImportKindFromPath(path: string | undefined): string | und
   return undefined;
 }
 
-// export function deduceAssemblerKindFromAssetReference(assetRef: AssetReference): string | undefined {
-//   const importKind = assetRef.import;
-//   if (importKind === kImportKind.key.LuaCode) {
-//     return kAssemblerKind.key.LuaCode;
-//   }
-//   // simple for now.
-//   return kAssemblerKind.key.BinaryCopy;
-// }
-
-// "import:name.here"
-// "import:music-imported-cart:MUSIC_WAVEFORMS"
-// "import:music-imported-cart:MUSIC_WAVEFORMS,CODE,SPRITES"
 export function canonicalizeAssetImport(asset: string | AssetReference): AssetReference {
   if (typeof asset !== "string") {
-    return asset; // assume already canonical
+    return asset;
   }
-
-  // Handle shorthand: "import:music-imported-cart:MUSIC_WAVEFORMS,CODE,SPRITES"
-  if (!asset.startsWith("import:")) {
-    //throw new Error(`Invalid asset import shorthand: ${asset}`);
-    return { import: asset };
-  }
-  const parts = asset.split(":");
-  // if (parts.length < 2) {
-  //   throw new Error(`Invalid asset import shorthand: ${asset}`);
-  // }
-
-  const importName = parts[1];
-  const chunks: undefined | Tic80CartChunkTypeKey[] =
-    parts.length > 2 ? (parts[2].split(",") as Tic80CartChunkTypeKey[]) : undefined;
-
-  return {
-    import: importName,
-    chunks,
-  };
+  return isImportReference(asset) ? parseImportReference(asset) : { import: asset };
 }
 
 // similar to visual studio's $(VariableName) substitution. Environment values

@@ -1,8 +1,10 @@
 import { AssembleOutputResult, TicbuildProject } from "../backend/project";
+import { getLuaCodeOutputType } from "../backend/assembly";
 import { buildProjectSymbolIndex } from "../backend/symbolIndex";
 import { CodeResource, CodeSizeStats } from "../backend/importers/CodeResource";
 import { Tic80Resource } from "../backend/importers/tic80CartImporter";
-import { AssetReference, CodeAssemblyOptions } from "../backend/manifestTypes";
+import { CodeAssemblyOptions } from "../backend/manifestTypes";
+import { canonicalizeAssetImport } from "../backend/projectCore";
 import { serializeSourceMapV3 } from "../backend/sourceMapV3";
 import type { LuaPreprocessorSourceMap } from "../backend/sourceMap";
 import * as cons from "../utils/console";
@@ -302,8 +304,6 @@ async function executeBuildCore(
     await project.loadImports(reporter, profiler, scope);
   });
 
-  warnExplicitCodeBanks(project, reporter);
-
   await buildScope.profileAsync("Produce development artifacts", { category: "development artifacts" }, async (scope) => {
     await writeDevelopmentArtifacts(project, reporter, profiler, scope);
   });
@@ -432,9 +432,9 @@ async function writeDevelopmentArtifacts(
     }
     if (resource instanceof Tic80Resource) {
       const cartStatsLines = buildCartStatsLines(
-        Array.from(resource.rootView.subAssets.entries()).map(([chunkType, data]) => ({
+        resource.chunks.map(({ chunkType, bank, data }) => ({
           chunkType,
-          bank: 0,
+          bank,
           size: data.length,
         })),
         "  ",
@@ -755,18 +755,13 @@ type LuaCompressedCodeOutput = {
 function getLuaCodeAssemblyRequests(project: TicbuildProject, identifier: string): LuaCodeAssemblyRequest[] {
   const requests: LuaCodeAssemblyRequest[] = [];
   for (const block of project.resolvedCore.manifest.assembly.blocks) {
-    const assetRef = block.asset as AssetReference;
+    const assetRef = canonicalizeAssetImport(block.asset);
     if (assetRef.import !== identifier) {
       continue;
     }
-    const requestedChunks = block.chunks || ["CODE"];
-    for (const chunkType of requestedChunks) {
-      if (chunkType === "CODE" || chunkType === "CODE_COMPRESSED") {
-        requests.push({
-          chunkType,
-          codeOptions: block.code,
-        });
-      }
+    const chunkType = getLuaCodeOutputType(block, assetRef);
+    if (chunkType !== undefined) {
+      requests.push({ chunkType, codeOptions: block.code });
     }
   }
   return requests;
@@ -790,8 +785,7 @@ async function getLuaCompressedCodeOutputs(
       continue;
     }
     seenModes.add(outputKey);
-    const view = resource.getView(project.resolvedCore, ["CODE_COMPRESSED"]);
-    const bytes = await view.getDataForChunk(project.resolvedCore, "CODE_COMPRESSED", request.codeOptions);
+    const bytes = await resource.view.getDataForChunk(project.resolvedCore, "CODE_COMPRESSED", request.codeOptions);
     outputs.push({ bytes, compressionMode, multiBankCompressedCode });
   }
   return outputs;
@@ -903,45 +897,6 @@ function buildLuaCodeSizeReport(
     lines,
     chunks: rows.map(({ label, note, ...entry }) => entry),
   };
-}
-
-// warn if any assembly blocks specify explicit banks for CODE chunks.
-// generally you let ticbuild split code across multiple banks automatically.
-// so specifying banks is weird, but technically allowed.
-function warnExplicitCodeBanks(project: TicbuildProject, reporter: BuildReporter): void {
-  if (!project.resourceMgr) {
-    return;
-  }
-
-  for (const block of project.resolvedCore.manifest.assembly.blocks) {
-    if (block.bank === undefined) {
-      continue;
-    }
-
-    let emitsCode = false;
-    if (block.chunks) {
-      emitsCode = block.chunks.includes("CODE");
-    } else {
-      const assetRef = block.asset as AssetReference;
-      const resource = project.resourceMgr.items.get(assetRef.import);
-      if (!resource) {
-        continue;
-      }
-      try {
-        const view = resource.getView(project.resolvedCore, block.chunks);
-        emitsCode = view.getParallelChunkTypes().includes("CODE");
-      } catch {
-        emitsCode = false;
-      }
-    }
-
-    if (!emitsCode) {
-      continue;
-    }
-
-    const key = formatChunkKey("CODE", block.bank);
-    reportDiagnostic(reporter, "warning", `Explicit bank specified for CODE chunk: ${key}`);
-  }
 }
 
 function formatChunkKey(chunkType: string, bank: number): string {

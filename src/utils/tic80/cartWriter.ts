@@ -1,5 +1,4 @@
 import { assert } from "../errorHandling";
-import { trimTrailingZeros } from "../utils";
 import {
   kTic80CartChunkTypes,
   kTic80ExtendedCodeBankCount,
@@ -35,48 +34,50 @@ export function serializeChunk(
   }
   const bankCount =
     (chunkType === "CODE" && options?.allowExtendedCodeBanks) ||
-    (chunkType === "CODE_COMPRESSED" && options?.allowMultiBankCompressedCode)
+      (chunkType === "CODE_COMPRESSED" && options?.allowMultiBankCompressedCode)
       ? kTic80ExtendedCodeBankCount
       : chunkInfo.bankCount;
   if (bank < 0 || bank >= bankCount) {
     const baseMessage = `Bank index ${bank} out of range for chunk ${chunkType} (0..${bankCount - 1})`;
     if (chunkType === "CODE" && !options?.allowExtendedCodeBanks) {
       throw new Error(
-        `${baseMessage}. Enable allowExtendedCodeBanks to write private extended CODE banks (0..${
-          kTic80ExtendedCodeBankCount - 1
+        `${baseMessage}. Enable allowExtendedCodeBanks to write private extended CODE banks (0..${kTic80ExtendedCodeBankCount - 1
         })`,
       );
     }
     if (chunkType === "CODE_COMPRESSED" && !options?.allowMultiBankCompressedCode) {
       throw new Error(
-        `${baseMessage}. Enable allowMultiBankCompressedCode to write private multi-bank CODE_COMPRESSED chunks (0..${
-          kTic80ExtendedCodeBankCount - 1
+        `${baseMessage}. Enable allowMultiBankCompressedCode to write private multi-bank CODE_COMPRESSED chunks (0..${kTic80ExtendedCodeBankCount - 1
         })`,
       );
     }
     throw new Error(baseMessage);
   }
-  const header = new Uint8Array(4);
-  // first byte: BBBC CCCC
-  assert(chunkInfo.value >= 0 && chunkInfo.value <= 31, `Chunk type value out of range: ${chunkInfo.value}`);
-  header[0] = ((bank & 0x7) << 5) | chunkInfo.value; // BBBC CCCC
-  // size: Sx16
   const size = data.length;
   if (size > chunkInfo.sizePerBank) {
-    throw new Error(`Chunk data too large: ${size} bytes (max 65535)`);
+    throw new Error(`${chunkType} data too large: ${size} bytes (max ${chunkInfo.sizePerBank})`);
   }
-  header[1] = size & 0xff;
-  header[2] = (size >> 8) & 0xff;
-  header[3] =
+  if (chunkType === "CODE" && size === 0) {
+    throw new Error("Cannot write an empty CODE chunk. A zero size field encodes 65536 bytes.");
+  }
+  const chunk = new Uint8Array(4 + size);
+  // first byte: BBBC CCCC
+  assert(chunkInfo.value >= 0 && chunkInfo.value <= 31, `Chunk type value out of range: ${chunkInfo.value}`);
+  chunk[0] = ((bank & 0x7) << 5) | chunkInfo.value; // BBBC CCCC
+  // size: Sx16
+  chunk[1] = size & 0xff;
+  chunk[2] = (size >> 8) & 0xff;
+  chunk[3] =
     (chunkType === "CODE" && options?.allowExtendedCodeBanks) ||
-    (chunkType === "CODE_COMPRESSED" && options?.allowMultiBankCompressedCode)
+      (chunkType === "CODE_COMPRESSED" && options?.allowMultiBankCompressedCode)
       ? bank >> 3
       : 0;
-  return new Uint8Array([...header, ...data]);
+  chunk.set(data, 4);
+  return chunk;
 }
 
 export async function AssembleTic80Cart(input: Tic80Cart): Promise<Uint8Array> {
-  // sanity check: no duplicate chunk types
+  // A cartridge can have one payload at each chunk type and bank.
   const seenChunkTypes = new Set<string>();
   for (const chunk of input.chunks) {
     const key = `${chunk.chunkType}@${chunk.bank}`;
@@ -110,8 +111,10 @@ export async function AssembleTic80Cart(input: Tic80Cart): Promise<Uint8Array> {
   // serialize each chunk
   const serializedChunks: Uint8Array[] = [];
   for (const { chunk } of chunksWithInfo) {
-    const trimmedData = trimTrailingZeros(chunk.data);
-    const serialized = serializeChunk(chunk.chunkType, trimmedData, chunk.bank, {
+    // note that tic-80 cart chunks can skip/trim/elide trailing zeros in the payload.
+    // that could be done here but for simplicity for the moment i just output the same payload as incoming.
+    // later if i support generating chunks then this behavior can be placed back.
+    const serialized = serializeChunk(chunk.chunkType, chunk.data, chunk.bank, {
       allowExtendedCodeBanks: input.allowExtendedCodeBanks,
       allowMultiBankCompressedCode: input.allowMultiBankCompressedCode,
     });

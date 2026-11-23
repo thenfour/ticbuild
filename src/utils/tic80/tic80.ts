@@ -44,6 +44,7 @@ export const kTic80CartChunkTypes = defineEnum({
     deprecated: false,
   },
 
+
   // This represents the code, in ASCII text format.
   // Version Notes:
   //     0.80 removed support for separate code banks. Older cartridge's
@@ -54,7 +55,7 @@ export const kTic80CartChunkTypes = defineEnum({
 
   //     1.0 supports up to 512kb of code. This code is stored sequentially
   //     (uncompressed) across up to 8 banks. Individual banks are joined into a
-  //     single large string when loaded (in sequential 0..7 order). The editor
+  //     single large string when loaded (in descending bank order). The editor
   //     buffer split into multiple banks when saved to cartridge (when larger
   //     than 64kb). A cartridge may consist of 1 to 8 code banks.
 
@@ -65,7 +66,7 @@ export const kTic80CartChunkTypes = defineEnum({
   CODE: {
     value: 5, //
     bankCount: 8,
-    sizePerBank: kbToBytes(64) - 1, // size must be <= 65535 bytes because of how size is represented.
+    sizePerBank: kbToBytes(64), // A zero length field encodes a full CODE bank.
     deprecated: false,
   },
 
@@ -86,13 +87,13 @@ export const kTic80CartChunkTypes = defineEnum({
 
   WAVEFORMS: {
     value: 10,
-    bankCount: 1, // no bank support.
-    sizePerBank: 0x1000,
+    bankCount: 8,
+    sizePerBank: 0x100,
     deprecated: false,
   },
   PALETTE: {
     value: 12,
-    bankCount: 1, // no bank support.
+    bankCount: 8,
     sizePerBank: 96, // 48 SCN + 48 BDR
     deprecated: false,
   },
@@ -117,7 +118,7 @@ export const kTic80CartChunkTypes = defineEnum({
   // if present, default palette & waveforms are loaded.
   DEFAULT: {
     value: 17,
-    bankCount: 1,
+    bankCount: 8,
     sizePerBank: 0,
     deprecated: false,
   },
@@ -126,7 +127,7 @@ export const kTic80CartChunkTypes = defineEnum({
   SCREEN: {
     value: 18,
     bankCount: 8,
-    sizePerBank: kbToBytes(16),
+    sizePerBank: (240 * 136) / 2,
     deprecated: false,
   },
   CODE_WASM: {

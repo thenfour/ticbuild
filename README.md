@@ -389,10 +389,6 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
       "path": "main.lua",
       "kind": "LuaCode", // defines the type of importer to handle this.
     },
-    // multiple code imports: they will be made available
-    // in code as --#include "import:otherCodeAsset"
-    // but the code bank can only reference one code asset and multiple code banks
-    // are explicitly not supported (ticbuild manages code banking).
     {
       "name": "twilight_bog_palette", // https://lospec.com/palette-list/twilight-bog
       "kind": "binary", // the imported resource is treated as binary data.
@@ -435,29 +431,28 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
     {
       "name": "myGraphics",
       "path": "./carts/sprites.tic", // imports from some other cartridge
-      // you can specify which chunks to bring in. The chunk types are hard-coded
+
+      // you can filter which chunks to include. The chunk types are hard-coded
       // corresponding to the TIC-80 cart chunks.
+      // see chunk types @ https://github.com/nesbox/TIC-80/wiki/.tic-File-Format
+      // see elsewhere in this README for details on specific chunk type behaviors.
+      //
       // Bringing in multiple chunks though means that 1 import can have multiple
-      // sub-assets. In this case, "myGraphics" contains tiles and sprites.
-      // asset types are so far just mapped directly to tic80 cart chunk types.
-      // but in the future it could be that we support our own types of imports
-      // for example a .MOD, or a .TTF or graphics.
+      // sub-assets (payloads). In this case, "myGraphics" contains tiles and sprites.
       //
-      // It means when you refer to an import ("myGraphics") you need to specify
-      // which sub asset you actually want. Scenarios:
-      // 1. the requseted chunks matches exactly the asset chunks: e.g. for cart
-      //    assembly, you specify blockTypes:["TILES", "SPRITES"], and asset "myGraphics",
-      //    it will just both sub-assets without needing to specify.
-      // 2. if you don't specify the chunks desired, all will be used. Errors would
-      //    be produced if the destination doesn't support that chunk type.
-      // 3. if the requested chunks don't match the available, this is an error.
-      //    In this case you must be explicit about what you want to import.
-      // (that's the idea...)
-      //
-      // if import.chunks is omitted, extract all chunks from source.
-      // if block.chunks is omitted, use all chunks the asset provides.
+      // When you refer to an import ("myGraphics" in #import, __IMPORT, or the `assembly` section),
+      // you can specify sub asset(s) you actually want. Typically that means
+      // omitting chunks[] / bank will use all available; specifying will filter.
+      // 
+      // NOTE: CODE is handled specially: concatenated on load;
+      // viewable only as a bank 0 code chunk
+      // and auto-split into banks on cart saving.
+      // see elsewhere in this readme for details about CODE behavior.
       "chunks": ["TILES", "SPRITES"],
       "kind": "Tic80Cartridge", // again this could be deduced.
+
+      // filter to a specific 0-based source bank. if omitted, all present banks are pulled in.
+      "bank": 4,
     },
     {
       "name": "music-imported-cart",
@@ -465,10 +460,10 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
       // you can also omit the chunks and we'll just import all available from a cart.
       "chunks": [
         "CODE",
-        "MUSIC_WAVEFORMS",
+        "WAVEFORMS",
         "MUSIC_PATTERNS",
-        "MUSIC_SFX",
-        "MUSIC_SONG",
+        "SFX",
+        "MUSIC_TRACKS",
       ],
       // MAYBE in the future we can add other ways to query like to pull in a specific sprite.
       // but for now not necessary.
@@ -511,11 +506,47 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
     },
     "blocks": [
       {
-        // error if overlapping chunks.
-        // this chunk type "CODE" is technically redundant because the asset already has the chunk type attached.
+        // error if overlapping/colliding chunks.
         // you can specify CODE_COMPRESSED for the ZLIB compressed version.
+
+        // "chunks" is slightly ambiguous but effectively it defines the OUTPUT CHUNK(s),
+        // which can be implicit from the source.
+        // an empty array therefore does specify, albeit no output. Allowed but will output a
+        // warning.
+        //
+        // for single input payloads (single-bank-single-chunk) AND single output payload (bank-chunk),
+        // this enables the possibility of "remapping" chunk types.
+        //
+        // single input payload + multiple output payload is an error (e.g. it's not possible to map
+        // a single TILES to multiple chunk types in 1 block entry)
+        //
+        // for multiple input payloads, this list filters the selected payloads by type.
+        // At least one type must match.
         "chunks": ["CODE"],
-        "bank": 0,
+
+        // An explicit destination bank requires one selected payload per output type.
+        // Omit it to preserve the selected asset banks (note: CODE will bank-split automatically).
+        // Rationale:
+        //  - this allows multi-bank imports to output also as multiple banks
+        //    use-case: basically using ticbuild in a daisy-chain flow; minimally
+        //    taking an existing cart and outputting the same cart without having
+        //    to specify every chunk & bank.
+        //  - it allows retaining the original bank without having to repeat that info.
+        //    if you want to move something from bank 4 to bank 2, it's natural that you
+        //    must be explicit. But if you want to move from bank 4 to <same bank>, this
+        //    allows doing that.
+        // that's the only way to output multiple banks in 1 block entry.
+        // Q: what if they overlap with other assembly entries?
+        //  -> same logic as specifying dupe chunk/bank in separate entries. error; do not concat or override
+        // Q: if two payloads of the same type would both land in the destination bank?
+        //  -> error; select a single source bank.
+        // Q: multiple chunks specified, each spanning only 1 bank, but they're different banks?
+        //  -> then specifying a bank here will "flatten" them so they all end up in this bank.
+        // Q: what if the payload doesn't fit in the destination chunk?
+        //  -> error. CODE and CODE_COMPRESSED can split automatically when bank is omitted.
+        //
+        // if the import asset doesn't have a bank (e.g. a raw binary file) then
+        // defaults to bank 0.
         "asset": "maincode",
         "code": { // optional code assemblyl options
           // when applicable (currently only CODE_COMPRESSED), high-level compression options.
@@ -527,22 +558,41 @@ The manifest file is canonically `*.ticbuild.jsonc`. Its location defines the pr
         },
       },
       {
-        // Note: Binary resources can be output to any chunk type. they just get placed there
-        // with no regards of format / packing. Often you want to store custom resources in places like
-        // the large MAP area.
+        // Binary and text resources need one explicit destination chunk type.
+        // this example uses MAP to store custom data.
         "chunks": ["MAP"],
-        "asset": "some_binary_file"
+        "asset": "twilight_bog_palette"
       },
       {
-        // produces a view of the import with just the 1 MUSIC_WAVEFORMS sub-asset
-        // Without specifying the chunks to produce, this automatically implies chunks: ["MUSIC_WAVEFORMS"].
-        // if you explicitly specify "chunks":["TILES"], this would binary copy the waveforms to the tiles.
+        // Copy waveforms from source bank 1 into MAP at output bank 4.
+        // Q: what if the imported selection contains WAVEFORMS in *multiple* banks, and you specify
+        //    outputting  to just "TILES"?
+        //  -> invalid; "remapping" only works for single payloads. it's too obscure to attempt doing some
+        //     kind of smart mapping. if you have 7 banks of tiles and you want to output them as waveforms (why?),
+        //     that means you'll need 7 assembly output entries, each remapping the individual banks
 
         // canonical form:
-        "asset": { "import": "music-imported-cart", "chunks": ["MUSIC_WAVEFORMS"] },
+        "asset": {
+          "import": "music-imported-cart",
 
-        // optional sugar method that resembles how Lua includes assets.
-        //asset: "import:music-imported-cart:MUSIC_WAVEFORMS",
+          // chunks & bank are thought of as filter criteria. must match chunks AND bank.
+          // so if import contains:
+          // - bank 0 WAVEFORMS
+          // - bank 1 WAVEFORMS
+          // - bank 1 MUSIC_PATTERNS
+          // then if you specify:
+          // chunks:["WAVEFORMS"] -> both banks of waveforms.
+          // chunks:["WAVEFORMS"], bank:0 -> WAVEFORMS:0
+          // chunks:["WAVEFORMS", "MUSIC_PATTERNS"], bank:0 -> WAVEFORMS:0
+          // chunks:["WAVEFORMS", "MUSIC_PATTERNS"] -> all 3 payloads
+          // ! at least 1 payload must result. if no payloads are present in the result, error.
+          "chunks": ["WAVEFORMS"],
+          "bank": 1
+        },
+
+        // equivalent shorthand for asset: "import:music-imported-cart:WAVEFORMS:1"
+        "chunks": ["MAP"],
+        "bank": 4,
       },
     ],
   },
@@ -615,6 +665,32 @@ relative to the manifest directory unless you provide an absolute pattern.
 These extra globs can trigger rebuilds on file changes, file additions, and file removals.
 
 `additionalWatchGlobs` is an array value, so build configurations replace the whole array when overriding it.
+
+# Chunk types
+
+TIC-80 carts contain specific semantic chunks; see https://github.com/nesbox/TIC-80/wiki/.tic-File-Format.
+
+Cart imports retain chunk & bank info except for `CODE`.
+
+| ID | Manifest name | Banks | Maximum bytes per bank |
+| ---: | --- | --- | ---: |
+| 1 | `TILES` | 0–7 | 8,192 |
+| 2 | `SPRITES` | 0–7 | 8,192 |
+| 4 | `MAP` | 0–7 | 32,640 |
+| 5 | `CODE` | Logical bank 0. Assembly splits across banks. | 65,536 |
+| 6 | `FLAGS` | 0–7 | 512 |
+| 9 | `SFX` | 0–7 | 4,224 |
+| 10 | `WAVEFORMS` | 0–7 | 256 |
+| 12 | `PALETTE` | 0–7 | 96 |
+| 14 | `MUSIC_TRACKS` | 0–7 | 408 |
+| 15 | `MUSIC_PATTERNS` | 0–7 | 11,520 |
+| 16 | `CODE_COMPRESSED` | Bank 0 in stock carts; Banks 0–15 in the private format. | 65,535 |
+| 17 | `DEFAULT` | 0–7 | 0 |
+| 18 | `SCREEN` | 0–7 | 16,320 |
+| 19 | `CODE_WASM` | Recognized on import. Nonempty output is unsupported. | — |
+
+`DEFAULT` carries the marker for TIC-80's built-in palette and waveforms. It is
+copied as a marker. Import `DEFAULT` to retain it in your output.
 
 # TypeScript code
 
@@ -1104,8 +1180,23 @@ print() --#define XYZ -- note that here #define will not be processed.
 -- not macros, they are only recognized in other preprocessor directives.
 
 --#include "utils/math.lua" -- extra comments are allowed in directive lines.
---#include "import:music-imported-cart:CODE" -- includes the imported code sub-asset from that cart
---#include "import:cart-with-only-code-chunk" -- implicit code-only import. If that cart contains more than CODE chunks, then you MUST specify ":CODE".
+
+-- includes the imported code sub-asset from that cart.
+-- chunks that span multiple banks > behavior depends on the bank. CODE will
+-- produce a concatenated version.
+-- and YES it's very odd to specify SPRITES here, but:
+-- 1. you might actually decide for some crazy reason to put code in other banks, maybe  if you hit a size limit
+-- 2. the point is to describe the `import:` syntax that can also be used elsewhere.
+-- so CODE is the only chunk type that produces a concatenated-over-banks output.
+-- - if the import chunk spans multiple banks and you don't specify, this is an error.
+--   (for an import with TILES:0 and TILES:1, you must specify the bank.)
+--   (for an import with only TILES:1, bank is optional; bank 1 is implicit)
+-- - if you specify a bank that doesn't exist in the import, error.
+--#include "import:music-imported-cart:CODE"
+--#include "import:music-imported-cart:SPRITES:2" -- additional token for specifying explicit source bank (0-7)
+
+-- implicit code-only import. If that cart contains more than CODE chunks, then you MUST specify ":CODE".
+--#include "import:cart-with-only-code-chunk"
 
 -- you can set variables that the included file can read
 -- note that #pragma once will key against the filename AND its input variables.
@@ -1239,7 +1330,10 @@ local paletteString = "!*u>VJ3C?PFD-`-qM7Tatcae[uGB.gq3'TBA94Oi0E4D-maM5LKk3Ab%[
 local s = __ENCODE("b85+1,lz", "hex", "#!&,K2'Jqg;:0ML?NM;9@X16KdK:I.+F[e>T3,hN#VIXYUP`Ei\"^Z\">?UlDg->*]-g")
 
 -- allows emitting a string literal from an imported text resource.
-local scrollText = __IMPORT("", "", "import:somecart:")
+local scrollText = __IMPORT("", "", "import:somecart:CODE")
+
+-- Select source bank 1 explicitly
+local waveformBytes = __IMPORT("hex", "import:music-imported-cart:WAVEFORMS:1")
 
 -- once again, "import:" is required for consistency, and to allow literals (though it's not much
 -- value but there for completeness.)
@@ -1423,19 +1517,15 @@ available to Lua code; this is a different system than macros or preprocessor de
 # Code chunk behavior
 
 Code chunk banks on cart are semantically slightly different than other chunk
-types. Most of the time it's the simple, independent banks.
-
-But when code is loaded by TIC-80, all code banks are concatenated, in reverse
+types. When code is loaded by TIC-80, all code banks are concatenated, in reverse
 bank order (bank7 + bank6 + ... bank0).
 
-Therefore, it's a warning to specify the bank explicitly for code chunks. But still
-allowed as long as there's no conflict.
+ticbuild combines cartridge `CODE` payloads (just as TIC-80 natively does).
+The resulting payload can be selected at source bank 0.
 
-But if code wants to span multiple banks (larger than 1 bank), then no specified code banks should be
-allowed (this is an error).
+CODE bank info is therefore clobbered on cart import load.
 
-For the code chunk alone, if code is larger than 1 bank, ticbuild automatically
-splits it across multiple banks.
+For output assembly, code is automatically always split into banks.
 
 By default, ticbuild keeps the stock TIC-80 limit: up to 8 uncompressed CODE
 banks. ticbuild's private TIC-80 build can opt into 16 uncompressed CODE banks:
