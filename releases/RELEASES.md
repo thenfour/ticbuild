@@ -44,6 +44,8 @@
 - #99 added `project update` and `project check` commands
 - #101 `--env` is now supported on command line to override environment
 - #100 Removed the obsolete `repl` command.
+- #102 fixed: SPRITES was causing manifest validation error.
+- #104, #105, #103: Import and output bank support
 
 ### Migration notes from v1.0.22
 
@@ -75,6 +77,8 @@ print(MY_VAL)
 -- hello
 -- world
 ```
+
+Possible: multiple banks are now supported.
 
 In addition, macros can no longer be used before they're defined.
 
