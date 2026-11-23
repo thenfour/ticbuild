@@ -1,5 +1,6 @@
 import { inflateSync } from "node:zlib";
 import { readUint16LE } from "../bin";
+import { warning } from "../console";
 import { kTic80CartChunkTypes, Tic80Cart, Tic80CartChunk } from "./tic80";
 
 // each chunk consists of a 4-byte header, then chunk data.
@@ -19,9 +20,6 @@ function parseThisChunk(data: Uint8Array, offset: number): { chunk: Tic80CartChu
   const chunkTypeValue = headerByte & 0x1f;
   const lowBankBits = headerByte >> 5;
   const chunkTypeKey = kTic80CartChunkTypes.coerceByValue(chunkTypeValue)?.key;
-  if (!chunkTypeKey) {
-    throw new Error(`Unknown chunk type: ${chunkTypeValue}`);
-  }
   const headerSize = readUint16LE(data, offset + 1);
   const size = headerSize === 0 && chunkTypeKey === "CODE" ? kTic80CartChunkTypes.byKey.CODE.sizePerBank : headerSize;
   const temp = data[offset + 3];
@@ -32,9 +30,12 @@ function parseThisChunk(data: Uint8Array, offset: number): { chunk: Tic80CartChu
   const chunkData = data.subarray(offset + 4, nextOffset);
   const bank =
     chunkTypeKey === "CODE" || chunkTypeKey === "CODE_COMPRESSED" ? lowBankBits | (temp << 3) : lowBankBits;
+  if (!chunkTypeKey) {
+    warning(`Unknown TIC-80 chunk type ${chunkTypeValue} at offset ${offset} (bank ${bank}, ${size} bytes); preserving payload`);
+  }
   return {
     chunk: {
-      chunkType: chunkTypeKey,
+      chunkType: chunkTypeKey ?? chunkTypeValue,
       bank,
       data: chunkData,
     },

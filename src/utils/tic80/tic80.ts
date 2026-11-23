@@ -140,8 +140,15 @@ export const kTic80CartChunkTypes = defineEnum({
 
 export type Tic80CartChunkTypeKey = typeof kTic80CartChunkTypes.$key;
 
+// Known chunks use their names; unrecognized chunks retain their numeric type IDs.
+export type Tic80CartChunkType = Tic80CartChunkTypeKey | number;
+
+export function formatTic80CartChunkType(chunkType: Tic80CartChunkType): string {
+  return typeof chunkType === "number" ? `UNKNOWN(${chunkType})` : chunkType;
+}
+
 export type Tic80CartChunk = {
-  chunkType: Tic80CartChunkTypeKey;
+  chunkType: Tic80CartChunkType;
   bank: number;
   data: Uint8Array;
 };

@@ -1,10 +1,11 @@
 import { assert } from "../errorHandling";
 import {
+  formatTic80CartChunkType,
   kTic80CartChunkTypes,
   kTic80ExtendedCodeBankCount,
   Tic80Cart,
   Tic80CartChunk,
-  Tic80CartChunkTypeKey,
+  Tic80CartChunkType,
 } from "./tic80";
 
 // each chunk consists of a 4-byte header, then chunk data.
@@ -20,14 +21,14 @@ type SerializeChunkOptions = {
 };
 
 export function serializeChunk(
-  chunkType: Tic80CartChunkTypeKey,
+  chunkType: Tic80CartChunkType,
   data: Uint8Array,
   bank: number,
   options?: SerializeChunkOptions,
 ): Uint8Array {
   const chunkInfo = kTic80CartChunkTypes.coerceByKey(chunkType);
   if (!chunkInfo) {
-    throw new Error(`Unknown chunk type key: ${chunkType}`);
+    throw new Error(`Unsupported chunk type for serialization: ${formatTic80CartChunkType(chunkType)}`);
   }
   if (!Number.isInteger(bank)) {
     throw new Error(`Bank index must be an integer for chunk ${chunkType}`);
@@ -82,7 +83,7 @@ export async function AssembleTic80Cart(input: Tic80Cart): Promise<Uint8Array> {
   for (const chunk of input.chunks) {
     const key = `${chunk.chunkType}@${chunk.bank}`;
     if (seenChunkTypes.has(key)) {
-      throw new Error(`Duplicate chunk type in TIC-80 cart: ${chunk.chunkType} bank ${chunk.bank}`);
+      throw new Error(`Duplicate chunk type in TIC-80 cart: ${formatTic80CartChunkType(chunk.chunkType)} bank ${chunk.bank}`);
     }
     seenChunkTypes.add(key);
   }
@@ -93,7 +94,7 @@ export async function AssembleTic80Cart(input: Tic80Cart): Promise<Uint8Array> {
     (chunk) => {
       const info = kTic80CartChunkTypes.coerceByKey(chunk.chunkType);
       if (!info) {
-        throw new Error(`Unknown chunk type key: ${chunk.chunkType}`);
+        throw new Error(`Unsupported chunk type for serialization: ${formatTic80CartChunkType(chunk.chunkType)}`);
       }
       return { chunk, info };
     },

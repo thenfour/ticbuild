@@ -3,10 +3,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { buildCore } from "../frontend/core";
 import { createBuildReporter } from "../frontend/buildReporter";
+import * as cons from "../utils/console";
 import { getCombinedCodeBytes, parseTic80Cart } from "../utils/tic80/cartLoader";
 import { AssembleTic80Cart } from "../utils/tic80/cartWriter";
 import { Tic80CartChunk, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import { AssemblyBlock, CartChunkFilter, ImportDefinition, Manifest } from "./manifestTypes";
+import { Tic80Resource } from "./importers/tic80CartImporter";
 import { TicbuildProject } from "./project";
 
 function chunk(chunkType: Tic80CartChunkTypeKey, bank: number, data: number[] | string): Tic80CartChunk {
@@ -24,7 +26,10 @@ describe("cartridge asset banking", () => {
     manifestPath = path.join(dir, "project.ticbuild.jsonc");
   });
 
-  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    cons.setLogFile(null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 
   async function writeCart(...chunks: Tic80CartChunk[]): Promise<void> {
     fs.writeFileSync(cartPath, await AssembleTic80Cart({ chunks }));
@@ -70,6 +75,48 @@ describe("cartridge asset banking", () => {
     await writeCart(chunk("TILES", 0, [1]), ...sprites, chunk("MAP", 3, [3]));
     writeManifest([{ asset: "assets", chunks: ["SPRITES"] }], { chunks: ["SPRITES", "MAP"] });
     expect(await assemble()).toEqual(sprites);
+  });
+
+  it("retains unknown chunks in imports and reports them while building supported output", async () => {
+    const sprite = chunk("SPRITES", 2, [12, 0]);
+    await writeCart(sprite);
+    fs.appendFileSync(cartPath, Buffer.from([(3 << 5) | 31, 2, 0, 0, 42, 0]));
+    writeManifest([{ asset: "assets", chunks: ["SPRITES"] }]);
+
+    const messages: unknown[] = [];
+    const { project } = await buildCore(
+      manifestPath, undefined, createBuildReporter("jsonl", (line) => messages.push(JSON.parse(line))),
+    );
+    const resource = project.resourceMgr!.items.get("assets") as Tic80Resource;
+    expect(resource.chunks).toEqual([
+      sprite,
+      { chunkType: 31, bank: 3, data: Uint8Array.of(42, 0) },
+    ]);
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: "diagnostic",
+      data: { severity: "warning", message: expect.stringContaining("Unknown TIC-80 chunk type 31") },
+    }));
+    const importsLog = fs.readFileSync(path.join(dir, "obj", "imports.log"), "utf-8");
+    expect(importsLog).toMatch(/UNKNOWN\(31\):3\s+2\s*B\s*\/\s*n\/a/);
+    const builtBytes = new Uint8Array(fs.readFileSync(path.join(dir, "bin", "built.tic")));
+    expect(parseTic80Cart(builtBytes).chunks).toEqual([sprite]);
+  });
+
+  it("can filter unknown chunks out at import", async () => {
+    const sprite = chunk("SPRITES", 2, [12, 0]);
+    await writeCart(sprite);
+    fs.appendFileSync(cartPath, Buffer.from([31, 1, 0, 0, 42]));
+    writeManifest([{ asset: "assets" }], { chunks: ["SPRITES"] });
+
+    expect(await assemble()).toEqual([sprite]);
+  });
+
+  it("rejects unknown chunks when selected for output", async () => {
+    await writeCart(chunk("SPRITES", 2, [12]));
+    fs.appendFileSync(cartPath, Buffer.from([31, 1, 0, 0, 42]));
+    writeManifest([{ asset: "assets" }]);
+
+    await expect(assemble()).rejects.toThrow("Unsupported chunk type for serialization: UNKNOWN(31)");
   });
 
   it("combines import and reference filters, then remaps one payload to a new type and bank", async () => {

@@ -1,6 +1,6 @@
 import { readBinaryFileAsync } from "../../utils/fileSystem";
 import { getCombinedCodeBytes, parseTic80Cart } from "../../utils/tic80/cartLoader";
-import { Tic80Cart, Tic80CartChunk } from "../../utils/tic80/tic80";
+import { formatTic80CartChunkType, Tic80Cart, Tic80CartChunk } from "../../utils/tic80/tic80";
 import { ExternalDependency, ImportedResourceBase } from "../ImportedResourceTypes";
 import { CartChunkFilter, ImportDefinition } from "../manifestTypes";
 import { TicbuildProjectCore } from "../projectCore";
@@ -15,7 +15,7 @@ function filterChunks(
     throw new Error(`Import ${importName}: CODE can only be selected at source bank 0`);
   }
   const selected = chunks.filter(
-    (chunk) => (filter.chunks === undefined || filter.chunks.includes(chunk.chunkType)) &&
+    (chunk) => (filter.chunks === undefined || filter.chunks.some((type) => type === chunk.chunkType)) &&
       (filter.bank === undefined || filter.bank === chunk.bank),
   );
   if (selected.length === 0) {
@@ -39,7 +39,7 @@ export class Tic80Resource extends ImportedResourceBase {
 
     const addresses = new Set<string>();
     for (const { chunkType, bank } of parsedCart.chunks) {
-      const address = `${chunkType}:${bank}`;
+      const address = `${formatTic80CartChunkType(chunkType)}:${bank}`;
       if (addresses.has(address)) {
         throw new Error(`Duplicate source chunk ${address} in import ${this.importName}`);
       }
@@ -62,7 +62,7 @@ export class Tic80Resource extends ImportedResourceBase {
   selectSingleChunk(filter: CartChunkFilter): Tic80CartChunk {
     const selected = this.selectChunks(filter);
     if (selected.length !== 1) {
-      const addresses = selected.map(({ chunkType, bank }) => `${chunkType}:${bank}`);
+      const addresses = selected.map(({ chunkType, bank }) => `${formatTic80CartChunkType(chunkType)}:${bank}`);
       throw new Error(
         `Import ${this.importName} matches multiple payloads (${addresses.join(", ")}). ` +
         "Select one via import:NAME:CHUNK:BANK",
@@ -74,7 +74,7 @@ export class Tic80Resource extends ImportedResourceBase {
   dump(): void {
     console.log(`Tic80Resource dump for cart: ${this.cartPath}`);
     for (const { chunkType, bank, data } of this.chunks) {
-      console.log(`  Chunk: ${chunkType}:${bank}, size: ${data.length}`);
+      console.log(`  Chunk: ${formatTic80CartChunkType(chunkType)}:${bank}, size: ${data.length}`);
     }
   }
 

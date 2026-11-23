@@ -1,4 +1,4 @@
-import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunk, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
+import { formatTic80CartChunkType, kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunk, Tic80CartChunkType } from "../utils/tic80/tic80";
 import { trimTrailingZeros } from "../utils/utils";
 import { ImportedResourceBase } from "./ImportedResourceTypes";
 import { BinaryResource } from "./importers/binaryResourceImporter";
@@ -54,7 +54,7 @@ function selectCartOutputs(
   }
 
   // multiple input chunks, filter based on output types and ensure at least one matches
-  const outputs = inputs.filter(({ chunkType }) => outputTypes.includes(chunkType));
+  const outputs = inputs.filter(({ chunkType }) => outputTypes.some((type) => type === chunkType));
   if (outputs.length === 0) {
     throw new Error(
       `Import ${asset.import}: no selected payloads match output types ${outputTypes.join(", ")}. ` +
@@ -68,7 +68,7 @@ function selectCartOutputs(
 // places/blits a payload into the TIC-80 cartridge, handling bank assignment and splitting for CODE and CODE_COMPRESSED chunks,
 // and enforcing chunk constraints.
 function placePayload(
-  chunkType: Tic80CartChunkTypeKey,
+  chunkType: Tic80CartChunkType,
   data: Uint8Array,
   sourceBank: number | undefined,
   block: AssemblyBlock,
@@ -134,11 +134,11 @@ export async function assembleAsset(
     const outputs = selectCartOutputs(resource, asset, block.chunks);
     if (block.bank !== undefined) {
       // ensure no duplicate chunk types are written to the same bank (possibly this is not totally needed as it will be detected later in the pipeline, however this gives a more specific message)
-      const types = new Set<Tic80CartChunkTypeKey>();
+      const types = new Set<Tic80CartChunkType>();
       for (const { chunkType } of outputs) {
         if (types.has(chunkType)) {
           throw new Error(
-            `Import ${asset.import}: cannot write multiple ${chunkType} payloads to bank ${block.bank}. Select a source bank.`,
+            `Import ${asset.import}: cannot write multiple ${formatTic80CartChunkType(chunkType)} payloads to bank ${block.bank}. Select a source bank.`,
           );
         }
         types.add(chunkType);

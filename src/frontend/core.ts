@@ -1,32 +1,31 @@
-import { AssembleOutputResult, TicbuildProject } from "../backend/project";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { getLuaCodeOutputType } from "../backend/assembly";
-import { buildProjectSymbolIndex } from "../backend/symbolIndex";
 import { CodeResource, CodeSizeStats } from "../backend/importers/CodeResource";
 import { Tic80Resource } from "../backend/importers/tic80CartImporter";
 import { CodeAssemblyOptions } from "../backend/manifestTypes";
+import { AssembleOutputResult, TicbuildProject } from "../backend/project";
 import { canonicalizeAssetImport } from "../backend/projectCore";
-import { serializeSourceMapV3 } from "../backend/sourceMapV3";
 import type { LuaPreprocessorSourceMap } from "../backend/sourceMap";
+import { serializeSourceMapV3 } from "../backend/sourceMapV3";
+import { buildProjectSymbolIndex } from "../backend/symbolIndex";
 import * as cons from "../utils/console";
 import { getErrorMessage } from "../utils/errorHandling";
 import { ensureDir, writeBinaryFile, writeTextFile } from "../utils/fileSystem";
-import { formatBytes } from "../utils/utils";
-import { TraceProfiler, TraceScope } from "../utils/traceProfiler";
-import { kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
 import type { AliasPassReport, AliasRuleName } from "../utils/lua/lua_alias_shared";
-import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
-import { appendFileSync, writeFileSync } from "node:fs";
-import * as path from "node:path";
+import { formatTic80CartChunkType, kTic80CartChunkTypes, kTic80ExtendedCodeBankCount, Tic80CartChunkTypeKey } from "../utils/tic80/tic80";
+import { TraceProfiler, TraceScope } from "../utils/traceProfiler";
+import { formatBytes } from "../utils/utils";
 import {
   BuildReporter,
+  buildReportFileName,
+  buildTraceFileName,
   CartChunkUsageEntry,
   HumanBuildReporter,
   JsonlBuildReporter,
   LuaCodeSizeEntry,
-  buildReportFileName,
-  buildTraceFileName,
   reportCapturedConsoleMessage,
 } from "./buildReporter";
+import { CommandLineOptions, parseBuildOptions } from "./parseOptions";
 
 type BuildReportSession = {
   reporter: BuildReporter;
@@ -433,7 +432,7 @@ async function writeDevelopmentArtifacts(
     if (resource instanceof Tic80Resource) {
       const cartStatsLines = buildCartStatsLines(
         resource.chunks.map(({ chunkType, bank, data }) => ({
-          chunkType,
+          chunkType: formatTic80CartChunkType(chunkType),
           bank,
           size: data.length,
         })),
@@ -601,7 +600,7 @@ function appendLuaMinificationLog(lines: string[], report: AliasPassReport): voi
 function logCartStats(assemblyOutput: AssembleOutputResult, reporter: BuildReporter): void {
   const cartUsage = buildCartUsage(
     assemblyOutput.chunks.map((chunk) => ({
-      chunkType: chunk.chunkType,
+      chunkType: formatTic80CartChunkType(chunk.chunkType),
       bank: chunk.bank,
       size: chunk.data.length,
     })),
@@ -703,7 +702,7 @@ function warnDeprecatedChunks(assemblyOutput: AssembleOutputResult, reporter: Bu
     if (!info || !info.deprecated) {
       continue;
     }
-    const key = formatChunkKey(chunk.chunkType, chunk.bank);
+    const key = formatChunkKey(formatTic80CartChunkType(chunk.chunkType), chunk.bank);
     if (warned.has(key)) {
       continue;
     }
@@ -900,16 +899,17 @@ function buildLuaCodeSizeReport(
 }
 
 function formatChunkKey(chunkType: string, bank: number): string {
-  return bank === 0 ? chunkType : `${chunkType}#${bank}`;
+  return bank === 0 ? chunkType : `${chunkType}:${bank}`;
 }
 
+// because we store chunks as the string keys and not structured ... so this is sloppy but whatev
 function parseChunkKey(chunkKey: string): { chunkType: string; bank: number } {
-  const hashIndex = chunkKey.lastIndexOf("#");
-  if (hashIndex < 0) {
+  const colonIndex = chunkKey.lastIndexOf(":");
+  if (colonIndex < 0) {
     return { chunkType: chunkKey, bank: 0 };
   }
-  const chunkType = chunkKey.slice(0, hashIndex);
-  const bankText = chunkKey.slice(hashIndex + 1);
+  const chunkType = chunkKey.slice(0, colonIndex);
+  const bankText = chunkKey.slice(colonIndex + 1);
   const bank = Number.parseInt(bankText, 10);
   return { chunkType, bank: Number.isFinite(bank) ? bank : 0 };
 }
