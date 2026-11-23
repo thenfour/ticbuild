@@ -6,6 +6,7 @@ import { readDiscoveredSessions } from "./backend/tic80Controller/discovery";
 import { buildInfo } from "./buildInfo";
 import { buildCommand } from "./frontend/build";
 import { initCommand, InitOptions } from "./frontend/init";
+import { inspectCommand } from "./frontend/inspect";
 import { CommandLineOptions } from "./frontend/parseOptions";
 import { runCommand } from "./frontend/run";
 import { attachTerminalToLaunchedTic80, discoCommand, terminalCommand } from "./frontend/terminal";
@@ -17,6 +18,7 @@ import {
   printBuildHelp,
   printDiscoHelp,
   printInitHelp,
+  printInspectHelp,
   printMainHelp,
   printProjectHelp,
   printRunHelp,
@@ -88,6 +90,9 @@ async function main(): Promise<void> {
       case "init":
       case "i":
         printInitHelp();
+        return;
+      case "inspect":
+        printInspectHelp();
         return;
       case "project":
         printProjectHelp();
@@ -221,6 +226,13 @@ async function main(): Promise<void> {
     });
 
   program
+    .command("inspect <cart>")
+    .description("Inspect an existing TIC-80 cart")
+    .action(async (cart: string) => {
+      await inspectCommand(cart);
+    });
+
+  program
     .command("templatelist")
     .alias("tl")
     .description("List available project templates")
@@ -325,6 +337,9 @@ async function main(): Promise<void> {
           case "init":
           case "i":
             printInitHelp();
+            break;
+          case "inspect":
+            printInspectHelp();
             break;
           case "project":
             printProjectHelp();

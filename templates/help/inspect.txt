@@ -1,0 +1,14 @@
+
+ticbuild inspect
+
+usage: ticbuild inspect <cart>
+
+Inspect an existing TIC-80 .tic cart
+
+Arguments:
+
+  <cart>              Path to a .tic cart, relative to the current directory or absolute
+
+Options:
+
+  -h, --help          Show this help message

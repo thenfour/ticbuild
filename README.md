@@ -110,6 +110,9 @@ ticbuild watch
 # create a new empty project
 ticbuild init
 
+# inspect an existing cart
+ticbuild inspect path/to/cart.tic
+
 ```
 
 ## Machine-readable build output
